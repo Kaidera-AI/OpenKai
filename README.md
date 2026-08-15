@@ -14,17 +14,20 @@ OpenKai is a standalone open-source agent harness and TUI. It combines the pi-li
 ## Quickstart
 
 ### Installation
-*(NPM package name TBD at release)*
+*(Pre-release: `@openkai/cli` is not published yet. Build and install locally —
+see the [Installation Runbook](docs/install.md) for both channels.)*
 
 ```bash
-# Placeholder for installation command
-npm install -g @openkai/cli
+npm run build
+npm pack ./packages/core ./packages/cli
+npm install -g --prefix /tmp/openkai ./openkai-core-0.0.0.tgz ./openkai-cli-0.0.0.tgz
 ```
 
 ### Setup
-Set your OpenRouter API key:
+Set your OpenRouter API key, then self-check:
 ```bash
 export OPENROUTER_API_KEY=your_key_here
+openkai info
 ```
 
 ### Common Commands
@@ -36,6 +39,8 @@ export OPENROUTER_API_KEY=your_key_here
 
 ## Documentation
 Detailed guides are available in the `/docs` directory:
+- [Installation Runbook](docs/install.md)
+- [Onboarding Walkthrough](docs/onboarding.md)
 - [Quickstart](docs/quickstart.md)
 - [Commands Reference](docs/commands.md)
 - [Session Management](docs/sessions.md)
