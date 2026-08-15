@@ -154,6 +154,8 @@ export class TuiController {
   private composer?: Composer;
   private busy = false;
   private done = false;
+  /** True while the current turn is a `/btw` side channel (scope §1.5) — persistTurn skips it so the ephemeral exchange never re-persists the prior assistant block. */
+  private btwTurn = false;
 
   constructor(tui: TUI, options: TuiAppOptions, transcript: Transcript, status: StatusLine) {
     this.tui = tui;
@@ -235,6 +237,7 @@ export class TuiController {
     await this.store.appendMessage(userMsg);
     this.transcript.addUserMessage(text);
     this.recordPrompt(text); // frecency history (scope §1.4) — best-effort
+    this.btwTurn = false; // this is a normal user turn, not a /btw side channel
     this.setBusy(true);
     await this.transport.prompt(text);
   }
@@ -251,6 +254,7 @@ export class TuiController {
       return;
     }
     this.transcript.beginBtwTurn(question);
+    this.btwTurn = true; // mark the turn ephemeral — turn_end must NOT persist (scope §1.5)
     this.setBusy(true);
     this.tui.requestRender();
     await this.transport.prompt(question);
@@ -350,7 +354,12 @@ export class TuiController {
     if (!this.history || !this.composer) return;
     const now = Date.now();
     const ranked = this.history.ranked(now);
-    for (const entry of ranked) {
+    // pi-tui's editor.addToHistory unshifts (prepends) and navigateHistory
+    // reads history[0] first. To recall the most-frecent prompt first on
+    // up-arrow, seed in reverse (worst-first) so the best entry is the LAST
+    // unshifted and lands at history[0] (scope §1.4: "history recall ranks by
+    // frecency").
+    for (const entry of [...ranked].reverse()) {
       this.composer.editor.addToHistory(entry.text);
     }
   }
@@ -392,11 +401,19 @@ export class TuiController {
       case "turn_end":
         this.transcript.applyEvent(event);
         this.setBusy(false);
-        void this.persistTurn();
+        if (!this.btwTurn) void this.persistTurn(); // /btw turns are ephemeral — never re-persist (scope §1.5)
+        this.btwTurn = false;
         // Attention (scope §1.1): a turn settled — if unfocused, bell/OSC + chrome.
         this.signalAttention("Turn complete");
         break;
       case "permission_request":
+        // P4b: a gated tool is awaiting approval. Show the overlay; the
+        // spinner reflects "waiting on you" (scope §5). The overlay's
+        // onDecision calls transport.respond + hides the overlay. The event
+        // pump keeps draining (consume loop is concurrent — scope §9): the
+        // tool's execute() is blocked awaiting the matching respond() promise,
+        // and the operator's input path (a separate event-loop task) resolves
+        // it, so there is no shared turn and no deadlock.
         this.showPermission(event);
         this.signalAttention(`Permission required: ${event.toolName}`);
         break;

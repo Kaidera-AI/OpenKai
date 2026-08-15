@@ -9,8 +9,9 @@
  * quit-with-confirm (scope §3.5). The leader-key palette (Ctrl+K, scope §1.3) is
  * intercepted at the app input-listener level (which runs before the focused
  * Editor), so it consumes Ctrl+K before the Editor's `deleteToLineEnd` would;
- * `deleteToLineEnd` is remapped to `ctrl+shift+k` to keep the capability and
- * avoid a keybinding conflict record.
+ * `deleteToLineEnd` is remapped to `alt+k` to keep the capability (ctrl+shift+k
+ * is the same byte as ctrl+k in terminals without the kitty keyboard protocol,
+ * so it would be unreachable) and avoid a keybinding conflict record.
  *
  * The Esc grammar (double-Esc clears the draft, scope §3.5) is detected at the
  * app input-listener level via {@link DoubleEscDetector}, which tracks rapid
@@ -57,7 +58,7 @@ export const OPENKAI_KEYBINDINGS: KeybindingDefinitions = {
  */
 const OPENKAI_USER_BINDINGS: KeybindingsConfig = {
   "tui.input.copy": "alt+c",
-  "tui.editor.deleteToLineEnd": "ctrl+shift+k",
+  "tui.editor.deleteToLineEnd": "alt+k",
 };
 
 /**

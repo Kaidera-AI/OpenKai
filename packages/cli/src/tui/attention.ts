@@ -20,12 +20,16 @@ export interface AttentionWriter {
 }
 
 /**
- * Focus-aware notifier. Default state is **unfocused** so notifications fire
- * until the runtime reports focus-in (a terminal that never reports focus
- * keeps notifying — the safe default, since "focused" is the quiet path).
+ * Focus-aware notifier. Default state is **focused** (scope §1.1: "quiet when
+ * focused"). DEC 1004 reports focus only on *change*, so a terminal focused at
+ * launch never emits a focus-in — defaulting to focused=true means the first
+ * turn_end does NOT ring the bell while the operator is watching (the exact
+ * noise scope §1.1 forbids). A terminal without focus reporting stays quiet
+ * forever (the safe degradation); a real focus-out event flips this to false
+ * and enables notifications.
  */
 export class AttentionNotifier {
-  private focused = false;
+  private focused = true;
   private readonly writer: AttentionWriter;
 
   constructor(writer: AttentionWriter) {

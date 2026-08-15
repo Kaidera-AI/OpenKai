@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
-import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import type { TUI } from "@earendil-works/pi-tui";
 
 import { InProcessTransport, SessionStore } from "@openkai/core";
@@ -154,9 +154,17 @@ test("attention chrome: busy + awaiting take priority over attention", () => {
   assert.ok(!plain2.includes("attention"), "attention glyph is suppressed while awaiting");
 });
 
-test("attention notifier: quiet when focused, bell+OSC when unfocused", () => {
+test("attention notifier: default focused=true (quiet at launch), bell+OSC only after focus-out", () => {
   const writer = new CaptureWriter();
   const notifier = new AttentionNotifier(writer);
+  // Scope §1.1: default focused=true — DEC 1004 reports only on CHANGE, so a
+  // terminal focused at launch never sends focus-in. Defaulting to focused
+  // means the first turn_end does NOT ring the bell while the operator watches.
+  assert.ok(notifier.isFocused, "notifier defaults to focused=true (quiet)");
+  notifier.notify("Turn complete");
+  assert.equal(writer.out.length, 0, "no notification at default focus (operator is watching)");
+
+  notifier.setFocused(false);
   notifier.notify("Turn complete");
   const seqs = writer.out.join("");
   assert.ok(seqs.includes("\x07"), "a bell must fire when unfocused");
@@ -166,7 +174,7 @@ test("attention notifier: quiet when focused, bell+OSC when unfocused", () => {
   writer.out.length = 0;
   notifier.setFocused(true);
   notifier.notify("Turn complete");
-  assert.equal(writer.out.length, 0, "no notification must fire when focused");
+  assert.equal(writer.out.length, 0, "no notification must fire when focused (again)");
 
   notifier.setFocused(false);
   notifier.notify("Permission required: write_file");
@@ -228,6 +236,58 @@ test("frecency history: load → record → save → reload round-trip", async (
   }
 });
 
+
+test("frecency seeding: most-frecent entry is recalled first (history[0] = best)", async () => {
+  // The rework defect: seedHistory() iterated ranked best-first calling
+  // addToHistory, but pi-tui editor unshifts (prepends) and navigateHistory
+  // reads history[0], so the LAST added (least-frecent) was recalled first.
+  // The fix: seed in reverse (worst-first) so the best entry lands at
+  // history[0]. This test checks the editor's internal history array directly.
+  const dir = await mkdtemp(path.join(tmpdir(), "ok-seed-"));
+  try {
+    const file = path.join(dir, "history.json");
+    const history = new FrecencyHistory(file);
+    // "best" has the highest frecency (count 10, used most recently).
+    history.record("worst", 1_000);      // count 1, very old
+    history.record("middle", 2_000);     // count 1, less old
+    history.record("best", 3_000);       // count 1, most recent
+    await history.save();
+
+    const sessionId = "01SEEDORDER00008";
+    const faux = fauxProvider({});
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const transport = new InProcessTransport({
+      sessionId,
+      modelId: "faux-1",
+      models,
+      provider: "faux",
+      cwd: process.cwd(),
+    });
+    const store = new SessionStore({ root: dir, sessionId });
+    await store.ensure();
+    const app = buildTuiApp(headlessTui(24), {
+      transport,
+      modelId: "faux-1",
+      sessionId,
+      persistMode: "local",
+      store,
+      sessionsRoot: dir,
+      history,
+    });
+
+    await app.controller.seedHistory();
+
+    // The editor's history is private at the TS level, but accessible at
+    // runtime. history[0] is what up-arrow recalls first.
+    const editorHistory = (app.composer.editor as unknown as { history: string[] }).history;
+    assert.equal(editorHistory[0], "best", "most-frecent entry must be at history[0] (recalled first on up-arrow)");
+    assert.equal(editorHistory[1], "middle", "second-frecent entry at history[1]");
+    assert.equal(editorHistory[2], "worst", "least-frecent entry at history[2] (recalled last)");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 // ── 4. Prompt stash (pure) — scope §1.4 ─────────────────────────────────────
 
 test("stash: LIFO push/pop, empty drafts ignored", () => {
@@ -265,6 +325,66 @@ test("btw: answer streams into a btw block, not a user/assistant turn", () => {
   assert.ok(frame.includes("It is v0.1.0."), "the btw answer streams into the block");
 });
 
+
+test("btw (controller): does NOT re-persist the prior assistant turn at turn_end (scope §1.5)", async () => {
+  // The rework defect: turn_end called persistTurn() unconditionally; with a
+  // prior assistant block in the transcript, lastAssistantText() returned
+  // that block's text, so every /btw appended a duplicate assistant message
+  // to the session JSONL. The fix: a btwTurn flag skips persistTurn for btw
+  // turns. This test proves the fix with a prior assistant block present.
+  const sessionId = "01BTWPERSIST0007";
+  const faux = fauxProvider({});
+  faux.setResponses([fauxAssistantMessage([fauxText("Side answer.")])]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const transport = new InProcessTransport({
+    sessionId,
+    modelId: "faux-1",
+    models,
+    provider: "faux",
+    cwd: process.cwd(),
+  });
+  const dir = await mkdtemp(path.join(tmpdir(), "ok-btw-persist-"));
+  try {
+    const store = new SessionStore({ root: dir, sessionId });
+    await store.ensure();
+    const app = buildTuiApp(headlessTui(24), {
+      transport,
+      modelId: "faux-1",
+      sessionId,
+      persistMode: "local",
+      store,
+      sessionsRoot: dir,
+    });
+
+    // Simulate a prior normal turn that was persisted: a user message + an
+    // assistant message in the store, and a matching assistant block in the
+    // transcript so lastAssistantText() returns non-empty.
+    await store.appendMessage({ role: "user", content: "first question", timestamp: 1 } as never);
+    await store.appendMessage({ role: "assistant", content: [{ type: "text", text: "Answer one." }], timestamp: 2 } as never);
+    app.transcript.replayAssistant("Answer one.");
+
+    // Drive a /btw side-channel turn through the controller.
+    await app.controller.btw("side question");
+    await transport.close();
+    await app.controller.consume();
+
+    // The store must NOT have gained a duplicate assistant message.
+    const entries = await store.readEntries();
+    const messages = entries.filter((e) => e.type === "message");
+    const assistantCount = messages.filter(
+      (e) => (e as { message: { role: string } }).message.role === "assistant",
+    ).length;
+    assert.equal(assistantCount, 1, "btw turn_end must NOT re-persist the prior assistant block");
+
+    // The btw block must exist in the transcript (the side answer streamed in).
+    const kinds = app.transcript.blockKinds();
+    assert.ok(kinds.includes("btw"), "the btw block rendered");
+    assert.ok(!kinds.includes("user"), "the side question never rendered as a user turn");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 // ── 6. /undo surface — wired to onUndo (scope §1.6) ───────────────────────
 
 async function buildControllerWithUndo(onUndo?: () => Promise<string>) {
