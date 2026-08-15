@@ -12,6 +12,7 @@
 import { CortexClient } from "@openkai/core";
 import type { TeamEventEntry } from "@openkai/core";
 import { runChat, type ChatOptions } from "./chat.js";
+import { runFuse, type FuseCliOptions } from "./fuse.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 
@@ -35,6 +36,11 @@ Commands:
   sessions [--show <id>] List local persisted sessions (.openkai/sessions/),
                          or show the full entry tree for one session id.
 
+  fuse --prompt <text>   Run one task through the fusion core (P3): architect
+                         + builder as separate fresh sessions in parallel,
+                         then an attributed synthesis. --gate wraps the run in
+                         gate-first validation (FU-3).
+
   events --print         Stream live Cortex team events (GET /events SSE) to
                          stdout, one TSV row per event:
                          id <TAB> type <TAB> agent <TAB> summary
@@ -46,6 +52,11 @@ Options:
   --system-prompt <text> (chat) Override the system prompt.
   --show <id>            (sessions) Show full entries for one session id.
   --session <id>        (tui) Resume a session by id.
+  --architect-model <id> (fuse) Architect role model (default: $OPENKAI_MODEL).
+  --builder-model <id>  (fuse) Builder role model (default: same as architect).
+  --judge-model <id>    (fuse) Synthesis/gate-validator model.
+  --gate                (fuse) Enable gate-first validation (FU-3).
+  --max-rounds <n>      (fuse) Gate repair cap, 1-10 (default 3).
   --model <id>           (tui) OpenRouter model id (default: $OPENKAI_MODEL).
   --last-id <id>         (events) Resume after a team_events id.
   --count <n>            (events) Events per server read, 1-200 (default 50).
@@ -248,6 +259,29 @@ async function main(argv: string[]): Promise<number> {
       show: getString("--show"),
     };
     return runSessions(options);
+  }
+
+  // ── fuse (P3) ────────────────────────────────────────────────────────────
+  if (command === "fuse") {
+    const prompt = getString("--prompt");
+    if (!prompt) {
+      return fail("fuse requires --prompt <text>.");
+    }
+    const options: FuseCliOptions = {
+      prompt,
+      architectModel: getString("--architect-model"),
+      builderModel: getString("--builder-model"),
+      judgeModel: getString("--judge-model"),
+      gate: getBool("--gate"),
+      quiet: getBool("--quiet"),
+    };
+    const roundsRaw = getString("--max-rounds");
+    if (roundsRaw) {
+      const parsed = parseBoundedInt("--max-rounds", roundsRaw, 1, 10);
+      if (typeof parsed === "string") return fail(parsed);
+      options.maxRounds = parsed;
+    }
+    return runFuse(options);
   }
 
   // ── events (P1, unchanged) ─────────────────────────────────────────────────
