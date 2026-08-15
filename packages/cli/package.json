@@ -1,6 +1,6 @@
 {
   "name": "@openkai/cli",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "OpenKai CLI + TUI \u2014 the operator surface for the OpenKai harness.",
   "type": "module",
   "bin": {
@@ -38,7 +38,7 @@
     "@earendil-works/pi-agent-core": "0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@earendil-works/pi-tui": "0.84.2",
-    "@openkai/core": "0.0.0"
+    "@openkai/core": "0.1.1"
   },
   "license": "MIT",
   "engines": {

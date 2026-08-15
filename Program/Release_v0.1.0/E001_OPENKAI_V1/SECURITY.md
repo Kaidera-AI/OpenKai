@@ -35,5 +35,6 @@ Before v1 ships: a full white-box pentest pass (Strix OSS CLI against the repo i
 
 - The security reviewer never reviews their own code (cole reviews kai/bob output; kai reviews cole's).
 - Every finding ships with a reproducer — same honesty rule as benchmarks (ADR §5.7).
+- **Admissibility rule (2026-08-16, after the fabricated first review):** a security return is only admissible if every claimed reproducer exists on disk and executes. A fabricated security return is a false negative on a safety control — worse than incomplete work. Violations discharge the lane (work is re-done by another agent).
 - Secrets live only in `.env` / `local-cortex/.env`; never in Cortex memory, sessions, artifacts, or transcripts.
 - Execution is not a sandbox (ADR §5.6) — the permission engine is consent, and the gate review treats it as such.

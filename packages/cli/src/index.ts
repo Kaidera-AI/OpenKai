@@ -20,6 +20,7 @@ import { runInfo } from "./info.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runUndo } from "./undo.js";
+import { CLI_VERSION } from "./version.js";
 
 // .env from the current directory loads before any command resolves config;
 // real environment variables always win over file values.
@@ -219,6 +220,11 @@ async function main(argv: string[]): Promise<number> {
     command === "help"
   ) {
     process.stdout.write(USAGE);
+    return 0;
+  }
+
+  if (command === "--version" || command === "-v" || command === "version") {
+    process.stdout.write(`openkai ${CLI_VERSION}\n`);
     return 0;
   }
 
