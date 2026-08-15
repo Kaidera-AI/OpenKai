@@ -13,12 +13,26 @@ export {
 export type { GatedFusionOptions, RunGateOptions } from "./gate.js";
 export { runPanel } from "./panel.js";
 export type { PanelOptions } from "./panel.js";
+export {
+  DEFAULT_FUSION_POLICY,
+  shouldFuse,
+} from "./policy.js";
+export type {
+  FusionPolicyConfig,
+  FusionPolicyDecision,
+  FusionPolicyInput,
+  FusionPriority,
+  FusionTaskClass,
+} from "./policy.js";
 export { runSynthesis } from "./synthesis.js";
 export {
   defaultFusionLogPath,
+  exportFusionRunArtifact,
   readFusionRuns,
   recordFusionRun,
+  summariseFusionRuns,
 } from "./telemetry.js";
+export type { FusionPairStats } from "./telemetry.js";
 export {
   AttributionError,
   GateHaltError,

@@ -6,7 +6,9 @@
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
+  CortexClient,
   DEFAULT_MODEL_ID,
+  exportFusionRunArtifact,
   fuse,
   recordFusionRun,
   defaultFusionLogPath,
@@ -21,6 +23,9 @@ export interface FuseCliOptions {
   judgeModel?: string;
   gate: boolean;
   maxRounds?: number;
+  project?: string;
+  api?: string;
+  agent?: string;
   quiet: boolean;
 }
 
@@ -110,6 +115,25 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     );
 
     await recordFusionRun(result.record, logPath);
+
+    // Managed mode (ren A1): with a project attached, also export the run
+    // record as a Cortex artifact. Best-effort — export failure never fails
+    // the run.
+    if (options.project) {
+      const client = new CortexClient({
+        baseUrl: options.api,
+        project: options.project,
+        agent: options.agent,
+      });
+      const exported = await exportFusionRunArtifact(
+        client,
+        result.record,
+        options.agent ?? "openkai",
+      );
+      if (exported && !options.quiet) {
+        process.stderr.write(`[openkai] run artifact exported to Cortex (${options.project})\n`);
+      }
+    }
 
     for (const output of result.outputs) {
       process.stdout.write(`${renderRole(output)}\n`);

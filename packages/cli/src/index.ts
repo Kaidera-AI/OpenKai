@@ -13,6 +13,7 @@ import { CortexClient, DEFAULT_MODEL_ID } from "@openkai/core";
 import type { TeamEventEntry } from "@openkai/core";
 import { runChat, type ChatOptions } from "./chat.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";
+import { runFusionAdvise, runFusionReport } from "./fusion.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 
@@ -40,6 +41,14 @@ Commands:
                          + builder as separate fresh sessions in parallel,
                          then an attributed synthesis. --gate wraps the run in
                          gate-first validation (FU-3).
+
+  fusion report [--last n]  Per-model-pair A/B stats from the fusion runs log
+                         (.openkai/fusion/runs.jsonl).
+
+  fusion advise          Evaluate the FU-4 invocation policy for a task shape:
+                         --priority low|medium|high|urgent
+                         --class architecture|ambiguous|high-blast-radius|routine
+                         --files <n>  (expected blast radius)
 
   events --print         Stream live Cortex team events (GET /events SSE) to
                          stdout, one TSV row per event:
@@ -273,6 +282,9 @@ async function main(argv: string[]): Promise<number> {
       builderModel: getString("--builder-model"),
       judgeModel: getString("--judge-model"),
       gate: getBool("--gate"),
+      project: getString("--project") ?? process.env.CORTEX_PROJECT,
+      api: getString("--api"),
+      agent: getString("--agent"),
       quiet: getBool("--quiet"),
     };
     const roundsRaw = getString("--max-rounds");
@@ -282,6 +294,36 @@ async function main(argv: string[]): Promise<number> {
       options.maxRounds = parsed;
     }
     return runFuse(options);
+  }
+
+  // ── fusion report / advise (P3b) ─────────────────────────────────────────
+  if (command === "fusion") {
+    const sub = positional[0];
+    if (sub === "report") {
+      const lastRaw = getString("--last");
+      let last: number | undefined;
+      if (lastRaw) {
+        const parsed = parseBoundedInt("--last", lastRaw, 1, 10000);
+        if (typeof parsed === "string") return fail(parsed);
+        last = parsed;
+      }
+      return runFusionReport({ last });
+    }
+    if (sub === "advise") {
+      const breadthRaw = getString("--files");
+      let filesBreadth: number | undefined;
+      if (breadthRaw) {
+        const parsed = parseBoundedInt("--files", breadthRaw, 0, 100000);
+        if (typeof parsed === "string") return fail(parsed);
+        filesBreadth = parsed;
+      }
+      return runFusionAdvise({
+        priority: getString("--priority"),
+        taskClass: getString("--class"),
+        filesBreadth,
+      });
+    }
+    return fail("fusion requires a subcommand: report | advise.");
   }
 
   // ── events (P1, unchanged) ─────────────────────────────────────────────────

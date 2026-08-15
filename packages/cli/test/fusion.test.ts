@@ -35,6 +35,8 @@ import {
   runGatedFusion,
   runPanel,
   runSynthesis,
+  shouldFuse,
+  summariseFusionRuns,
   type FusionRunRecord,
 } from "@openkai/core";
 
@@ -240,4 +242,81 @@ test("telemetry: record + read round-trips through the runs log", async () => {
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+// ── P3b: FU-4 policy + FU-5 aggregation ────────────────────────────────────
+
+test("policy: explicit force wins over every other rule", () => {
+  const decision = shouldFuse({ force: true, priority: "low", taskClass: "routine" });
+  assert.equal(decision.fuse, true);
+  assert.match(decision.reason, /explicit/);
+});
+
+test("policy: urgent priority fuses without any other signal", () => {
+  const decision = shouldFuse({ priority: "urgent" });
+  assert.equal(decision.fuse, true);
+  assert.match(decision.reason, /urgent/);
+});
+
+test("policy: high-priority architecture fuses; medium-priority does not", () => {
+  assert.equal(
+    shouldFuse({ priority: "high", taskClass: "architecture" }).fuse,
+    true,
+  );
+  assert.equal(
+    shouldFuse({ priority: "medium", taskClass: "architecture" }).fuse,
+    false,
+  );
+});
+
+test("policy: routine work never fuses on class, breadth triggers at threshold", () => {
+  assert.equal(
+    shouldFuse({ priority: "high", taskClass: "routine" }).fuse,
+    false,
+  );
+  assert.equal(shouldFuse({ filesBreadth: 9 }).fuse, false);
+  const at = shouldFuse({ filesBreadth: 10 });
+  assert.equal(at.fuse, true);
+  assert.match(at.reason, /blast radius/);
+});
+
+test("policy: bare invocation takes the cheap single-model default", () => {
+  const decision = shouldFuse({});
+  assert.equal(decision.fuse, false);
+  assert.match(decision.reason, /single-model/);
+});
+
+test("report: summariseFusionRuns aggregates per pair with gate rate and tokens", async () => {
+  const role = (r: "architect" | "builder", modelId: string, totalTokens: number) => ({
+    role: r,
+    modelId,
+    text: "",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      totalTokens,
+    },
+    latencyMs: 100,
+  });
+  const run = (runId: string, outcome: "pass" | "halt"): FusionRunRecord => ({
+    runId,
+    ts: new Date().toISOString(),
+    task: "t",
+    gated: true,
+    roles: [role("architect", "m-a", 10), role("builder", "m-b", 20)],
+    synthesis: { modelId: "m-a", usage: undefined },
+    gate: { rounds: 1, outcome },
+    wallMs: 1000,
+  });
+  const stats = summariseFusionRuns([run("r1", "pass"), run("r2", "halt")]);
+  assert.equal(stats.length, 1);
+  const s = stats[0];
+  assert.equal(s?.runs, 2);
+  assert.equal(s?.gatePassRate, 0.5);
+  assert.equal(s?.totalTokens, 60);
+  assert.equal(s?.avgWallMs, 1000);
+  assert.match(s?.pair ?? "", /architect:m-a/);
 });
