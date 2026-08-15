@@ -1,0 +1,449 @@
+/**
+ * openkai upgrade tests (Inc 08, ADR OK-8 dual-channel). All filesystem
+ * operations run against in-memory fakes or mkdtemp temp dirs; no real
+ * network and no operator repo mutation.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { promises as fsp } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import {
+  BUILD_CHANNEL,
+  type Channel,
+  type ReleaseManifest,
+  type UpgradeDeps,
+  Upgrader,
+  WitnessMismatchError,
+  canonicalManifestBytes,
+  compareVersions,
+  detectTarget,
+  manifestUrlForVersion,
+  resolveAutoUpdateEnabled,
+  resolveChannel,
+  sha256Hex,
+  signManifest,
+  verifyManifestSignature,
+} from "../dist/upgrade.js";
+
+// ─── Pure helpers ────────────────────────────────────────────────────────────
+
+test("channel selection: build-time stamp is authoritative; env overrides", () => {
+  assert.equal(resolveChannel({ buildChannel: "npm" }), "npm");
+  assert.equal(resolveChannel({ buildChannel: "standalone" }), "standalone");
+  assert.equal(
+    resolveChannel({ buildChannel: "npm", envChannel: "standalone" }),
+    "standalone",
+  );
+  assert.equal(
+    resolveChannel({ buildChannel: "standalone", envChannel: "npm" }),
+    "npm",
+  );
+  // invalid env value is ignored → falls back to build stamp
+  assert.equal(
+    resolveChannel({ buildChannel: "npm", envChannel: "garbage" }),
+    "npm",
+  );
+});
+
+test("channel selection: the shipped npm build stamps BUILD_CHANNEL=npm (pinned by construction)", () => {
+  // The npm tarball is compiled by `tsc`, never by build-binaries.sh, so the
+  // OPENKAI_BUILD_CHANNEL define is absent and the constant defaults to npm.
+  assert.equal(BUILD_CHANNEL, "npm");
+});
+
+test("kill-switch: falsey values disable auto-upgrade entirely; unset/other enable it", () => {
+  for (const off of ["false", "0", "no", "off", "FALSE", " Off "]) {
+    assert.equal(resolveAutoUpdateEnabled(off), false, `${off} should disable`);
+  }
+  assert.equal(resolveAutoUpdateEnabled(undefined), true);
+  assert.equal(resolveAutoUpdateEnabled("true"), true);
+  assert.equal(resolveAutoUpdateEnabled("1"), true);
+});
+
+test("version comparison: semver-ish ordering", () => {
+  assert.equal(compareVersions("0.0.0", "0.0.1"), -1);
+  assert.equal(compareVersions("0.1.0", "0.0.9"), 1);
+  assert.equal(compareVersions("1.2.3", "1.2.3"), 0);
+  assert.equal(compareVersions("2.0.0", "1.99.99"), 1);
+});
+
+test("target detection maps x64/arm64 + darwin/linux", () => {
+  assert.equal(detectTarget("darwin", "arm64"), "darwin-arm64");
+  assert.equal(detectTarget("linux", "x64"), "linux-x64");
+  assert.equal(detectTarget("darwin", "x64"), "darwin-x64");
+});
+
+test("manifestUrlForVersion rewrites latest.json and appends otherwise", () => {
+  assert.equal(
+    manifestUrlForVersion("https://openkai.dev/releases/latest.json", "0.1.0"),
+    "https://openkai.dev/releases/0.1.0.json",
+  );
+  assert.equal(
+    manifestUrlForVersion("https://x/releases/", "0.1.0"),
+    "https://x/releases/0.1.0.json",
+  );
+});
+
+// ─── Witness ──────────────────────────────────────────────────────────────────
+
+function manifest(version: string, bytes: Uint8Array, target = "darwin-arm64"): ReleaseManifest {
+  return {
+    version,
+    artifacts: [{ target, url: `https://x/openkai-${target}`, sha256: sha256Hex(bytes) }],
+  };
+}
+
+test("witness: artifact sha256 match passes; mismatch throws WitnessMismatchError", async () => {
+  const good = new TextEncoder().encode("binary-a");
+  const m = manifest("0.0.1", good);
+  const u = new Upgrader({
+    manifestUrl: "https://x/latest.json",
+    currentBinary: "/tmp/x",
+    currentVersion: "0.0.0",
+    target: "darwin-arm64",
+    autoUpdateEnabled: true,
+    deps: fakeDeps({ manifest: m, artifactBytes: good }),
+  });
+  const res = await u.upgrade();
+  assert.equal(res.alreadyUpToDate, false);
+  assert.equal(res.from, "0.0.0");
+  assert.equal(res.to, "0.0.1");
+});
+
+test("witness: sha256 mismatch is refused before any swap", async () => {
+  const real = new TextEncoder().encode("real-binary");
+  const tampered = new TextEncoder().encode("tampered-binary");
+  const m = manifest("0.0.1", real);
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "current-bytes");
+  try {
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      target: "darwin-arm64",
+      autoUpdateEnabled: true,
+      deps: fakeDeps({ manifest: m, artifactBytes: tampered }),
+    });
+    await assert.rejects(u.upgrade(), (err: unknown) => {
+      assert.ok(err instanceof WitnessMismatchError);
+      assert.equal((err as WitnessMismatchError).kind, "artifact");
+      return true;
+    });
+    // current binary untouched on refusal
+    assert.equal(await readFile(bin, "utf-8"), "current-bytes");
+    assert.equal(await readFile(`${bin}.new`, "utf-8").catch(() => "absent"), "absent");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("witness: Ed25519 manifest signature is verified when a key is pinned", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubB64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  const bytes = new TextEncoder().encode("binary");
+  const m = manifest("0.0.1", bytes);
+  const sig = signManifest(m, privateKey.export({ format: "pem", type: "pkcs8" }).toString());
+  assert.equal(verifyManifestSignature(m, pubB64, sig), true);
+  // tampered version → signature invalid
+  const tampered = { ...m, version: "9.9.9" };
+  assert.equal(verifyManifestSignature(tampered, pubB64, sig), false);
+  // canonical bytes are stable + exclude the signature field
+  const canon = new TextDecoder().decode(canonicalManifestBytes(m));
+  assert.ok(canon.includes('"version":"0.0.1"'));
+  assert.ok(!canon.includes("signature"));
+});
+
+test("witness: unsigned manifest is refused when a release key is pinned", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubB64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  const good = new TextEncoder().encode("binary");
+  const m = manifest("0.0.1", good); // no signature field
+  const u = new Upgrader({
+    manifestUrl: "https://x/latest.json",
+    currentBinary: "/tmp/x",
+    currentVersion: "0.0.0",
+    target: "darwin-arm64",
+    autoUpdateEnabled: true,
+    releasePublicKey: pubB64,
+    deps: fakeDeps({ manifest: m, artifactBytes: good }),
+  });
+  await assert.rejects(u.check(), (err: unknown) => {
+    assert.ok(err instanceof WitnessMismatchError);
+    assert.equal((err as WitnessMismatchError).kind, "manifest");
+    return true;
+  });
+  void privateKey;
+});
+
+// ─── Upgrader: upgrade + rollback + kill-switch ───────────────────────────────
+
+test("upgrade: swaps binary, preserves previous, reports version bump", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "old-bytes");
+  try {
+    const newBytes = new TextEncoder().encode("new-bytes");
+    const m = manifest("0.0.1", newBytes);
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      target: "darwin-arm64",
+      autoUpdateEnabled: true,
+      deps: fakeDeps({ manifest: m, artifactBytes: newBytes }),
+    });
+    const res = await u.upgrade();
+    assert.equal(res.alreadyUpToDate, false);
+    assert.equal(res.to, "0.0.1");
+    assert.equal(new TextDecoder().decode(await readFile(bin)), "new-bytes");
+    assert.equal(await readFile(`${bin}.previous`, "utf-8"), "old-bytes");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("upgrade: already-up-to-date is a no-op (no swap, no previous written)", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "current-bytes");
+  try {
+    const sameBytes = new TextEncoder().encode("current-bytes");
+    const m = manifest("0.0.0", sameBytes); // same version
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      target: "darwin-arm64",
+      autoUpdateEnabled: true,
+      deps: fakeDeps({ manifest: m, artifactBytes: sameBytes }),
+    });
+    const res = await u.upgrade();
+    assert.equal(res.alreadyUpToDate, true);
+    assert.equal(await readFile(bin, "utf-8"), "current-bytes");
+    assert.equal(await readFile(`${bin}.previous`, "utf-8").catch(() => "absent"), "absent");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("kill-switch: upgrade refuses entirely when disabled; no swap happens", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "current-bytes");
+  try {
+    const newBytes = new TextEncoder().encode("new-bytes");
+    const m = manifest("0.0.1", newBytes);
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      target: "darwin-arm64",
+      autoUpdateEnabled: false, // kill-switch off
+      deps: fakeDeps({ manifest: m, artifactBytes: newBytes }),
+    });
+    await assert.rejects(u.upgrade(), (err: unknown) => {
+      assert.equal((err as Error).name, "AutoUpdateDisabledError");
+      return true;
+    });
+    assert.equal(await readFile(bin, "utf-8"), "current-bytes");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("rollback: restores previous binary and is NOT gated by the kill-switch", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  const prev = `${bin}.previous`;
+  await writeFile(bin, "new-bytes");
+  await writeFile(prev, "old-bytes");
+  try {
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.1",
+      target: "darwin-arm64",
+      autoUpdateEnabled: false, // kill-switch off — rollback still works
+      deps: fakeDeps({ manifest: manifest("0.0.1", new TextEncoder().encode("x")), artifactBytes: new TextEncoder().encode("x") }),
+    });
+    const res = await u.rollback();
+    assert.equal(res.from, "0.0.1");
+    assert.equal(await readFile(bin, "utf-8"), "old-bytes");
+    // the rolled-back-from binary is now the new previous (reversible)
+    assert.equal(await readFile(prev, "utf-8"), "new-bytes");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("rollback: throws NoPreviousBinaryError when none preserved", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "current-bytes");
+  try {
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      target: "darwin-arm64",
+      autoUpdateEnabled: true,
+      deps: fakeDeps({ manifest: manifest("0.0.0", new TextEncoder().encode("x")), artifactBytes: new TextEncoder().encode("x") }),
+    });
+    await assert.rejects(u.rollback(), (err: unknown) => {
+      assert.equal((err as Error).name, "NoPreviousBinaryError");
+      return true;
+    });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("upgrade then rollback round-trip restores the original binary", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "old-bytes");
+  try {
+    const newBytes = new TextEncoder().encode("new-bytes");
+    const m = manifest("0.0.1", newBytes);
+    const u = new Upgrader({
+      manifestUrl: "https://x/latest.json",
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      target: "darwin-arm64",
+      autoUpdateEnabled: true,
+      deps: fakeDeps({ manifest: m, artifactBytes: newBytes }),
+    });
+    await u.upgrade();
+    assert.equal(await readFile(bin, "utf-8"), "new-bytes");
+    await u.rollback();
+    assert.equal(await readFile(bin, "utf-8"), "old-bytes");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+// ─── CLI runner (channel selection end-to-end) ───────────────────────────────
+
+test("CLI: npm channel never self-mutates — upgrade prints pin message, exit 0", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  const res = await runUpgrade({
+    env: { OPENKAI_CHANNEL: "npm" },
+    currentBinary: "/tmp/x",
+    currentVersion: "0.0.0",
+  });
+  assert.equal(res.channel, "npm");
+  assert.equal(res.exitCode, 0);
+  assert.match(res.message, /pinned at build time/);
+  assert.match(res.message, /npm install -g/);
+});
+
+test("CLI: standalone upgrade applies with kill-switch unset; --check reports available", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "old-bytes");
+  try {
+    const newBytes = new TextEncoder().encode("new-bytes");
+    const m = manifest("0.0.1", newBytes);
+    const deps = fakeDeps({ manifest: m, artifactBytes: newBytes });
+    const check = await runUpgrade({
+      check: true,
+      env: { OPENKAI_CHANNEL: "standalone" },
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      deps,
+    });
+    assert.equal(check.exitCode, 0);
+    assert.match(check.message, /channel: standalone/);
+    assert.match(check.message, /auto-update: enabled/);
+    assert.match(check.message, /update available: yes/);
+
+    const up = await runUpgrade({
+      env: { OPENKAI_CHANNEL: "standalone" },
+      currentBinary: bin,
+      currentVersion: "0.0.0",
+      deps,
+    });
+    assert.equal(up.exitCode, 0);
+    assert.match(up.message, /upgrade complete: 0.0.1/);
+    assert.equal(await readFile(bin, "utf-8"), "new-bytes");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("CLI: kill-switch off → upgrade exits 1 and refuses; --rollback still works", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-up-"));
+  const bin = path.join(cwd, "openkai");
+  await writeFile(bin, "new-bytes");
+  await writeFile(`${bin}.previous`, "old-bytes");
+  try {
+    const newBytes = new TextEncoder().encode("newer-bytes");
+    const m = manifest("0.0.2", newBytes);
+    const deps = fakeDeps({ manifest: m, artifactBytes: newBytes });
+    const refused = await runUpgrade({
+      env: { OPENKAI_CHANNEL: "standalone", OPENKAI_AUTO_UPDATE_ENABLED: "false" },
+      currentBinary: bin,
+      currentVersion: "0.0.1",
+      deps,
+    });
+    assert.equal(refused.exitCode, 1);
+    assert.equal(refused.autoUpdateEnabled, false);
+    assert.match(refused.message, /disabled/);
+    assert.equal(await readFile(bin, "utf-8"), "new-bytes"); // untouched
+
+    const rolled = await runUpgrade({
+      rollback: true,
+      env: { OPENKAI_CHANNEL: "standalone", OPENKAI_AUTO_UPDATE_ENABLED: "false" },
+      currentBinary: bin,
+      currentVersion: "0.0.1",
+      deps,
+    });
+    assert.equal(rolled.exitCode, 0);
+    assert.match(rolled.message, /rollback complete/);
+    assert.equal(await readFile(bin, "utf-8"), "old-bytes");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+// ─── test helpers ─────────────────────────────────────────────────────────────
+
+interface FakeState {
+  manifest: ReleaseManifest;
+  artifactBytes: Uint8Array;
+  /** optional: per-URL override of downloaded bytes (for tamper tests) */
+  downloadedBytes?: Uint8Array;
+}
+
+/**
+ * Real-filesystem deps with only the network faked (mirrors the undo tests'
+ * pattern of real ops on mkdtemp temp dirs). No real network, no operator
+ * repo mutation — every path the Upgrader touches lives in a temp dir.
+ */
+function fakeDeps(state: FakeState): UpgradeDeps {
+  return {
+    fetchManifest: async () => state.manifest,
+    download: async () => state.downloadedBytes ?? state.artifactBytes,
+    readFile: (p) => fsp.readFile(p),
+    writeFile: (p, d) => fsp.writeFile(p, d),
+    rename: (from, to) => fsp.rename(from, to),
+    copyFile: (from, to) => fsp.copyFile(from, to),
+    chmod: async () => {},
+    stat: async (p: string) => {
+      const st = await fsp.stat(p);
+      return { isFile: st.isFile() };
+    },
+  };
+}
+
+// satisfy the unused-import linter for the re-exported type
+void (BUILD_CHANNEL as Channel);

@@ -18,6 +18,7 @@ import { runInfo } from "./info.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runUndo } from "./undo.js";
+import { runUpgrade, type UpgradeCliOptions } from "./upgrade.js";
 
 const USAGE = `openkai — OpenKai operator CLI
 
@@ -94,6 +95,13 @@ Environment:
   OPENKAI_MODEL          Default chat model (overrides the built-in default).
   CORTEX_PROJECT         Cortex project scope (default: openkai).
   CORTEX_API_URL         Cortex API base URL.
+  OPENKAI_CHANNEL        Override upgrade channel: standalone | npm.
+  OPENKAI_AUTO_UPDATE_ENABLED  Kill-switch: "false" disables standalone
+                         self-upgrade entirely (rollback still works).
+  OPENKAI_MANIFEST_URL   Release manifest URL (default:
+                         https://openkai.dev/releases/latest.json).
+  OPENKAI_RELEASE_PUBLIC_KEY  Base64 DER SPKI Ed25519 key; when set, manifest
+                         signatures are verified before any swap.
 `;
 
 interface EventsOptions {
@@ -347,6 +355,25 @@ async function main(argv: string[]): Promise<number> {
       project: getString("--project"),
       api: getString("--api"),
     });
+  }
+
+  // ── upgrade (Inc 08, ADR OK-8 dual-channel) ───────────────────────────────
+  if (command === "upgrade") {
+    const options: UpgradeCliOptions = {
+      check: getBool("--check"),
+      rollback: getBool("--rollback"),
+      version: getString("--version"),
+      manifestUrl: getString("--manifest-url"),
+    };
+    const result = await runUpgrade(options);
+    if (result.exitCode === 0) {
+      process.stdout.write(`${result.message}
+`);
+    } else {
+      process.stderr.write(`${result.message}
+`);
+    }
+    return result.exitCode;
   }
 
   // ── events (P1, unchanged) ─────────────────────────────────────────────────

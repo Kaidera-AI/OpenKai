@@ -9,6 +9,13 @@ import path from "node:path";
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { CortexClient, defaultFusionLogPath, readFusionRuns } from "@openkai/core";
+import {
+  BUILD_CHANNEL,
+  KILL_SWITCH_ENV,
+  detectTarget,
+  resolveAutoUpdateEnabled,
+  resolveChannel,
+} from "./upgrade.js";
 import { CLI_VERSION } from "./version.js";
 
 export interface InfoOptions {
@@ -89,6 +96,26 @@ export async function runInfo(options: InfoOptions): Promise<number> {
   lines.push(`  sessions: ${sessions}`);
   lines.push(`  fusion runs: ${runs.length}`);
   lines.push(`  shadow-git: ${shadow}`);
+
+  // Upgrade channel (ADR OK-8 dual-channel, Inc 08) — offline, no manifest
+  // fetch: channel + kill-switch + current version. `openkai upgrade --check`
+  // is the live availability probe.
+  const channel = resolveChannel({
+    buildChannel: BUILD_CHANNEL,
+    envChannel: process.env.OPENKAI_CHANNEL,
+  });
+  const autoUpdate = resolveAutoUpdateEnabled(process.env[KILL_SWITCH_ENV]);
+  lines.push("");
+  lines.push("upgrade:");
+  if (channel === "npm") {
+    lines.push("  channel: npm (pinned at build time, never self-mutates)");
+  } else {
+    lines.push("  channel: standalone");
+    lines.push(`  auto-update: ${autoUpdate ? "enabled" : `disabled (${KILL_SWITCH_ENV}=false)`}`);
+    lines.push(`  target: ${detectTarget()}`);
+  }
+  lines.push(`  current: ${version}`);
+  lines.push("  check availability: openkai upgrade --check");
 
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;

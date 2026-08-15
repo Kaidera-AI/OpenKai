@@ -34,6 +34,8 @@ mkdir -p "${OUTDIR}"
 for target in "${TARGETS[@]}"; do
     name="openkai-${target#bun-}"
     echo "compiling ${name}..."
-    bun build --compile --minify --target="${target}" "${ENTRY}" --outfile "${OUTDIR}/${name}" >/dev/null
+    bun build --compile --minify \
+        --define=OPENKAI_BUILD_CHANNEL:'"standalone"' \
+        --target="${target}" "${ENTRY}" --outfile "${OUTDIR}/${name}" >/dev/null
     echo "  -> ${OUTDIR}/${name}"
 done
