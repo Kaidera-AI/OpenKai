@@ -2,8 +2,9 @@
 
 All commands are executed via the `openkai` binary.
 
-## Global Options
-These options can be used with most commands to override environment defaults.
+## Cortex Options
+Read by `chat`, `tui` and `events` only. `sessions` and `fuse` accept them on the
+command line (the parser is shared) but ignore them — they do no Cortex reads.
 
 | Flag | Description | Default |
 |---|---|---|
@@ -22,6 +23,7 @@ Launches the pi-tui alt-screen TUI shell.
 - `--model <id>`: OpenRouter model id (default: `$OPENKAI_MODEL`).
 - `--session <id>`: Resume a specific session by id.
 - `--system-prompt <text>`: Override the default system prompt.
+- `--quiet`: Suppress stderr diagnostics.
 
 ### `openkai chat`
 Runs a single-prompt agent turn over OpenRouter and streams the reply to stdout.
@@ -52,6 +54,7 @@ Runs a task through the fusion core: pairs an Architect and a Builder in paralle
 - `--judge-model <id>`: Model for synthesis and gate validation.
 - `--gate`: Enable gate-first validation (FU-3).
 - `--max-rounds <n>`: Gate repair cap, 1-10 (default: 3).
+- `--quiet`: Suppress stderr diagnostics.
 
 ### `openkai events`
 Streams live Cortex team events (SSE) to stdout.
