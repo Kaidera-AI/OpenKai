@@ -13,7 +13,9 @@
       "default": "./dist/cortex/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -21,5 +23,9 @@
   "license": "MIT",
   "engines": {
     "node": ">=22.19"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.84.2",
+    "@earendil-works/pi-ai": "0.84.2"
   }
 }

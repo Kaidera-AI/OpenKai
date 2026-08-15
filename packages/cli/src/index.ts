@@ -2,37 +2,61 @@
 /**
  * openkai — operator CLI for the OpenKai harness.
  *
- * P1 scope (ADR §6): the read-only observer surface — `openkai events
- * --print` streams the project's live Cortex team_events into the terminal,
- * proving the @openkai/core SSE bridge end-to-end. The TUI lands on this
- * client in later phases.
+ * P1: `openkai events --print` streams the project's live Cortex team_events.
+ * P2: `openkai chat --prompt …` runs the single-lane agent loop (OpenRouter),
+ *      persisting the session JSONL v3 tree under `.openkai/sessions/` and
+ *      checkpointing to Cortex (`POST /sessions/ingest` + `POST /log`).
+ *      `openkai sessions` lists the local session tree.
  */
 
 import { CortexClient } from "@openkai/core";
 import type { TeamEventEntry } from "@openkai/core";
+import { runChat, type ChatOptions } from "./chat.js";
+import { runSessions, type SessionsOptions } from "./sessions.js";
 
 const USAGE = `openkai — OpenKai operator CLI
 
 Usage:
+  openkai chat --prompt <text> [options]
+  openkai sessions [--show <id>] [options]
   openkai events --print [options]
 
 Commands:
-  events --print        Stream live Cortex team events (GET /events SSE) to
-                        stdout, one TSV row per event:
-                        id <TAB> type <TAB> agent <TAB> summary
+  chat --prompt <text>   Run a single-prompt agent turn over OpenRouter and
+                         stream the reply to stdout. Persists the session
+                         JSONL v3 tree under .openkai/sessions/ and
+                         checkpoints it to Cortex.
+
+  sessions [--show <id>] List local persisted sessions (.openkai/sessions/),
+                         or show the full entry tree for one session id.
+
+  events --print         Stream live Cortex team events (GET /events SSE) to
+                         stdout, one TSV row per event:
+                         id <TAB> type <TAB> agent <TAB> summary
 
 Options:
-  --last-id <id>        Resume after a team_events id (default: stream head —
-                        only events newer than connect time are printed).
-  --count <n>           Events fetched per server read, 1-200 (default 50).
-  --ping <seconds>      Server keep-alive cadence, 1-60 (default 15).
-  --project <key>       Cortex project (default: $CORTEX_PROJECT).
-  --api <url>           Cortex API base URL
-                        (default: $CORTEX_API_URL or http://localhost:8501).
-  --agent <name>        Send X-Agent-Name with requests.
-  --keepalive           Also print ': ping' keep-alive ticks.
-  --verbose             Print connect/retry diagnostics to stderr.
-  -h, --help            Show this help.
+  --prompt <text>        (chat) The user prompt for the turn.
+  --model <id>           (chat) OpenRouter model id
+                         (default: $OPENKAI_MODEL or google/gemini-2.5-flash-lite).
+  --system-prompt <text> (chat) Override the system prompt.
+  --show <id>            (sessions) Show full entries for one session id.
+  --last-id <id>         (events) Resume after a team_events id.
+  --count <n>            (events) Events per server read, 1-200 (default 50).
+  --ping <seconds>       (events) Server keep-alive cadence, 1-60 (default 15).
+  --project <key>        Cortex project (default: $CORTEX_PROJECT or openkai).
+  --api <url>            Cortex API base URL
+                         (default: $CORTEX_API_URL or http://localhost:8501).
+  --agent <name>         Agent name for Cortex writes / X-Agent-Name.
+  --quiet                (chat) Suppress stderr diagnostics (deltas still stream).
+  --keepalive            (events) Print ': ping' keep-alive ticks.
+  --verbose              (events) Print connect/retry diagnostics to stderr.
+  -h, --help             Show this help.
+
+Environment:
+  OPENROUTER_API_KEY     Required for \`chat\` — OpenRouter API key.
+  OPENKAI_MODEL          Default chat model (overrides the built-in default).
+  CORTEX_PROJECT         Cortex project scope (default: openkai).
+  CORTEX_API_URL         Cortex API base URL.
 `;
 
 interface EventsOptions {
@@ -51,6 +75,10 @@ const fail = (message: string): number => {
   return 2;
 };
 
+class UsageError extends Error {
+  override readonly name = "UsageError";
+}
+
 const parseBoundedInt = (
   flag: string,
   raw: string,
@@ -68,12 +96,7 @@ const renderEvent = (entry: TeamEventEntry): string =>
   `${entry.id}\t${entry.fields.type}\t${entry.fields.agent}\t${entry.fields.summary.replace(/\n/g, " ")}`;
 
 async function runEvents(options: EventsOptions): Promise<number> {
-  const project = options.project ?? process.env.CORTEX_PROJECT;
-  if (!project) {
-    return fail(
-      "no Cortex project — pass --project or export CORTEX_PROJECT.",
-    );
-  }
+  const project = options.project ?? process.env.CORTEX_PROJECT ?? "openkai";
 
   const client = new CortexClient({
     baseUrl: options.api,
@@ -141,12 +164,9 @@ async function main(argv: string[]): Promise<number> {
     return command === undefined ? 2 : 0;
   }
 
-  if (command !== "events") {
-    return fail(`unknown command "${command}".`);
-  }
-
-  const options: EventsOptions = { keepalive: false, verbose: false };
-  let print = false;
+  // ── Shared flag parser helpers ─────────────────────────────────────────
+  const flags: Record<string, string | boolean | undefined> = {};
+  let positional: string[] = [];
 
   try {
     for (let index = 0; index < rest.length; index += 1) {
@@ -159,45 +179,20 @@ async function main(argv: string[]): Promise<number> {
         return raw;
       };
       switch (flag) {
-        case "--print":
-          print = true;
-          break;
-        case "--last-id":
-          options.lastId = value();
-          break;
-        case "--count": {
-          const parsed = parseBoundedInt("--count", value(), 1, 200);
-          if (typeof parsed === "string") return fail(parsed);
-          options.count = parsed;
-          break;
-        }
-        case "--ping": {
-          const parsed = parseBoundedInt("--ping", value(), 1, 60);
-          if (typeof parsed === "string") return fail(parsed);
-          options.pingSeconds = parsed;
-          break;
-        }
-        case "--project":
-          options.project = value();
-          break;
-        case "--api":
-          options.api = value();
-          break;
-        case "--agent":
-          options.agent = value();
-          break;
-        case "--keepalive":
-          options.keepalive = true;
-          break;
-        case "--verbose":
-          options.verbose = true;
-          break;
         case "--help":
         case "-h":
           process.stdout.write(USAGE);
           return 0;
         default:
-          return fail(`unknown option "${flag}".`);
+          if (flag?.startsWith("--")) {
+            if (index + 1 < rest.length && !rest[index + 1]?.startsWith("--")) {
+              flags[flag] = value();
+            } else {
+              flags[flag] = true;
+            }
+          } else {
+            positional.push(flag!);
+          }
       }
     }
   } catch (error) {
@@ -205,15 +200,72 @@ async function main(argv: string[]): Promise<number> {
     throw error;
   }
 
-  if (!print) {
-    return fail("events requires a mode — pass --print.");
+  const getString = (name: string): string | undefined =>
+    typeof flags[name] === "string" ? (flags[name] as string) : undefined;
+
+  const getBool = (name: string): boolean => flags[name] === true;
+
+  // ── chat ─────────────────────────────────────────────────────────────────
+  if (command === "chat") {
+    const prompt = getString("--prompt");
+    if (!prompt) {
+      return fail("chat requires --prompt <text>.");
+    }
+    const options: ChatOptions = {
+      prompt,
+      model: getString("--model"),
+      systemPrompt: getString("--system-prompt"),
+      project: getString("--project"),
+      api: getString("--api"),
+      agent: getString("--agent"),
+      quiet: getBool("--quiet"),
+    };
+    const result = await runChat(options);
+    if (result.exitCode === 0 && !options.quiet) {
+      process.stderr.write(`\n[openkai] session ${result.sessionId} done\n`);
+    }
+    return result.exitCode;
   }
 
-  return runEvents(options);
-}
+  // ── sessions ──────────────────────────────────────────────────────────────
+  if (command === "sessions") {
+    const options: SessionsOptions = {
+      show: getString("--show"),
+    };
+    return runSessions(options);
+  }
 
-class UsageError extends Error {
-  override readonly name = "UsageError";
+  // ── events (P1, unchanged) ─────────────────────────────────────────────────
+  if (command === "events") {
+    if (!getBool("--print")) {
+      return fail("events requires a mode — pass --print.");
+    }
+    const options: EventsOptions = {
+      lastId: getString("--last-id"),
+      count: undefined,
+      pingSeconds: undefined,
+      project: getString("--project"),
+      api: getString("--api"),
+      agent: getString("--agent"),
+      keepalive: getBool("--keepalive"),
+      verbose: getBool("--verbose"),
+    };
+    const countRaw = getString("--count");
+    if (countRaw) {
+      const parsed = parseBoundedInt("--count", countRaw, 1, 200);
+      if (typeof parsed === "string") return fail(parsed);
+      options.count = parsed;
+    }
+    const pingRaw = getString("--ping");
+    if (pingRaw) {
+      const parsed = parseBoundedInt("--ping", pingRaw, 1, 60);
+      if (typeof parsed === "string") return fail(parsed);
+      options.pingSeconds = parsed;
+    }
+    return runEvents(options);
+  }
+
+  return fail(`unknown command "${command}".`);
 }
 
 // A pipe closing early (e.g. `| head`) is a clean exit, not a crash.

@@ -1,7 +1,7 @@
 {
   "name": "@openkai/cli",
   "version": "0.0.0",
-  "description": "OpenKai CLI + TUI — the operator surface for the OpenKai harness.",
+  "description": "OpenKai CLI + TUI \u2014 the operator surface for the OpenKai harness.",
   "type": "module",
   "bin": {
     "openkai": "./dist/index.js"
@@ -20,6 +20,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@earendil-works/pi-tui": "0.84.2",
     "@openkai/core": "0.0.0"

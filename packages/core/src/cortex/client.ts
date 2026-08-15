@@ -97,6 +97,35 @@ export class CortexClient {
     return JSON.parse(text) as T;
   }
 
+  /**
+   * `POST` a JSON payload to a Cortex path. Returns the parsed JSON response
+   * (or `undefined` for an empty body). Used by the session-checkpoint and
+   * lifecycle-event writers (P2+).
+   */
+  async postJson<T>(
+    path: string,
+    payload: unknown,
+    options: { agent?: string } = {},
+  ): Promise<T> {
+    const headers = this.headers({ "Content-Type": "application/json" });
+    if (options.agent) headers["X-Agent-Name"] = options.agent;
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new CortexApiError(
+        `POST ${path} failed with HTTP ${response.status}`,
+        response.status,
+        text,
+      );
+    }
+    if (!text.trim()) return undefined as T;
+    return JSON.parse(text) as T;
+  }
+
   /** `GET /health` — liveness + backend configuration of this Cortex API. */
   health(): Promise<CortexHealth> {
     return this.getJson<CortexHealth>("/health");
