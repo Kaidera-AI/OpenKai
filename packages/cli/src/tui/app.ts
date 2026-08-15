@@ -18,15 +18,12 @@
  * resolved + reachable → Cortex checkpoints on, chrome shows the project key).
  */
 
-import path from "node:path";
-import { ScrollView, VStack, TuiAltScreen, ProcessTerminal } from "@earendil-works/pi-tui";
+import { ScrollView, VStack } from "@earendil-works/pi-tui";
 import type { Component, TUI, StackChild } from "@earendil-works/pi-tui";
 import {
-  CortexClient,
   CortexCheckpoint,
-  DEFAULT_CORTEX_API_URL,
-  InProcessTransport,
   SessionStore,
+  listSessions,
   type SessionEvent,
   type SessionTransport,
   type UsageSnapshot,
@@ -34,13 +31,20 @@ import {
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
-import { StatusLine, defaultStatusState, type StatusState } from "./status.js";
-import { installKeymap, isToggleThinking, isQuit, DoubleEscDetector } from "./keymap.js";
+import { StatusLine, defaultStatusState } from "./status.js";
 import { parseSlashCommand, helpText } from "./commands.js";
-import { text as textToken } from "./theme.js";
 
 /** Run mode resolved at startup (A1). */
 export type RunMode = "local" | "managed";
+
+/**
+ * What the app is asking the runtime to do next. `/quit` + Ctrl+C×2 end the
+ * process; `/new` and `/resume <id>` ask the runtime to tear the session down
+ * and rebuild against a different session id (scope §4 session resume).
+ */
+export type ExitRequest =
+  | { kind: "quit" }
+  | { kind: "restart"; sessionId?: string };
 
 /** Options shared by both entry points. */
 export interface TuiAppOptions {
@@ -58,6 +62,10 @@ export interface TuiAppOptions {
   checkpoint?: CortexCheckpoint;
   /** Initial transcript messages to replay (session resume). */
   replayMessages?: AgentMessage[];
+  /** Root of the local session store — read by `/sessions` (default: store root). */
+  sessionsRoot?: string;
+  /** Called when the app wants to exit or switch session (`/quit`, `/new`, `/resume`). */
+  onExit?: (request: ExitRequest) => void;
 }
 
 /** The built TUI app handle. */
@@ -90,9 +98,20 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
   const status = new StatusLine(statusState);
 
+  // The controller owns the submit path: it persists + renders the user message
+  // before prompting the model. The composer must route through it — calling
+  // `transport.prompt` directly would stream a reply for a prompt that was
+  // never shown in the transcript and never written to the session JSONL.
+  const controller = new TuiController(tui, options, transcript, status);
+
   const composer = new Composer(tui, {
     onSubmit: (text) => {
-      void options.transport.prompt(text);
+      const command = parseSlashCommand(text);
+      if (command) {
+        void controller.dispatchCommand(command.name, command.argument);
+        return;
+      }
+      void controller.submit(text);
     },
   });
 
@@ -106,8 +125,6 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     ] as StackChild[],
     { gap: 0, align: "stretch" },
   );
-
-  const controller = new TuiController(tui, options, transcript, status);
 
   return { root, transcript, composer, status, controller };
 }
@@ -144,6 +161,8 @@ export class TuiController {
   private readonly status: StatusLine;
   private readonly modelId: string;
   private readonly sessionId: string;
+  private readonly sessionsRoot?: string;
+  private readonly onExit?: (request: ExitRequest) => void;
   private busy = false;
   private done = false;
 
@@ -156,6 +175,57 @@ export class TuiController {
     this.status = status;
     this.modelId = options.modelId;
     this.sessionId = options.sessionId;
+    this.sessionsRoot = options.sessionsRoot;
+    this.onExit = options.onExit;
+  }
+
+  /**
+   * Execute a slash command (scope §4). Command output is a local notice block
+   * — never sent to the model, never persisted. Unknown commands report rather
+   * than silently prompting the model with the raw `/text`.
+   */
+  async dispatchCommand(name: string, argument: string): Promise<void> {
+    switch (name) {
+      case "help":
+        this.transcript.addNotice(helpText());
+        break;
+      case "model":
+        // P4a shows the model; cycling/changing is P4b (scope §3.4).
+        this.transcript.addNotice(
+          argument.length > 0
+            ? `model: ${this.modelId} — changing the model mid-session is P4b; relaunch with --model ${argument}`
+            : `model: ${this.modelId}`,
+        );
+        break;
+      case "sessions": {
+        const ids = await listSessions(this.sessionsRoot);
+        this.transcript.addNotice(
+          ids.length === 0
+            ? "sessions: none yet"
+            : ["sessions:", ...ids.map((id) => `  ${id}${id === this.sessionId ? "  (current)" : ""}`)],
+        );
+        break;
+      }
+      case "new":
+        this.transcript.addNotice("starting a fresh session…");
+        this.onExit?.({ kind: "restart" });
+        break;
+      case "resume":
+        if (argument.length === 0) {
+          this.transcript.addNotice("resume: needs a session id — /resume <id> (see /sessions)");
+          break;
+        }
+        this.transcript.addNotice(`resuming ${argument}…`);
+        this.onExit?.({ kind: "restart", sessionId: argument });
+        break;
+      case "quit":
+        this.onExit?.({ kind: "quit" });
+        break;
+      default:
+        this.transcript.addNotice(`unknown command: /${name} — try /help`);
+        break;
+    }
+    this.tui.requestRender();
   }
 
   /** Submit a user prompt: persist + display + fire the transport turn. */

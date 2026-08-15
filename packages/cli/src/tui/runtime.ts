@@ -21,10 +21,8 @@ import {
   readSessionMessages,
 } from "@openkai/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { buildTuiApp, type RunMode } from "./app.js";
+import { buildTuiApp, type RunMode, type ExitRequest } from "./app.js";
 import { installKeymap, isToggleThinking, isQuit, DoubleEscDetector } from "./keymap.js";
-import { parseSlashCommand, helpText } from "./commands.js";
-import { highlight, text as textToken } from "./theme.js";
 
 /** Options for {@link runTui}. */
 export interface RunTuiOptions {
@@ -84,8 +82,25 @@ export async function resolveRunMode(options: RunTuiOptions): Promise<ResolvedRu
   }
 }
 
-/** Run the TUI against the real terminal. Returns the exit code. */
+/**
+ * Run the TUI against the real terminal. Returns the exit code.
+ *
+ * Loops over {@link runSession} so `/new` and `/resume <id>` can tear the
+ * session down and rebuild against a different session id without leaving the
+ * process (scope §4).
+ */
 export async function runTui(options: RunTuiOptions): Promise<number> {
+  let session = options.session;
+  for (;;) {
+    const { code, next } = await runSession({ ...options, session });
+    if (next.kind === "quit") return code;
+    // `/new` ⇒ no id ⇒ the store mints a fresh one; `/resume <id>` ⇒ that id.
+    session = next.sessionId;
+  }
+}
+
+/** Run one session to its exit request. Returns the code + what to do next. */
+async function runSession(options: RunTuiOptions): Promise<{ code: number; next: ExitRequest }> {
   const modelId = options.model ?? process.env.OPENKAI_MODEL ?? "nvidia/nemotron-3-nano-30b-a3b:free";
   const agent = options.agent ?? process.env.OPENKAI_AGENT ?? "openkai";
   const cwd = process.cwd();
@@ -108,7 +123,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
       replayMessages = await readSessionMessages(store.filePath);
     } catch (error) {
       if (!options.quiet) process.stderr.write(`[openkai] resume failed: ${error instanceof Error ? error.message : String(error)}\n`);
-      return 1;
+      return { code: 1, next: { kind: "quit" } };
     }
   }
 
@@ -140,7 +155,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   } catch (error) {
     if (error instanceof MissingApiKeyError) {
       process.stderr.write(`${error.message}\n`);
-      return 1;
+      return { code: 1, next: { kind: "quit" } };
     }
     throw error;
   }
@@ -150,6 +165,20 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   const tui = new TuiAltScreen(terminal, true);
   const manager = installKeymap();
 
+  // Exit signalling: one promise, resolved once, by whichever path fires first
+  // (Ctrl+C×2, `/quit`, `/new`, `/resume`). No polling timers — an uncleared
+  // interval would keep the event loop alive and hang the process on exit.
+  let signalExit!: (request: ExitRequest) => void;
+  const exitRequested = new Promise<ExitRequest>((resolve) => {
+    signalExit = resolve;
+  });
+  let exitSignalled = false;
+  const requestExit = (request: ExitRequest): void => {
+    if (exitSignalled) return;
+    exitSignalled = true;
+    signalExit(request);
+  };
+
   const app = buildTuiApp(tui, {
     transport,
     modelId,
@@ -158,8 +187,10 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     store,
     checkpoint,
     replayMessages,
+    sessionsRoot,
+    onExit: requestExit,
   });
-  const { root, transcript, composer, controller } = app;
+  const { root, composer, controller } = app;
 
   tui.setLayoutRoot(root);
   tui.setFocus(composer.editor);
@@ -167,7 +198,6 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   // ── Input listener: Ctrl+O density, double-Esc clear, Ctrl+C quit-confirm ─
   const escDetector = new DoubleEscDetector();
   let lastQuitConfirmAt = 0;
-  let quitRequested = false;
 
   tui.addInputListener((data) => {
     // Ctrl+O → toggle thinking density (scope §3.3).
@@ -186,7 +216,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     if (isQuit(data, manager)) {
       const now = Date.now();
       if (lastQuitConfirmAt > 0 && now - lastQuitConfirmAt <= 700) {
-        quitRequested = true;
+        requestExit({ kind: "quit" });
         return { consume: true };
       }
       lastQuitConfirmAt = now;
@@ -208,34 +238,18 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     }
   }
 
-  // Run the controller event loop concurrently. When the user quits
-  // (Ctrl+C×2 or /quit), abort the transport and stop the TUI.
+  // Run the controller event loop concurrently. Whichever finishes first wins:
+  // the user asking to exit, or the transport stream ending on its own.
   const consumePromise = controller.consume();
-
-  // Wait until quit is requested, then tear down.
-  const quitCheck = setInterval(() => {
-    if (quitRequested) clearInterval(quitCheck);
-  }, 100);
-
-  // Race: consume ends (e.g. transport closed) OR user quits.
-  await Promise.race([
-    consumePromise,
-    new Promise<void>((resolve) => {
-      const check = setInterval(() => {
-        if (quitRequested) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 50);
-    }),
+  const next = await Promise.race([
+    exitRequested,
+    consumePromise.then((): ExitRequest => ({ kind: "quit" })).catch((): ExitRequest => ({ kind: "quit" })),
   ]);
 
   await controller.shutdown();
   await consumePromise.catch(() => undefined);
-  clearInterval(quitCheck);
 
   tui.stop();
-  terminal.drainInput();
-  process.exitCode = 0;
-  return 0;
+  await terminal.drainInput();
+  return { code: 0, next };
 }

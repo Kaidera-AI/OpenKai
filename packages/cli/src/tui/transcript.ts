@@ -42,6 +42,7 @@ type Block =
   | { kind: "user"; text: string; comp: Markdown }
   | { kind: "assistant"; text: string; comp: Markdown }
   | { kind: "thinking"; text: string; revealed: boolean; comp: Text }
+  | { kind: "notice"; text: string; comp: Text }
   | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result: unknown | null; isError: boolean; settled: boolean; comp: Text };
 
 /** A muted left-border prefix for tool cards (scope §3.1). */
@@ -70,6 +71,23 @@ export class Transcript implements Component {
   addUserMessage(text: string): void {
     const comp = new Markdown(`**You**\n\n${text}`, 1, 0, markdownTheme);
     this.blocks.push({ kind: "user", text, comp });
+  }
+
+  /**
+   * Add a local notice block — slash-command output (`/help`, `/sessions`, …).
+   * Never sent to the model and never persisted; it is operator-local chrome.
+   */
+  addNotice(lines: string | string[]): void {
+    const body = Array.isArray(lines) ? lines.join("\n") : lines;
+    const comp = new Text(
+      body
+        .split("\n")
+        .map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`)
+        .join("\n"),
+      1,
+      0,
+    );
+    this.blocks.push({ kind: "notice", text: body, comp });
   }
 
   /** Replay a settled assistant message (session resume — no live streaming). */
