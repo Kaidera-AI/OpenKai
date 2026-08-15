@@ -415,6 +415,39 @@ test("CLI: kill-switch off → upgrade exits 1 and refuses; --rollback still wor
   }
 });
 
+test("CLI: OPENKAI_CHANNEL=standalone on an npm build refuses — never overwrites process.execPath", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  // No `currentBinary`: this is the real-operator path where it would default
+  // to process.execPath (node, under an npm install). The swap must be refused
+  // before any download — overwriting the host interpreter is not an upgrade.
+  const newBytes = new TextEncoder().encode("newer-bytes");
+  const m = manifest("9.9.9", newBytes);
+  let downloaded = false;
+  const deps = {
+    ...fakeDeps({ manifest: m, artifactBytes: newBytes }),
+    download: async () => {
+      downloaded = true;
+      return newBytes;
+    },
+  };
+  const execPathBefore = await readFile(process.execPath);
+
+  const res = await runUpgrade({
+    env: { OPENKAI_CHANNEL: "standalone" },
+    currentVersion: "0.0.1",
+    deps,
+  });
+
+  assert.equal(res.exitCode, 1);
+  assert.match(res.message, /not a\nstandalone binary/);
+  assert.equal(downloaded, false, "must refuse before downloading an artifact");
+  assert.deepEqual(
+    await readFile(process.execPath),
+    execPathBefore,
+    "the running interpreter must be byte-identical after a refused upgrade",
+  );
+});
+
 // ─── test helpers ─────────────────────────────────────────────────────────────
 
 interface FakeState {

@@ -518,6 +518,27 @@ export async function runUpgrade(
     return { exitCode: 0, message, channel: "npm", autoUpdateEnabled: false };
   }
 
+  // `OPENKAI_CHANNEL=standalone` must not re-enter the self-mutating path on a
+  // build that is not a compiled standalone binary. Under a host interpreter
+  // `process.execPath` is *node*, not an openkai binary, so the swap would
+  // overwrite the user's node install with a release artifact — the witness
+  // verifies the bytes, but nothing else verifies the destination. Callers that
+  // pass an explicit `currentBinary` (tests, embedders) are unaffected.
+  if (BUILD_CHANNEL !== "standalone" && options.currentBinary === undefined) {
+    const message = [
+      `openkai upgrade — refusing standalone self-upgrade: this build is not a`,
+      `standalone binary (${CHANNEL_ENV}=standalone was set on an npm build).`,
+      `Self-upgrade here would overwrite ${ctx.currentBinary}, not an openkai binary.`,
+      `Upgrade explicitly with: npm install -g @openkai/cli@<version>`,
+    ].join("\n");
+    return {
+      exitCode: 1,
+      message,
+      channel: ctx.channel,
+      autoUpdateEnabled: ctx.autoUpdateEnabled,
+    };
+  }
+
   const upgrader = new Upgrader({
     manifestUrl: ctx.manifestUrl,
     currentBinary: ctx.currentBinary,
