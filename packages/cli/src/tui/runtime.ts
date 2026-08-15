@@ -46,10 +46,12 @@ import {
   isFocusOut,
 } from "./attention.js";
 import { FrecencyHistory } from "./stash.js";
+import { providerKeyStatus, resolveProvider } from "../providers.js";
 
 /** Options for {@link runTui}. */
 export interface RunTuiOptions {
   model?: string;
+  provider?: string;
   session?: string;
   systemPrompt?: string;
   project?: string;
@@ -104,7 +106,21 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
 /** Run one session to its exit request. */
 async function runSession(options: RunTuiOptions): Promise<{ code: number; next: ExitRequest }> {
-  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? "nvidia/nemotron-3-nano-30b-a3b:free";
+  const provider = resolveProvider(options.provider);
+  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? (provider === "openrouter" ? "nvidia/nemotron-3-nano-30b-a3b:free" : undefined);
+  if (!modelId) {
+    process.stderr.write(
+      `ERROR: no default model for provider "${provider}" — pass --model <id> (or set OPENKAI_MODEL).\n`,
+    );
+    return { code: 2, next: { kind: "quit" } };
+  }
+  const keyStatus = providerKeyStatus(provider);
+  if (!keyStatus.configured) {
+    process.stderr.write(
+      `${provider} credentials not found: set ${keyStatus.needsKey ?? "the provider credentials"} or export them in your environment.\n`,
+    );
+    return { code: 1, next: { kind: "quit" } };
+  }
   const agent = options.agent ?? process.env.OPENKAI_AGENT ?? "openkai";
   const cwd = process.cwd();
   const sessionsRoot = options.sessionsRoot ?? path.join(cwd, ".openkai", "sessions");
@@ -131,7 +147,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       agent,
       sessionId: store.sessionId,
       sourcePath: path.resolve(store.filePath),
-      provider: "openrouter",
+      provider,
       modelId,
       cwd,
       task: "openkai tui",
@@ -143,6 +159,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     transport = new InProcessTransport({
       sessionId: store.sessionId,
       modelId,
+      provider,
       systemPrompt: options.systemPrompt,
       cwd,
       initialMessages: replayMessages,

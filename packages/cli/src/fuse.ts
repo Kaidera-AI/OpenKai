@@ -15,12 +15,14 @@ import {
   type RoleOutput,
   type SynthesisArtifact,
 } from "@openkai/core";
+import { providerKeyStatus, resolveProvider } from "./providers.js";
 
 export interface FuseCliOptions {
   prompt: string;
   architectModel?: string;
   builderModel?: string;
   judgeModel?: string;
+  provider?: string;
   gate: boolean;
   maxRounds?: number;
   project?: string;
@@ -69,20 +71,28 @@ const renderSynthesis = (s: SynthesisArtifact): string => {
 };
 
 export async function runFuse(options: FuseCliOptions): Promise<number> {
-  if (!process.env.OPENROUTER_API_KEY) {
+  const provider = resolveProvider(options.provider);
+  const keyStatus = providerKeyStatus(provider);
+  if (!keyStatus.configured) {
     process.stderr.write(
-      "OpenRouter API key not found: set OPENROUTER_API_KEY or export it in your environment.\n",
+      `${provider} credentials not found: set ${keyStatus.needsKey ?? "the provider credentials"} or export them in your environment.\n`,
     );
     return 1;
   }
 
   const models = builtinModels();
-  const defaultId = process.env.OPENKAI_MODEL ?? DEFAULT_MODEL_ID;
-  const resolve = (id: string, label: string) => {
-    const model = models.getModel("openrouter", id);
+  const defaultId = process.env.OPENKAI_MODEL ?? (provider === "openrouter" ? DEFAULT_MODEL_ID : undefined);
+  const resolve = (id: string | undefined, label: string) => {
+    if (!id) {
+      process.stderr.write(
+        `ERROR: no default model for provider "${provider}" — pass --${label}-model <id> (or set OPENKAI_MODEL).\n`,
+      );
+      return undefined;
+    }
+    const model = models.getModel(provider, id);
     if (!model) {
       process.stderr.write(
-        `ERROR: ${label} model "${id}" not found in the OpenRouter catalogue (default: "${defaultId}").\n`,
+        `ERROR: ${label} model "${id}" not found under provider "${provider}".\n`,
       );
       return undefined;
     }

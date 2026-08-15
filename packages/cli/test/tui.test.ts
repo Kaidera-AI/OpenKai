@@ -242,7 +242,10 @@ test("composer wiring: Enter renders AND persists the user message", async () =>
 
   const frame = renderFrame(app, 80);
   assert.ok(frame.includes("typed by a human"), "the submitted prompt must render in the transcript");
-  assert.equal(app.transcript.blockKinds()[0], "user", "the turn must open with a user block");
+  // The first CONVERSATION block is the user turn; brand/splash notices are
+  // app chrome and may precede it.
+  const conversationBlocks = app.transcript.blockKinds().filter((k) => k !== "notice");
+  assert.equal(conversationBlocks[0], "user", "the turn must open with a user block");
 
   const roles = (await readSessionMessages(store.filePath)).map((m) => (m as { role: string }).role);
   assert.ok(roles.includes("user"), `the user message must be persisted (got ${JSON.stringify(roles)})`);

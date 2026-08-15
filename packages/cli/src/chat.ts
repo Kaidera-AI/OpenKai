@@ -21,11 +21,13 @@ import {
   CortexCheckpoint,
 } from "@openkai/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { providerKeyStatus, resolveProvider } from "./providers.js";
 
 /** Options for the `chat` command. */
 export interface ChatOptions {
   prompt: string;
   model?: string;
+  provider?: string;
   systemPrompt?: string;
   project?: string;
   api?: string;
@@ -46,15 +48,24 @@ const AGENT_NAME_DEFAULT = "openkai";
 
 /** Run a single-prompt chat turn. */
 export async function runChat(options: ChatOptions): Promise<ChatResult> {
-  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? DEFAULT_MODEL_ID;
+  const provider = resolveProvider(options.provider);
+  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? (provider === "openrouter" ? DEFAULT_MODEL_ID : undefined);
+  if (!modelId) {
+    process.stderr.write(
+      `ERROR: no default model for provider "${provider}" — pass --model <id> (or set OPENKAI_MODEL).\n`,
+    );
+    return { exitCode: 2, sessionId: "", modelId: "" };
+  }
   const project = options.project ?? process.env.CORTEX_PROJECT ?? "openkai";
   const agent = options.agent ?? process.env.OPENKAI_AGENT ?? AGENT_NAME_DEFAULT;
   const cwd = process.cwd();
 
-  // ── 1. Fail fast on missing API key (named error, exit 1) ──────────────
-  if (!process.env.OPENROUTER_API_KEY) {
-    const err = new MissingApiKeyError("OpenRouter", "OPENROUTER_API_KEY");
-    process.stderr.write(`${err.message}\n`);
+  // ── 1. Fail fast on missing provider credentials (named error, exit 1) ──
+  const keyStatus = providerKeyStatus(provider);
+  if (!keyStatus.configured) {
+    process.stderr.write(
+      `${provider} credentials not found: set ${keyStatus.needsKey ?? "the provider credentials"} or export them in your environment.\n`,
+    );
     return { exitCode: 1, sessionId: "", modelId };
   }
 
@@ -76,7 +87,7 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
     agent,
     sessionId: store.sessionId,
     sourcePath: path.resolve(store.filePath),
-    provider: "openrouter",
+    provider,
     modelId,
     cwd,
     task: options.prompt.slice(0, 200),
@@ -88,6 +99,7 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
     transport = new InProcessTransport({
       sessionId: store.sessionId,
       modelId,
+      provider,
       systemPrompt: options.systemPrompt,
       cwd,
     });

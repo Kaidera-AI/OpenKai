@@ -7,3 +7,4 @@ dist/
 .cortex/dashboards/
 packages/cli/bin/
 dist-test/
+.env

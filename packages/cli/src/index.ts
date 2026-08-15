@@ -9,15 +9,21 @@
  *      `openkai sessions` lists the local session tree.
  */
 
-import { CortexClient, DEFAULT_MODEL_ID } from "@openkai/core";
+import { CortexClient } from "@openkai/core";
 import type { TeamEventEntry } from "@openkai/core";
+import { DEFAULT_MODEL_ID } from "@openkai/core";
 import { runChat, type ChatOptions } from "./chat.js";
+import { loadDotEnv } from "./env.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";
 import { runFusionAdvise, runFusionReport } from "./fusion.js";
 import { runInfo } from "./info.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runUndo } from "./undo.js";
+
+// .env from the current directory loads before any command resolves config;
+// real environment variables always win over file values.
+loadDotEnv();
 import { runUpgrade, type UpgradeCliOptions } from "./upgrade.js";
 
 const USAGE = `openkai — OpenKai operator CLI
@@ -67,7 +73,11 @@ Commands:
 
 Options:
   --prompt <text>        (chat) The user prompt for the turn.
-  --model <id>           (chat) OpenRouter model id
+  --provider <id>        Provider: openrouter (default), anthropic, openai,
+                         google, deepseek, kimi-coding, qwen-token-plan, xai,
+                         mistral, groq, cerebras, together, fireworks, nvidia,
+                         minimax, zai, vercel-ai-gateway. Keys live in .env.
+  --model <id>           Model id within the provider's catalogue
                          (default: $OPENKAI_MODEL or ${DEFAULT_MODEL_ID}).
   --system-prompt <text> (chat) Override the system prompt.
   --show <id>            (sessions) Show full entries for one session id.
@@ -267,6 +277,7 @@ async function main(argv: string[]): Promise<number> {
     const options: ChatOptions = {
       prompt,
       model: getString("--model"),
+      provider: getString("--provider"),
       systemPrompt: getString("--system-prompt"),
       project: getString("--project"),
       api: getString("--api"),
@@ -299,6 +310,7 @@ async function main(argv: string[]): Promise<number> {
       architectModel: getString("--architect-model"),
       builderModel: getString("--builder-model"),
       judgeModel: getString("--judge-model"),
+      provider: getString("--provider"),
       gate: getBool("--gate"),
       project: getString("--project") ?? process.env.CORTEX_PROJECT,
       api: getString("--api"),
@@ -427,6 +439,7 @@ function buildTuiOptions(rest: string[], preFlags?: Record<string, string | bool
   const getBool = (name: string): boolean => flags[name] === true;
   return {
     model: getString("--model"),
+    provider: getString("--provider"),
     session: getString("--session"),
     systemPrompt: getString("--system-prompt"),
     project: getString("--project"),

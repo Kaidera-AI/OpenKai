@@ -17,6 +17,7 @@ import {
   resolveChannel,
 } from "./upgrade.js";
 import { CLI_VERSION } from "./version.js";
+import { PROVIDERS, providerKeyStatus, resolveProvider } from "./providers.js";
 
 export interface InfoOptions {
   project?: string;
@@ -72,7 +73,7 @@ export async function runInfo(options: InfoOptions): Promise<number> {
     }
   }
 
-  // Provider catalogue (offline, bundled).
+  // Provider catalogue (offline, bundled) + configuration matrix.
   try {
     const catalogue = builtinModels();
     const openrouterCount = catalogue.getModels("openrouter").length;
@@ -80,9 +81,20 @@ export async function runInfo(options: InfoOptions): Promise<number> {
   } catch {
     lines.push("model catalogue: unavailable");
   }
-  lines.push(
-    `openrouter key: ${process.env.OPENROUTER_API_KEY ? "set" : "MISSING (chat/fuse need it)"}`,
-  );
+  lines.push("");
+  lines.push("providers:");
+  const activeProvider = resolveProvider();
+  for (const [id, info] of Object.entries(PROVIDERS)) {
+    const status = providerKeyStatus(id);
+    const mark = status.configured ? "✓" : "·";
+    const active = id === activeProvider ? " (active)" : "";
+    const detail = status.oauth === true
+      ? "OAuth lane — no env key needed (login flow at first use)"
+      : status.configured
+        ? `via ${status.via}`
+        : `set ${status.needsKey}`;
+    lines.push(`  ${mark} ${id}${active} — ${detail}`);
+  }
 
   // Local state.
   const sessions = await countDirs(path.join(process.cwd(), ".openkai", "sessions"));

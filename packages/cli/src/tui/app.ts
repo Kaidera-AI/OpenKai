@@ -36,6 +36,8 @@ import { parseSlashCommand, helpText, buildPaletteItems } from "./commands.js";
 import { PermissionOverlay, type PermissionDecision } from "./permission.js";
 import { CommandPalette, type PaletteItem } from "./palette.js";
 import { PromptStash, FrecencyHistory } from "./stash.js";
+import { splashLines } from "./brand.js";
+import { CLI_VERSION } from "../version.js";
 import type { AttentionNotifier } from "./attention.js";
 
 /** Run mode resolved at startup (A1). */
@@ -91,6 +93,10 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
       if (role === "user") transcript.addUserMessage(text);
       else if (role === "assistant") transcript.replayAssistant(text);
     }
+  } else {
+    // Brand moment: full splash exactly once, compact mark ever after
+    // (droid bar; state is user-global, ~/.openkai/state.json).
+    transcript.addNotice(splashLines(CLI_VERSION));
   }
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
   statusState.agentName = agentName;
