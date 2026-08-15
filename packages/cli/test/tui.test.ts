@@ -135,10 +135,10 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
 
   // Streamed assistant text present (golden cell).
   assert.ok(frame.includes("Hello, OpenKai!"), "assistant streamed text must appear in the frame");
-  // Tool card present — the muted-left-border `tool` label + the echo name.
-  assert.ok(/tool\s+echo/.test(frame), "a tool card with the echo tool must render");
-  // Tool result settled — `ok` status appears after the tool executes.
-  assert.ok(/ok/.test(frame), "tool result `ok` status must appear after settlement");
+  // Tool card present — tool name tinted + status in the header (new card design).
+  assert.ok(/echo\s+·\s+✓ done/.test(frame), "a tool card with the echo tool must render");
+  // Tool result settled — `done` status appears after the tool executes.
+  assert.ok(/done/.test(frame), "tool result `done` status must appear after settlement");
   // Chrome line present with model + session + persist-mode (always visible, scope §3.4).
   assert.ok(frame.includes("faux-1"), "chrome must show the model id");
   assert.ok(frame.includes("01TESTGO"), "chrome must show the session id prefix");

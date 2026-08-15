@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OpenKai TUI</title>
+<link rel="stylesheet" href="../../../../node_modules/@xterm/xterm/css/xterm.css">
+<style>
+  html, body { margin: 0; background: #0b0e14; overflow: hidden; }
+  .xterm .xterm-viewport::-webkit-scrollbar { display: none; }
+  .xterm .xterm-viewport { scrollbar-width: none; }
+  #term { padding: 14px; }
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script src="../../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script>
+  const cols = 110, rows = 34;
+  const term = new Terminal({
+    cols, rows,
+    fontFamily: "'SF Mono', Menlo, monospace",
+    fontSize: 14,
+    lineHeight: 1.15,
+    theme: { background: '#0b0e14', foreground: '#bfbdb6', cursor: '#0b0e14' },
+    allowProposedApi: true,
+    scrollback: 100,
+    scrollbar: undefined,
+    overviewRuler: { width: 0 },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('term'));
+  fit.fit();
+  const data = " \u001b[38;5;241m\u258e \u001b[38;5;244mOpenKai 0.1.1 \u00b7 by Kaidera \u2014 /help for commands, Ctrl+K palette\u001b[39m\n\n \u001b[1m\u001b[38;5;252mYou\u001b[0m\n\n list the files in the current directory (use path .)\n\n \u001b[2m\u001b[38;5;244m\u2937 thinking\u2026\u001b[0m\n\n\n \u001b[38;5;241m\u258e \u001b[38;5;39mlist_files\u001b[39m \u001b[2m\u001b[38;5;244m\u00b7\u001b[0m \u001b[38;5;39m\u2713 done\u001b[39m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[2m\u001b[38;5;244mpath: .\u001b[0m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[38;5;244m.agents/\u001b[39m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[38;5;244m.cortex/\u001b[39m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[38;5;244m.env\u001b[39m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[38;5;244m.env.example\u001b[39m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[38;5;244m.git/\u001b[39m\n \u001b[38;5;241m\u258e \u001b[39m  \u001b[38;5;244m\u2026 24 more lines\u001b[39m\n\n \u001b[2m\u001b[38;5;244m\u2937 thinking\u2026\u001b[0m\n\n\u001b[48;5;237m \u001b[38;5;204m[OPENKAI]\u001b[39m\n\n The files in the current directory are listed.\n\n\u001b[38;5;241m\u001b[49m\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\u001b[39m \u001b[7m \u001b[0m\n\u001b[38;5;241m\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\u001b[39m\u001b[48;5;240m \u001b[38;5;204m[OPENKAI]\u001b[39m \u001b[38;5;244m\u00b7\u001b[39m meta/llama-3.1-8b\u2026 \u001b[38;5;244m\u00b7\u001b[39m 01a007bb \u001b[38;5;244m\u00b7\u001b[39m 1202t \u001b[38;5;244m\u00b7\u001b[39m p:local \u001b[38;5;244m\u00b7\u001b[39m \u001b[38;5;244m\u25cb idle\u001b[39m\n\n\n\n\n";
+  term.write(data.replace(/\n/g, '\r\n'));
+  document.title = 'ready';
+</script>
+</body>
+</html>

@@ -46,6 +46,56 @@ function safeStringify(value: unknown): string {
   }
 }
 
+/**
+ * Render tool args as short `key: value` lines (max 4 keys; long values
+ * truncated at PREVIEW_LEN). Objects/arrays show as compact JSON; scalars
+ * bare. Empty args render as nothing.
+ */
+function formatArgs(args: unknown): string[] {
+  if (args === null || args === undefined) return [];
+  if (typeof args !== "object") return [preview(args)];
+  const entries = Object.entries(args as Record<string, unknown>);
+  if (entries.length === 0) return [];
+  return entries.slice(0, 4).map(([key, value]) => {
+    const rendered = typeof value === "string" ? value : safeStringify(value);
+    const oneLine = rendered.replace(/\n/g, " ");
+    const text = oneLine.length > PREVIEW_LEN ? oneLine.slice(0, PREVIEW_LEN - 1) + "…" : oneLine;
+    return `${key}: ${text}`;
+  });
+}
+
+const MAX_RESULT_LINES = 5;
+
+/**
+ * Unwrap a tool result to its human content: pi tool results carry
+ * `{content: [{type:"text", text}]}`; show THAT text (first lines), never
+ * the envelope. Falls back to compact JSON for non-standard shapes.
+ */
+function extractResultText(result: unknown, isError: boolean): string[] {
+  let text: string | undefined;
+  if (typeof result === "string") {
+    text = result;
+  } else if (result && typeof result === "object" && "content" in result) {
+    const content = (result as { content: unknown }).content;
+    if (Array.isArray(content)) {
+      text = content
+        .filter((p): p is { type: string; text: string } =>
+          typeof p === "object" && p !== null && "type" in p && (p as { type: string }).type === "text",
+        )
+        .map((p) => p.text)
+        .join("\n");
+    }
+  }
+  text ??= safeStringify(result);
+
+  const lines = text.split("\n").filter((l) => l.trim().length > 0 || !isError);
+  const head = lines.slice(0, MAX_RESULT_LINES);
+  const more = lines.length - head.length;
+  const out = head.map((l) => (l.length > PREVIEW_LEN ? l.slice(0, PREVIEW_LEN - 1) + "…" : l));
+  if (more > 0) out.push(`… ${more} more line${more === 1 ? "" : "s"}`);
+  return out.length > 0 ? out : ["(no output)"];
+}
+
 /** Block kinds the transcript renders. */
 type Block =
   | { kind: "user"; text: string; comp: Markdown }
@@ -265,16 +315,33 @@ export class Transcript implements Component {
     this.openTools.delete(toolCallId);
   }
 
-  /** Render a tool card line — muted left-border, args summary + result preview. */
+  /**
+   * Render a tool card — muted left-border, status in the header, args as
+   * key:value pairs, results unwrapped to their text content (never the raw
+   * envelope JSON). World-class means the operator reads WHAT HAPPENED, not
+   * the wire shape.
+   */
   private renderToolCard(toolName: string, args: unknown, result: unknown | null, isError: boolean): string {
-    const head = `${toolPrefix()}${textToken.strong("tool")} ${highlight.base(toolName)}`;
-    const argsLine = `${toolPrefix()}  ${textToken.muted("args:")} ${preview(args)}`;
+    const status = result === null
+      ? highlight.base("● running…")
+      : isError
+        ? highlight.danger("✗ failed")
+        : highlight.base("✓ done");
+    const head = `${toolPrefix()}${highlight.base(toolName)} ${textToken.dim("·")} ${status}`;
+
+    const argLines = formatArgs(args).map(
+      (line) => `${toolPrefix()}  ${textToken.dim(line)}`,
+    );
+
     if (result === null) {
-      return `${head}\n${argsLine}\n${toolPrefix()}  ${highlight.base("◌ running…")}`;
+      return [head, ...argLines].join("\n");
     }
-    const status = isError ? highlight.danger("✗ error") : highlight.base("✓ ok");
-    const resultLine = `${toolPrefix()}  ${textToken.muted("result:")} ${status} ${preview(result)}`;
-    return `${head}\n${argsLine}\n${resultLine}`;
+
+    const resultLines = extractResultText(result, isError);
+    const rendered = resultLines.map((line) =>
+      `${toolPrefix()}  ${isError ? highlight.danger(line) : textToken.muted(line)}`,
+    );
+    return [head, ...argLines, ...rendered].join("\n");
   }
 
   // ── Component ───────────────────────────────────────────────────────────

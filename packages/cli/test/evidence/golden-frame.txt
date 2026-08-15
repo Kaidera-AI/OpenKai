@@ -15,10 +15,9 @@
                                                                                 
  Hello, OpenKai!                                                                
 
- ▎ tool echo                                                                    
- ▎   args: {"msg":"pong"}                                                       
- ▎   result: ✓ ok                                                               
- {"content":[{"type":"text","text":"pong"}],"details":{"msg":"pong"}}           
+ ▎ echo · ✓ done                                                                
+ ▎   msg: pong                                                                  
+ ▎   pong                                                                       
 
  ⤷ thinking…                                                                    
 
