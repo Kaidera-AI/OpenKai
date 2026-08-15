@@ -178,6 +178,31 @@ export class SessionStore {
   }
 }
 
+
+/** List session ids (directory names) under a root, sorted. */
+export async function listSessions(root?: string): Promise<string[]> {
+  const dir = root ?? defaultRoot();
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+}
+
+/** Read the message entries (AgentMessage) from a session file in append order. */
+export async function readSessionMessages(filePath: string): Promise<AgentMessage[]> {
+  const text = await fs.readFile(filePath, "utf-8");
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  const out: AgentMessage[] = [];
+  for (const line of lines) {
+    const parsed = JSON.parse(line) as Entry | SessionHeader;
+    if (parsed.type === "message") out.push(parsed.message);
+  }
+  return out;
+}
+
 /** Default sessions root: `.openkai/sessions` relative to process.cwd(). */
 export function defaultRoot(): string {
   return path.join(process.cwd(), ".openkai", "sessions");

@@ -1,0 +1,30 @@
+# P4 TUI golden-frame evidence (faux provider, headless render, 80 cols)
+# Block kinds: user -> thinking -> assistant -> tool -> thinking -> assistant
+# Chrome usage: {"input":54,"output":2,"cacheRead":37,"cacheWrite":55,"totalTokens":148,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
+# Thinking revealed: true
+
+ You                                                                            
+                                                                                
+ ping                                                                           
+
+ ⤷ thinking…                                                                    
+
+ Assistant                                                                      
+                                                                                
+ Hello, OpenKai!                                                                
+
+ ▎ tool echo                                                                    
+ ▎   args: {"msg":"pong"}                                                       
+ ▎   result: ✓ ok                                                               
+ {"content":[{"type":"text","text":"pong"}],"details":{"msg":"pong"}}           
+
+ ⤷ thinking…                                                                    
+
+ Assistant                                                                      
+                                                                                
+ Done.                                                                          
+
+────────────────────────────────────────────────────────────────────────────────
+                                                                                
+────────────────────────────────────────────────────────────────────────────────
+ m:chat · faux-1 · 01Ja005c · 148t · p:local · ○ idle                           

@@ -12,6 +12,7 @@
 import { CortexClient } from "@openkai/core";
 import type { TeamEventEntry } from "@openkai/core";
 import { runChat, type ChatOptions } from "./chat.js";
+import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 
 const USAGE = `openkai — OpenKai operator CLI
@@ -22,6 +23,10 @@ Usage:
   openkai events --print [options]
 
 Commands:
+  openkai                Launch the TUI shell (same as openkai tui).
+
+  tui [options]          Launch the pi-tui alt-screen TUI shell (P4).
+
   chat --prompt <text>   Run a single-prompt agent turn over OpenRouter and
                          stream the reply to stdout. Persists the session
                          JSONL v3 tree under .openkai/sessions/ and
@@ -40,6 +45,8 @@ Options:
                          (default: $OPENKAI_MODEL or google/gemini-2.5-flash-lite).
   --system-prompt <text> (chat) Override the system prompt.
   --show <id>            (sessions) Show full entries for one session id.
+  --session <id>        (tui) Resume a session by id.
+  --model <id>           (tui) OpenRouter model id (default: $OPENKAI_MODEL).
   --last-id <id>         (events) Resume after a team_events id.
   --count <n>            (events) Events per server read, 1-200 (default 50).
   --ping <seconds>       (events) Server keep-alive cadence, 1-60 (default 15).
@@ -154,14 +161,17 @@ async function runEvents(options: EventsOptions): Promise<number> {
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
 
+  // Bare `openkai` (no command) launches the TUI (scope §4.1).
+  if (command === undefined) {
+    return runTui(buildTuiOptions(rest));
+  }
   if (
-    command === undefined ||
     command === "--help" ||
     command === "-h" ||
     command === "help"
   ) {
     process.stdout.write(USAGE);
-    return command === undefined ? 2 : 0;
+    return 0;
   }
 
   // ── Shared flag parser helpers ─────────────────────────────────────────
@@ -204,6 +214,11 @@ async function main(argv: string[]): Promise<number> {
     typeof flags[name] === "string" ? (flags[name] as string) : undefined;
 
   const getBool = (name: string): boolean => flags[name] === true;
+
+  // ── tui (P4) ────────────────────────────────────────────────────────────
+  if (command === "tui") {
+    return runTui(buildTuiOptions(rest, flags));
+  }
 
   // ── chat ─────────────────────────────────────────────────────────────────
   if (command === "chat") {
@@ -266,6 +281,33 @@ async function main(argv: string[]): Promise<number> {
   }
 
   return fail(`unknown command "${command}".`);
+}
+
+
+/** Build RunTuiOptions from parsed argv (supports both bare-launch and `tui` subcommand). */
+function buildTuiOptions(rest: string[], preFlags?: Record<string, string | boolean | undefined>): RunTuiOptions {
+  const flags: Record<string, string | boolean | undefined> = { ...preFlags };
+  for (let i = 0; i < rest.length; i += 1) {
+    const flag = rest[i];
+    if (!flag?.startsWith("--")) continue;
+    if (i + 1 < rest.length && !rest[i + 1]?.startsWith("--")) {
+      flags[flag] = rest[(i += 1)];
+    } else {
+      flags[flag] = true;
+    }
+  }
+  const getString = (name: string): string | undefined =>
+    typeof flags[name] === "string" ? (flags[name] as string) : undefined;
+  const getBool = (name: string): boolean => flags[name] === true;
+  return {
+    model: getString("--model"),
+    session: getString("--session"),
+    systemPrompt: getString("--system-prompt"),
+    project: getString("--project"),
+    api: getString("--api"),
+    agent: getString("--agent"),
+    quiet: getBool("--quiet"),
+  };
 }
 
 // A pipe closing early (e.g. `| head`) is a clean exit, not a crash.
