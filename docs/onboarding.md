@@ -107,13 +107,15 @@ npm installs never self-mutate. Upgrade explicitly with:
 ```bash
 openkai upgrade --check              # is a newer version available?
 openkai upgrade                      # download, verify, swap
-openkai upgrade --version <version>  # target a specific version
+openkai upgrade --version <version>  # target a specific newer version
 openkai upgrade --rollback           # swap back to the previous binary
 ```
 
-Every swap keeps the outgoing binary, so `--rollback` is always available — and
-it keeps working even with the kill-switch on. Upgrades that fail their SHA-256
-witness check are refused and leave the binary untouched.
+`--version` moves **forward only** — the target must compare strictly greater
+than what you are running, so it cannot be used to downgrade. Use `--rollback`
+for that: every swap keeps the outgoing binary, so rollback is always available,
+and it keeps working even with the kill-switch on. Upgrades whose payload fails
+its SHA-256 witness check are refused and leave the binary untouched.
 
 **Kill-switch** — pin the version and disable self-upgrade entirely:
 
