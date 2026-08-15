@@ -29,7 +29,7 @@
 | 04 | P3 fusion core (FU-3/FU-1/FU-2) | kai | done | `c832e1c`; 28/28 tests offline-green; decision logged |
 | 05 | P4b TUI ergonomics wave | bob (permission engine), kai (undo) | partial | permission engine + protocol v2 (`eed8574`, accepted `d812fd3d`); shadow-git undo (`9107416`); remainder: attention, identity, palette, stash |
 | 06 | P3b fusion telemetry + invocation policy | kai | done | `ae1f71d`; 34/34 tests; CLI smoke green |
-| 07 | P5 learning loops (decay, mining, bandit) | unassigned | planned | depends 06 |
+| 07 | P5 learning loops (decay, mining, bandit) | kai | partial | bandit routing (`382c430`); remainder KOS-side (decay SQL, mining jobs) + tool cache — needs cross-project scope |
 | 08 | P6 v1 packaging + release | unassigned | planned | depends 03+05 |
 
 Increment files: `Release_v0.1.0/E001_OPENKAI_V1/INCREMENTS/`.
