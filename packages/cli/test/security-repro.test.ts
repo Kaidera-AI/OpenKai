@@ -49,9 +49,11 @@ test("REPRO 1: in-cwd symlink reads a secret outside cwd with decision=allow", a
   const decision = evaluate("read_file", { path: "notes.txt" }, cwd);
   const body = await callRead(cwd, "notes.txt");
 
-  // VULNERABLE BEHAVIOUR (invert after fix -> "deny" / no secret):
-  assert.equal(decision, "allow", "policy engine allows the symlink read");
-  assert.match(body, /SECRET-OUTSIDE-CWD/, "secret outside cwd was exfiltrated");
+  // FIXED BEHAVIOUR (inverted 2026-08-16, finding 1 fix): the symlink
+  // resolves to its real outside-cwd target and is denied; the tool errors.
+  assert.equal(decision, "deny", "policy engine denies the symlink escape");
+  assert.match(body, /escapes working directory|Error/i, "no secret returned");
+  assert.doesNotMatch(body, /SECRET-OUTSIDE-CWD/, "no exfiltration");
 
   await rm(root, { recursive: true, force: true });
 });
@@ -70,23 +72,13 @@ test("REPRO 2: case-variant .ENV escapes the .env deny floor", async () => {
   const escaped = evaluate("read_file", { path: ".ENV" }, cwd);
 
   assert.equal(denied, "deny", "control: exact-case .env is denied by the floor");
-  // VULNERABLE BEHAVIOUR (invert after fix -> "deny"):
-  assert.equal(escaped, "allow", "case-variant .ENV escapes the deny floor");
+  // FIXED BEHAVIOUR (inverted 2026-08-16, finding 2 fix): floor matching is
+  // case-insensitive + NFC-normalised, so .ENV is the same file as .env.
+  assert.equal(escaped, "deny", "case-variant .ENV is denied by the floor");
 
-  // Prove the OS resolves .ENV to the same file (case-insensitive FS only).
-  const entries = await readdir(cwd);
-  assert.ok(entries.includes(".env"));
-  let caseInsensitive = true;
-  let body = "";
-  try {
-    body = await callRead(cwd, ".ENV");
-    if (/Error reading/.test(body)) caseInsensitive = false;
-  } catch {
-    caseInsensitive = false;
-  }
-  if (caseInsensitive) {
-    assert.match(body, /sk-SECRET-ENV-VALUE/, "secret read despite the deny floor");
-  }
+  // Belt and braces: even if the engine were bypassed, no secret may return.
+  const body = await callRead(cwd, ".ENV");
+  assert.doesNotMatch(body, /sk-SECRET-ENV-VALUE/, "no secret read via case variance");
 
   await rm(cwd, { recursive: true, force: true });
 });
@@ -101,8 +93,45 @@ test("REPRO 3: nested .git/config is outside the deny floor", async () => {
   const nested = evaluate("read_file", { path: "vendor/dep/.git/config" }, cwd);
 
   assert.equal(top, "deny", "control: top-level .git/config is denied");
-  // VULNERABLE BEHAVIOUR (invert after fix -> "deny"):
-  assert.equal(nested, "allow", "nested .git/config escapes the floor");
+  // FIXED BEHAVIOUR (inverted 2026-08-16, finding 3 fix): slashed floor
+  // patterns match at any depth.
+  assert.equal(nested, "deny", "nested .git/config is denied by the floor");
 
   await rm(cwd, { recursive: true, force: true });
+});
+
+/**
+ * REGRESSION GUARDS (2026-08-16) — the floor is a tool-layer boundary, not
+ * only a policy decision: read-only tools never consult evaluate(), so they
+ * enforce the floor themselves via guardPath.
+ */
+test("GUARD: read_file refuses floor files at the tool layer", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okguard-"));
+  await writeFile(path.join(cwd, ".env"), "SECRET=floor-test\n");
+  try {
+    const body = await callRead(cwd, ".env");
+    assert.match(body, /denied — protected path/, "tool refuses the floor file");
+    assert.doesNotMatch(body, /floor-test/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("GUARD: recursive grep never surfaces floor-file content", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okguard-grep-"));
+  await writeFile(path.join(cwd, ".env"), "GREPPABLE_SECRET=1\n");
+  await writeFile(path.join(cwd, "ok.txt"), "GREPPABLE_SECRET mentioned here\n");
+  const sub = path.join(cwd, "sub");
+  await import("node:fs/promises").then((fs) => fs.mkdir(sub));
+  await writeFile(path.join(sub, ".env"), "GREPPABLE_SECRET=2\n");
+  try {
+    const grep = readOnlyTools(cwd).find((t) => t.name === "grep");
+    assert.ok(grep);
+    const res: any = await grep.execute("t1", { pattern: "GREPPABLE_SECRET" } as any);
+    const body = res.content.map((c: any) => c.text).join("");
+    assert.match(body, /ok\.txt/, "legitimate matches still surface");
+    assert.equal((body.match(/GREPPABLE_SECRET=\d/g) ?? []).length, 0, "no floor-file lines leak");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });

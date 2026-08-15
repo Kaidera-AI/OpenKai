@@ -32,7 +32,7 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { evaluateWithReason, type PermissionDecision } from "./permissions.js";
+import { evaluateWithReason, resolveCanonical, type PermissionDecision } from "./permissions.js";
 import type { PermissionPreview } from "./transport.js";
 
 /** A gated tool's request outcome. */
@@ -183,7 +183,9 @@ export async function readForPreview(absPath: string): Promise<string> {
 
 /** Resolve a tool `path` arg against the gate cwd. */
 export function resolvePreviewPath(cwd: string, rawPath: string): string {
-  return path.resolve(cwd, rawPath);
+  // Canonical resolution: previews and the mutations they gate must target
+  // the real location, not a lexical path routed through a symlink.
+  return resolveCanonical(cwd, rawPath);
 }
 
 /** Truncate a diff side to head + elision + tail (scope §9 diff-rendering cost). */

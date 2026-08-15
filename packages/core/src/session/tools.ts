@@ -25,6 +25,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { PermissionGate } from "./permission-gate.js";
 import type { PermissionPreview } from "./transport.js";
+import { floorDeny, resolveCanonical } from "./permissions.js";
 import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
@@ -35,11 +36,34 @@ function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
 
 /** Resolve a path against the tool's cwd, refusing traversal escapes. */
 function resolveWithin(cwd: string, input: string): string {
-  const resolved = path.resolve(cwd, input);
-  if (resolved !== cwd && !resolved.startsWith(cwd + path.sep)) {
+  // Canonical (symlink-following) resolution — lexical-only checks pass
+  // in-cwd symlinks pointing outside (E001 security finding 1).
+  const canonicalCwd = resolveCanonical(cwd, ".");
+  const resolved = resolveCanonical(cwd, input);
+  if (resolved !== canonicalCwd && !resolved.startsWith(canonicalCwd + path.sep)) {
     throw new Error(`path escapes working directory: ${input}`);
   }
   return resolved;
+}
+
+/**
+ * Resolve + floor-check in one step, returning the refusal text when the
+ * path is out of bounds (containment escape OR deny-floor hit). The floor
+ * applies to every tool — read-only included; it is a boundary, not a
+ * permission decision (E001 security findings 1–2).
+ */
+function guardPath(cwd: string, input: string): { target?: string; refusal?: string } {
+  let target: string;
+  try {
+    target = resolveWithin(cwd, input);
+  } catch (error) {
+    return { refusal: error instanceof Error ? error.message : String(error) };
+  }
+  const floor = floorDeny(cwd, input);
+  if (floor !== undefined) {
+    return { refusal: `denied — protected path (${floor}): ${input}` };
+  }
+  return { target };
 }
 
 const ReadFileParams = Type.Object({
@@ -61,7 +85,11 @@ export const readFileTool = (cwd: string): AgentTool<typeof ReadFileParams, unkn
     params: Static<typeof ReadFileParams>,
   ): Promise<AgentToolResult<unknown>> {
     const max = params.maxBytes ?? 65536;
-    const target = resolveWithin(cwd, params.path);
+    const guard = guardPath(cwd, params.path);
+    if (guard.refusal !== undefined) {
+      return textResult(`Error: ${guard.refusal}`, { path: params.path, denied: true });
+    }
+    const target = guard.target!;
     try {
       const stat = await fs.stat(target);
       if (!stat.isFile()) {
@@ -92,7 +120,11 @@ export const listFilesTool = (cwd: string): AgentTool<typeof ListFilesParams, un
     _toolCallId: string,
     params: Static<typeof ListFilesParams>,
   ): Promise<AgentToolResult<unknown>> {
-    const target = resolveWithin(cwd, params.path ?? ".");
+    const guard = guardPath(cwd, params.path ?? ".");
+    if (guard.refusal !== undefined) {
+      return textResult(`Error: ${guard.refusal}`, { path: params.path ?? ".", denied: true });
+    }
+    const target = guard.target!;
     try {
       const entries = await fs.readdir(target, { withFileTypes: true });
       const lines = entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name)).sort();
@@ -131,10 +163,14 @@ export const grepTool = (cwd: string): AgentTool<typeof GrepParams, unknown> => 
     } catch (error) {
       return textResult(`Error: invalid pattern: ${error instanceof Error ? error.message : String(error)}`, params.pattern);
     }
-    const root = resolveWithin(cwd, params.path ?? ".");
+    const guard = guardPath(cwd, params.path ?? ".");
+    if (guard.refusal !== undefined) {
+      return textResult(`Error: ${guard.refusal}`, { pattern: params.pattern, denied: true });
+    }
+    const root = guard.target!;
     const matches: string[] = [];
     try {
-      await walkGrep(root, regex, max, matches);
+      await walkGrep(root, regex, max, matches, cwd);
     } catch (error) {
       return textResult(`Error searching: ${error instanceof Error ? error.message : String(error)}`, params.pattern);
     }
@@ -145,12 +181,14 @@ export const grepTool = (cwd: string): AgentTool<typeof GrepParams, unknown> => 
   },
 });
 
-/** Recursive grep helper — respects maxResults and skips node_modules/.git. */
+/** Recursive grep helper — respects maxResults; skips node_modules/.git/dist,
+ *  symlink escapes, and deny-floor files (.env, keys, …) at every step. */
 async function walkGrep(
   target: string,
   regex: RegExp,
   max: number,
   out: string[],
+  cwd: string,
 ): Promise<void> {
   if (out.length >= max) return;
   const stat = await fs.stat(target);
@@ -175,7 +213,12 @@ async function walkGrep(
     const entries = await fs.readdir(target, { withFileTypes: true });
     for (const entry of entries) {
       if (out.length >= max) return;
-      await walkGrep(path.join(target, entry.name), regex, max, out);
+      // Re-guard every child: a symlinked directory mid-walk must not lead
+      // outside cwd, and floor files are never read.
+      const child = path.join(target, entry.name);
+      const guard = guardPath(cwd, child);
+      if (guard.refusal !== undefined) continue;
+      await walkGrep(child, regex, max, out, cwd);
     }
   }
 }

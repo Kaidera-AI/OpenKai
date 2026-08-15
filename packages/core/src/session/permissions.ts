@@ -25,7 +25,35 @@
  * (scope §3). Config-driven rules land when there is a second consumer.
  */
 
+import fs from "node:fs";
 import path from "node:path";
+
+/**
+ * Canonical path resolution (E001 security gate, findings 1–3).
+ *
+ * `path.resolve` is purely lexical: an in-cwd symlink to an outside-cwd
+ * target passes every lexical check. This resolves the REAL path of the
+ * longest existing ancestor and re-appends the (possibly not-yet-existing)
+ * tail, so symlinks anywhere in the existing prefix are followed to their
+ * true location before containment and floor checks run. Works for
+ * `write_file` targets that do not exist yet.
+ */
+export function resolveCanonical(cwd: string, target: string): string {
+  const resolved = path.resolve(cwd, target);
+  const tail: string[] = [];
+  let cursor = resolved;
+  for (;;) {
+    try {
+      const real = fs.realpathSync(cursor);
+      return tail.length === 0 ? real : path.join(real, ...tail.reverse());
+    } catch {
+      const parent = path.dirname(cursor);
+      if (parent === cursor) return resolved; // filesystem root: lexical fallback
+      tail.push(path.basename(cursor));
+      cursor = parent;
+    }
+  }
+}
 
 /** A policy decision for one tool call. */
 export type PermissionDecision = "allow" | "ask" | "deny";
@@ -139,11 +167,14 @@ export function evaluateWithReason(
   const rawPath = typeof argObj.path === "string" ? argObj.path : undefined;
   let relPath: string | undefined;
   if (rawPath !== undefined) {
-    const resolved = path.resolve(cwd, rawPath);
-    if (resolved !== cwd && !resolved.startsWith(cwd + path.sep)) {
+    // Canonicalise BOTH sides — symlinks inside cwd (and cwd itself, e.g.
+    // macOS /tmp -> /private/tmp) resolve to their real location first.
+    const canonicalCwd = resolveCanonical(cwd, ".");
+    const resolved = resolveCanonical(cwd, rawPath);
+    if (resolved !== canonicalCwd && !resolved.startsWith(canonicalCwd + path.sep)) {
       return { decision: "deny", reason: "deny — path outside working directory" };
     }
-    relPath = path.relative(cwd, resolved);
+    relPath = path.relative(canonicalCwd, resolved);
     const floor = matchesDenyFloor(relPath);
     if (floor !== undefined) {
       return { decision: "deny", reason: `deny — protected path (${floor})` };
@@ -190,6 +221,19 @@ function matchesDenyFloor(relPath: string): string | undefined {
     if (pathGlobMatch(pattern, relPath)) return pattern;
   }
   return undefined;
+}
+
+/**
+ * Tool-layer floor check: canonicalise `target` against `cwd` and return the
+ * matched deny-floor pattern, or `undefined` when the path is clean. The
+ * floor is a hard boundary — it applies even to tools that never consult
+ * the policy engine (the read-only trio; E001 security finding 2).
+ */
+export function floorDeny(cwd: string, target: string): string | undefined {
+  const canonicalCwd = resolveCanonical(cwd, ".");
+  const resolved = resolveCanonical(cwd, target);
+  const relPath = path.relative(canonicalCwd, resolved);
+  return matchesDenyFloor(relPath);
 }
 
 // ── Minimal glob → regex (no dependency; P1's dependency-free ethos) ─────────
@@ -240,15 +284,25 @@ function globToRegex(glob: string): RegExp {
 }
 
 /**
- * Match a glob against a relative path. A bare-name pattern (no `/`) also
- * matches the basename, so `.env` denies nested `.env` files too.
+ * Match a glob against a relative path. Matching is case-insensitive and
+ * NFC-normalised: on case-insensitive filesystems (default APFS, NTFS) the
+ * lexical name is not the file's identity — `.ENV` IS `.env` there, so the
+ * floor must treat them alike (E001 security finding 2). A bare-name
+ * pattern (no `/`) also matches the basename, so `.env` denies nested
+ * `.env` files; a SLASHED pattern also matches at any depth, so
+ * `.git/config` denies `vendor/dep/.git/config` (finding 3).
  */
 function pathGlobMatch(pattern: string, relPath: string): boolean {
-  const rx = globToRegex(pattern);
-  if (rx.test(relPath)) return true;
-  if (!pattern.includes("/")) {
-    const base = relPath.split("/").pop();
+  const normPattern = pattern.normalize("NFC").toLowerCase();
+  const subject = relPath.normalize("NFC").toLowerCase();
+  const rx = globToRegex(normPattern);
+  if (rx.test(subject)) return true;
+  if (!normPattern.includes("/")) {
+    const base = subject.split("/").pop();
     if (base !== undefined && rx.test(base)) return true;
+  } else {
+    const anywhere = globToRegex(`**/${normPattern}`);
+    if (anywhere.test(subject)) return true;
   }
   return false;
 }
