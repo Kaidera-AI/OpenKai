@@ -1,0 +1,10 @@
+{
+  "_generated": {
+    "hash": "06e04a1dc51b",
+    "note": "GENERATED FROM CORTEX — DO NOT EDIT",
+    "source": "agent_skills+agent_skill_bindings"
+  },
+  "bindings": [],
+  "project": "openkai",
+  "skills": []
+}

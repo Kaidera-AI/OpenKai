@@ -1,0 +1,560 @@
+#!/usr/bin/env python3
+"""Detect stale per-project Cortex harness mirrors.
+
+The Kaidera OS product repo owns the canonical scripts/runtime. Customer or
+turnkey project roots should only carry generated project mirrors: config,
+identity/rule files, and symlinks back to canonical scripts. This doctor catches
+the failure mode where an old workspace gets copied wholesale and keeps stale
+project keys, Redis-era runtime config, or project-local command trees.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Iterable
+
+
+GENERATED_MARKER = "GENERATED FROM CORTEX"
+LEGACY_PROJECT_KEYS = {"localdev"}
+
+MIRROR_MARKDOWN_DIRS = (
+    ".agents/agents",
+    ".agents/roles",
+    ".agents/rules",
+)
+
+POINTER_FILES = ("AGENTS.md", "CLAUDE.md", "GEMINI.md")
+
+RUNTIME_FORBIDDEN_PATTERNS = (
+    ("redis_yaml_block", re.compile(r"(?im)^\s*redis\s*:")),
+    ("redis_container", re.compile(r"(?i)cortex-redis")),
+    ("redis_env", re.compile(r"(?i)\bCORTEX_REDIS[_A-Z]*\b")),
+    ("legacy_project_hex", re.compile(r"(?im)^\s*project_hex\s*:")),
+)
+
+RUNTIME_LEGACY_PROJECT_PATTERNS = (
+    re.compile(r"(?im)^\s*name\s*:\s*[\"']?localdev[\"']?\s*$"),
+    re.compile(r"(?im)^\s*key_prefix\s*:\s*[\"']?localdev:"),
+    re.compile(r"(?im)^\s*stream_name\s*:\s*[\"']?localdev:"),
+)
+
+
+@dataclass(frozen=True)
+class Issue:
+    severity: str
+    code: str
+    path: str
+    message: str
+    hint: str
+
+
+@dataclass
+class RootReport:
+    root: str
+    mode: str
+    scanned: bool
+    issues: list[Issue]
+    notes: list[str]
+
+
+def _read_text(path: Path, *, limit: int | None = None) -> str:
+    try:
+        data = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise RuntimeError(str(exc)) from exc
+    return data if limit is None else data[:limit]
+
+
+def _display(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def _rel(root: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _is_product_source_root(root: Path) -> bool:
+    return (
+        (root / "redistributable/config/command-surface.json").is_file()
+        and (root / ".agents/scripts/cortex-sync-generate-harness").is_file()
+        and (root / "local-cortex").exists()
+    )
+
+
+def _resolve_mode(root: Path, requested: str) -> str:
+    if requested != "auto":
+        return requested
+    return "product" if _is_product_source_root(root) else "project"
+
+
+def _issue(root: Path, severity: str, code: str, path: Path, message: str, hint: str) -> Issue:
+    return Issue(
+        severity=severity,
+        code=code,
+        path=_rel(root, path),
+        message=message,
+        hint=hint,
+    )
+
+
+def _path_matches_root(root: Path, candidate: str) -> bool:
+    if not candidate:
+        return True
+    try:
+        candidate_path = Path(candidate).expanduser()
+    except (OSError, RuntimeError):
+        return False
+    if not candidate_path.is_absolute():
+        return True
+    return candidate_path.resolve(strict=False) == root.resolve(strict=False)
+
+
+def _workspace_root_refs(data: dict) -> Iterable[tuple[str, str]]:
+    program = data.get("program")
+    if isinstance(program, dict):
+        root = program.get("root")
+        if isinstance(root, str):
+            yield ("program.root", root)
+
+    projects = data.get("projects")
+    if not isinstance(projects, list):
+        return
+
+    for index, project in enumerate(projects):
+        if not isinstance(project, dict):
+            continue
+        repo_root = project.get("repo_root")
+        if isinstance(repo_root, str):
+            yield (f"projects[{index}].repo_root", repo_root)
+
+        roots = project.get("roots")
+        if isinstance(roots, list):
+            for root_index, root_entry in enumerate(roots):
+                if isinstance(root_entry, dict) and isinstance(root_entry.get("path"), str):
+                    yield (f"projects[{index}].roots[{root_index}].path", root_entry["path"])
+
+
+def _check_scripts(root: Path, mode: str, issues: list[Issue], notes: list[str]) -> None:
+    scripts = root / ".agents/scripts"
+    if not scripts.exists() and not scripts.is_symlink():
+        notes.append("no .agents/scripts mirror present")
+        return
+
+    if scripts.is_symlink():
+        if not scripts.exists():
+            issues.append(
+                _issue(
+                    root,
+                    "critical",
+                    "broken_scripts_symlink",
+                    scripts,
+                    ".agents/scripts is a broken symlink",
+                    "Regenerate the project harness or relink it to the canonical Kaidera OS scripts directory.",
+                )
+            )
+        return
+
+    if scripts.is_dir() and mode == "project":
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "copied_scripts_tree",
+                scripts,
+                "project root carries a copied .agents/scripts tree",
+                "Replace the copied tree with a symlink to the canonical Kaidera OS .agents/scripts directory.",
+            )
+        )
+    elif scripts.is_dir():
+        notes.append("product source root owns the canonical .agents/scripts tree")
+    else:
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "invalid_scripts_path",
+                scripts,
+                ".agents/scripts exists but is neither a directory nor a symlink",
+                "Remove it and regenerate the harness mirror.",
+            )
+        )
+
+
+def _check_runtime(root: Path, expected_project: str | None, issues: list[Issue], notes: list[str]) -> None:
+    runtime = root / ".agents/config/runtime.yaml"
+    if not runtime.exists():
+        notes.append("no runtime.yaml mirror present")
+        return
+
+    try:
+        text = _read_text(runtime)
+    except RuntimeError as exc:
+        issues.append(_issue(root, "critical", "runtime_unreadable", runtime, f"runtime.yaml is unreadable: {exc}", "Fix permissions or regenerate the mirror."))
+        return
+
+    if not any(GENERATED_MARKER in line for line in text.splitlines()[:3]):
+        issues.append(
+            _issue(
+                root,
+                "warning",
+                "runtime_not_generated",
+                runtime,
+                "runtime.yaml is not marked as generated from Cortex",
+                "Regenerate runtime.yaml from Cortex instead of hand-editing project-local runtime state.",
+            )
+        )
+
+    for code, pattern in RUNTIME_FORBIDDEN_PATTERNS:
+        if pattern.search(text):
+            issues.append(
+                _issue(
+                    root,
+                    "critical",
+                    code,
+                    runtime,
+                    "runtime.yaml contains retired Redis-era configuration",
+                    "Regenerate runtime.yaml from the canonical post-Redis Kaidera OS harness generator.",
+                )
+            )
+
+    if any(pattern.search(text) for pattern in RUNTIME_LEGACY_PROJECT_PATTERNS):
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "legacy_runtime_project_key",
+                runtime,
+                "runtime.yaml still points at legacy project key localdev",
+                "Regenerate runtime.yaml for the actual project key.",
+            )
+        )
+
+    if expected_project:
+        expected_name = re.compile(rf"(?im)^\s*name\s*:\s*[\"']?{re.escape(expected_project)}[\"']?\s*$")
+        if not expected_name.search(text):
+            issues.append(
+                _issue(
+                    root,
+                    "critical",
+                    "runtime_project_mismatch",
+                    runtime,
+                    f"runtime.yaml does not declare expected project {expected_project!r}",
+                    "Regenerate the project mirror using the expected Cortex project key.",
+                )
+            )
+
+
+def _check_workspace(root: Path, expected_project: str | None, issues: list[Issue], notes: list[str]) -> None:
+    workspace = root / ".agents/config/workspace.json"
+    if not workspace.exists():
+        notes.append("no workspace.json mirror present")
+        return
+
+    try:
+        data = json.loads(_read_text(workspace))
+    except (json.JSONDecodeError, RuntimeError) as exc:
+        issues.append(_issue(root, "critical", "workspace_invalid_json", workspace, f"workspace.json is invalid: {exc}", "Regenerate workspace.json from Cortex."))
+        return
+
+    generated = data.get("_generated")
+    if not isinstance(generated, dict):
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "workspace_not_generated",
+                workspace,
+                "workspace.json is missing the generated Cortex provenance block",
+                "Regenerate workspace.json from Cortex; do not ship hand-authored workspace mirrors.",
+            )
+        )
+
+    program = data.get("program") if isinstance(data.get("program"), dict) else {}
+    program_key = program.get("key") if isinstance(program, dict) else None
+    projects = data.get("projects")
+    project_keys: list[str] = []
+    if isinstance(projects, list):
+        for project in projects:
+            if isinstance(project, dict) and isinstance(project.get("key"), str):
+                project_keys.append(project["key"])
+    else:
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "workspace_projects_missing",
+                workspace,
+                "workspace.json does not contain a projects list",
+                "Regenerate workspace.json from Cortex.",
+            )
+        )
+
+    if isinstance(projects, list) and len(projects) != 1:
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "workspace_multi_project_mirror",
+                workspace,
+                f"workspace.json contains {len(projects)} projects; generated project mirrors must contain exactly one",
+                "Regenerate a project-specific mirror instead of copying a multi-project workspace file.",
+            )
+        )
+
+    keys = {key for key in [program_key, *project_keys] if isinstance(key, str)}
+    legacy_keys = sorted(keys & LEGACY_PROJECT_KEYS)
+    if legacy_keys:
+        issues.append(
+            _issue(
+                root,
+                "critical",
+                "legacy_workspace_project_key",
+                workspace,
+                f"workspace.json contains legacy project key(s): {', '.join(legacy_keys)}",
+                "Create/register the real project in Cortex and regenerate the mirror for that key.",
+            )
+        )
+
+    if expected_project:
+        expected_mismatches = sorted(key for key in keys if key != expected_project)
+        if expected_mismatches or not keys:
+            issues.append(
+                _issue(
+                    root,
+                    "critical",
+                    "workspace_project_mismatch",
+                    workspace,
+                    f"workspace.json does not match expected project {expected_project!r}",
+                    "Run the generator for the expected project key; do not reuse another project's workspace mirror.",
+                )
+            )
+
+    for field, value in _workspace_root_refs(data):
+        if not _path_matches_root(root, value):
+            issues.append(
+                _issue(
+                    root,
+                    "warning",
+                    "workspace_root_mismatch",
+                    workspace,
+                    f"{field} points at {value!r}, not this root",
+                    "Regenerate workspace.json on the target host so absolute roots cannot leak from another machine/project.",
+                )
+            )
+
+
+def _check_generated_markdown(root: Path, issues: list[Issue]) -> None:
+    for dirname in MIRROR_MARKDOWN_DIRS:
+        directory = root / dirname
+        if not directory.exists():
+            continue
+        for path in sorted(directory.rglob("*")):
+            if path.is_dir() or path.is_symlink():
+                continue
+            if path.suffix.lower() != ".md":
+                continue
+            try:
+                head = _read_text(path, limit=512)
+            except RuntimeError as exc:
+                issues.append(_issue(root, "warning", "mirror_file_unreadable", path, f"generated mirror file is unreadable: {exc}", "Fix permissions or regenerate the mirror."))
+                continue
+            if GENERATED_MARKER not in head:
+                issues.append(
+                    _issue(
+                        root,
+                        "warning",
+                        "manual_mirror_markdown",
+                        path,
+                        "markdown mirror file is not marked as generated from Cortex",
+                        "Move hand-authored content into Cortex/package source, then regenerate the mirror.",
+                    )
+                )
+
+
+def _check_pointer_files(root: Path, issues: list[Issue]) -> None:
+    for name in POINTER_FILES:
+        path = root / name
+        if not path.exists() and not path.is_symlink():
+            continue
+        if path.is_symlink():
+            if not path.exists():
+                issues.append(
+                    _issue(
+                        root,
+                        "critical",
+                        "broken_pointer_symlink",
+                        path,
+                        f"{name} is a broken symlink",
+                        "Regenerate the harness pointer files.",
+                    )
+                )
+            continue
+        try:
+            head = _read_text(path, limit=512)
+        except RuntimeError as exc:
+            issues.append(_issue(root, "warning", "pointer_unreadable", path, f"{name} is unreadable: {exc}", "Fix permissions or regenerate the pointer."))
+            continue
+        if GENERATED_MARKER not in head:
+            issues.append(
+                _issue(
+                    root,
+                    "warning",
+                    "manual_harness_pointer",
+                    path,
+                    f"{name} is not marked as generated from Cortex",
+                    "Keep harness pointers generated from Cortex so project-local instructions cannot drift.",
+                )
+            )
+
+
+def scan_root(root: Path, *, mode: str, expected_project: str | None) -> RootReport:
+    root = root.expanduser().resolve(strict=False)
+    issues: list[Issue] = []
+    notes: list[str] = []
+
+    if not root.exists():
+        return RootReport(
+            root=_display(root),
+            mode=mode,
+            scanned=False,
+            issues=[
+                Issue(
+                    severity="critical",
+                    code="root_missing",
+                    path=str(root),
+                    message="scan root does not exist",
+                    hint="Pass an existing project root.",
+                )
+            ],
+            notes=[],
+        )
+
+    resolved_mode = _resolve_mode(root, mode)
+    agents_dir = root / ".agents"
+    if not agents_dir.exists():
+        return RootReport(
+            root=_display(root),
+            mode=resolved_mode,
+            scanned=False,
+            issues=[],
+            notes=["no .agents directory present; no harness mirror to inspect"],
+        )
+
+    _check_scripts(root, resolved_mode, issues, notes)
+    _check_runtime(root, expected_project, issues, notes)
+    _check_workspace(root, expected_project, issues, notes)
+    _check_generated_markdown(root, issues)
+    _check_pointer_files(root, issues)
+
+    return RootReport(
+        root=_display(root),
+        mode=resolved_mode,
+        scanned=True,
+        issues=issues,
+        notes=notes,
+    )
+
+
+def roots_from_workspace(path: Path) -> list[Path]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    roots: list[Path] = []
+    seen: set[str] = set()
+
+    def add(value: object) -> None:
+        if not isinstance(value, str) or not value:
+            return
+        candidate = str(Path(value).expanduser().resolve(strict=False))
+        if candidate not in seen:
+            seen.add(candidate)
+            roots.append(Path(candidate))
+
+    program = data.get("program")
+    if isinstance(program, dict):
+        add(program.get("root"))
+
+    projects = data.get("projects")
+    if isinstance(projects, list):
+        for project in projects:
+            if not isinstance(project, dict):
+                continue
+            add(project.get("repo_root"))
+            project_roots = project.get("roots")
+            if isinstance(project_roots, list):
+                for root in project_roots:
+                    if isinstance(root, dict):
+                        add(root.get("path"))
+
+    return roots
+
+
+def render_text(reports: list[RootReport]) -> str:
+    lines = [f"[cortex-harness-doctor] scanned {len(reports)} root(s)"]
+    for report in reports:
+        status = "SKIP"
+        if report.scanned:
+            status = "FAIL" if report.issues else "OK"
+        lines.append(f"{status} {report.root} ({report.mode})")
+        for note in report.notes:
+            lines.append(f"  note: {note}")
+        for issue in report.issues:
+            lines.append(f"  [{issue.severity}] {issue.code}: {issue.path}")
+            lines.append(f"    {issue.message}")
+            lines.append(f"    hint: {issue.hint}")
+    return "\n".join(lines) + "\n"
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Detect stale per-project Kaidera OS harness mirrors.")
+    parser.add_argument("--root", action="append", default=[], help="Project/root path to inspect. Repeatable. Defaults to the current directory.")
+    parser.add_argument("--workspace-config", help="Read roots from a generated workspace.json file.")
+    parser.add_argument("--expect-project", help="Require generated runtime/workspace mirrors to match this project key.")
+    parser.add_argument("--mode", choices=("auto", "project", "product"), default="auto", help="Treat roots as project mirrors, product source roots, or infer automatically.")
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument("--advisory", action="store_true", help="Always exit 0; useful for inventory runs.")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+
+    roots = [Path(root) for root in args.root]
+    if args.workspace_config:
+        try:
+            roots.extend(roots_from_workspace(Path(args.workspace_config).expanduser()))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"cortex-harness-doctor: failed to read workspace config: {exc}", file=sys.stderr)
+            return 2
+
+    if not roots:
+        roots = [Path(os.getcwd())]
+
+    reports = [
+        scan_root(root, mode=args.mode, expected_project=args.expect_project)
+        for root in roots
+    ]
+    has_issues = any(report.issues for report in reports)
+
+    if args.json:
+        print(json.dumps({"reports": [asdict(report) for report in reports]}, indent=2))
+    else:
+        print(render_text(reports), end="")
+
+    if args.advisory:
+        return 0
+    return 1 if has_issues else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

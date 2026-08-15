@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# cortex-graph-stats — Cross-repo code graph analytics via DuckDB
+# Part of the Cortex graph tooling.
+#
+# Usage:
+#   cortex-graph-stats                   Summary across all repos
+#   cortex-graph-stats --top-functions   Largest functions across all repos
+#   cortex-graph-stats --languages       Language breakdown across repos
+#   cortex-graph-stats --edges           Edge type distribution
+#   cortex-graph-stats --repo <name>     Filter to one repo
+#   cortex-graph-stats --max-results N   Cap ranked result lists (default 100)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+KAIDERA_ROOT="$(cortex_workspace_root)"
+MODE="summary"
+REPO_FILTER=""
+MAX_RESULTS=100
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --top-functions) MODE="top_functions"; shift ;;
+        --languages)     MODE="languages"; shift ;;
+        --edges)         MODE="edges"; shift ;;
+        --repo)          REPO_FILTER="$2"; shift 2 ;;
+        --max|--max-results) MAX_RESULTS="$2"; shift 2 ;;
+        --help|-h)
+            printf 'Usage: cortex-graph-stats [--top-functions|--languages|--edges] [--repo <name>] [--max-results N]\n'
+            exit 0
+            ;;
+        *) printf 'ERROR: Unknown flag: %s\n' "$1" >&2; exit 1 ;;
+    esac
+done
+
+export KAIDERA_ROOT MODE REPO_FILTER MAX_RESULTS
+
+# Find all graph.db files by walking every registered cortex_projects root.
+PROJECT_ROOTS_SQL="SELECT repo_root FROM cortex_projects WHERE repo_root IS NOT NULL AND repo_root != ''"
+PROJECT_ROOTS=()
+while IFS= read -r row; do
+    [ -n "${row}" ] && PROJECT_ROOTS+=("${row}")
+done < <(pg_query "${PROJECT_ROOTS_SQL}" 2>/dev/null)
+
+# Always include KAIDERA_ROOT in the search set (covers Kaidera sub-repos)
+ROOTS_TO_SEARCH=("${KAIDERA_ROOT}")
+for r in "${PROJECT_ROOTS[@]+"${PROJECT_ROOTS[@]}"}"; do
+    [ -d "${r}" ] && [ "${r}" != "${KAIDERA_ROOT}" ] && ROOTS_TO_SEARCH+=("${r}")
+done
+
+GRAPH_DBS=()
+for root in "${ROOTS_TO_SEARCH[@]}"; do
+    while IFS= read -r db; do
+        GRAPH_DBS+=("${db}")
+    done < <(find "${root}" -name "graph.db" -path "*code-review-graph*" 2>/dev/null | sort)
+done
+
+if [ ${#GRAPH_DBS[@]} -eq 0 ]; then
+    printf 'No code graph databases found across %d project roots\n' "${#ROOTS_TO_SEARCH[@]}"
+    exit 1
+fi
+
+# Pass discovered paths to python via env (deterministic, no re-walk)
+export CORTEX_GRAPH_DBS="$(IFS=:; echo "${GRAPH_DBS[*]}")"
+
+# Build DuckDB ATTACH + UNION queries
+python3 << 'PYEOF'
+import duckdb
+import os
+import sys
+
+kaidera_root = os.environ.get("KAIDERA_ROOT", "")
+mode = os.environ.get("MODE", "summary")
+repo_filter = os.environ.get("REPO_FILTER", "")
+max_results = int(os.environ.get("MAX_RESULTS", "100"))
+
+# Use graph DBs discovered by the bash side (CORTEX_GRAPH_DBS, colon-separated).
+# That walk covers every registered cortex_projects root.
+graph_dbs = []
+discovered = os.environ.get("CORTEX_GRAPH_DBS", "").split(":")
+for db_path in discovered:
+    if not db_path or not os.path.exists(db_path):
+        continue
+    # Repo name resolution:
+    # 1. Kaidera sub-repo pattern: 01-..., 02-..., etc.
+    # 2. else use the parent of .code-review-graph/ as the repo name
+    parts = db_path.split("/")
+    repo_name = None
+    for p in parts:
+        if p.startswith(("0", "1")) and "-" in p and len(p) >= 4 and p[1].isdigit():
+            repo_name = p
+            break
+    if not repo_name:
+        # parent of .code-review-graph/
+        repo_name = os.path.basename(os.path.dirname(os.path.dirname(db_path)))
+
+    if repo_filter and repo_filter not in repo_name:
+        continue
+    graph_dbs.append((repo_name, db_path))
+
+if not graph_dbs:
+    print("No graph databases found.")
+    sys.exit(0)
+
+con = duckdb.connect(":memory:")
+
+# Attach all SQLite databases
+for i, (name, path) in enumerate(graph_dbs):
+    alias = f"repo_{i}"
+    con.execute(f"ATTACH '{path}' AS {alias} (TYPE SQLITE, READ_ONLY)")
+
+if mode == "summary":
+    print("\n## Cross-Repo Code Graph Summary")
+    print(f"{'Repo':<20} {'Nodes':>8} {'Edges':>8} {'Files':>6} {'Classes':>8} {'Functions':>10} {'Tests':>6}")
+    print(f"{'─'*20} {'─'*8} {'─'*8} {'─'*6} {'─'*8} {'─'*10} {'─'*6}")
+
+    total_n = total_e = total_f = total_c = total_fn = total_t = 0
+
+    for i, (name, path) in enumerate(graph_dbs):
+        alias = f"repo_{i}"
+        row = con.execute(f"""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN kind='File' THEN 1 ELSE 0 END) as files,
+                SUM(CASE WHEN kind='Class' THEN 1 ELSE 0 END) as classes,
+                SUM(CASE WHEN kind='Function' THEN 1 ELSE 0 END) as funcs,
+                SUM(CASE WHEN kind='Test' THEN 1 ELSE 0 END) as tests
+            FROM {alias}.nodes
+        """).fetchone()
+
+        edges = con.execute(f"SELECT COUNT(*) FROM {alias}.edges").fetchone()[0]
+
+        nodes, files, classes, funcs, tests = (value or 0 for value in row)
+        total_n += nodes; total_e += edges; total_f += files
+        total_c += classes; total_fn += funcs; total_t += tests
+
+        print(f"{name:<20} {nodes:>8,} {edges:>8,} {files:>6,} {classes:>8,} {funcs:>10,} {tests:>6,}")
+
+    print(f"{'─'*20} {'─'*8} {'─'*8} {'─'*6} {'─'*8} {'─'*10} {'─'*6}")
+    print(f"{'TOTAL':<20} {total_n:>8,} {total_e:>8,} {total_f:>6,} {total_c:>8,} {total_fn:>10,} {total_t:>6,}")
+    print()
+
+elif mode == "top_functions":
+    print(f"\n## Top {max_results} Largest Functions (Cross-Repo)")
+    print(f"{'Lines':>6} {'Repo':<18} {'Name':<40} {'File'}")
+    print(f"{'─'*6} {'─'*18} {'─'*40} {'─'*40}")
+
+    union_parts = []
+    for i, (name, path) in enumerate(graph_dbs):
+        alias = f"repo_{i}"
+        union_parts.append(f"""
+            SELECT '{name}' as repo, name, file_path, line_start, line_end,
+                   (line_end - line_start) as size
+            FROM {alias}.nodes
+            WHERE kind IN ('Function', 'Class') AND line_end > line_start
+        """)
+
+    query = " UNION ALL ".join(union_parts) + f" ORDER BY size DESC LIMIT {max_results}"
+    for row in con.execute(query).fetchall():
+        repo, name, fpath, ls, le, size = row
+        fname = os.path.basename(fpath)
+        print(f"{size:>6} {repo:<18} {name:<40} {fname}:{ls}")
+
+elif mode == "languages":
+    print("\n## Language Distribution (Cross-Repo)")
+    print(f"{'Repo':<20} {'Languages'}")
+    print(f"{'─'*20} {'─'*50}")
+
+    for i, (name, path) in enumerate(graph_dbs):
+        alias = f"repo_{i}"
+        langs = con.execute(f"""
+            SELECT language, COUNT(*) as cnt
+            FROM {alias}.nodes
+            WHERE language IS NOT NULL AND language != ''
+            GROUP BY language ORDER BY cnt DESC
+        """).fetchall()
+        lang_str = ", ".join(f"{l}({c})" for l, c in langs)
+        print(f"{name:<20} {lang_str}")
+
+elif mode == "edges":
+    print("\n## Edge Type Distribution (Cross-Repo)")
+    print(f"{'Repo':<20} {'CALLS':>8} {'CONTAINS':>10} {'IMPORTS':>9} {'INHERITS':>10}")
+    print(f"{'─'*20} {'─'*8} {'─'*10} {'─'*9} {'─'*10}")
+
+    for i, (name, path) in enumerate(graph_dbs):
+        alias = f"repo_{i}"
+        edges = con.execute(f"""
+            SELECT kind, COUNT(*) FROM {alias}.edges GROUP BY kind
+        """).fetchall()
+        edge_map = {k: v for k, v in edges}
+        print(f"{name:<20} {edge_map.get('CALLS',0):>8,} {edge_map.get('CONTAINS',0):>10,} {edge_map.get('IMPORTS_FROM',0):>9,} {edge_map.get('INHERITS',0):>10,}")
+
+con.close()
+PYEOF

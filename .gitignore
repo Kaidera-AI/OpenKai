@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.agents/.harness-backups/
+.DS_Store

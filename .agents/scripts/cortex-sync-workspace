@@ -1,0 +1,932 @@
+#!/usr/bin/env bash
+# cortex-sync-workspace — register workspace projects, ingest profiles,
+# consolidate Claude/Codex transcript history, and refresh local-state knowledge.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_REALPATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}")"
+CANONICAL_AGENTS_DIR="$(cd "$(dirname "${SCRIPT_REALPATH}")/.." && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  cortex-sync-workspace [--config <path>] [--profiles-only] [--sessions-only] [--force] [--prune-missing]
+
+Options:
+  --config <path>   Workspace registry JSON. Defaults to .agents/config/workspace.json
+  --profiles-only   Sync project registry + profiles, skip transcript/local-state ingestion
+  --sessions-only   Ingest transcripts + Claude local state only, skip project/profile sync
+  --force           Re-ingest sessions even if already tracked
+  --prune-missing   Allow authoritative registry mode to remove missing paths/projects
+EOF
+    exit 1
+}
+
+CONFIG_FILE=""
+SYNC_PROFILES=1
+SYNC_SESSIONS=1
+FORCE=0
+PRUNE_MISSING=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --config)
+            [ $# -ge 2 ] || usage
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --profiles-only)
+            SYNC_SESSIONS=0
+            shift
+            ;;
+        --sessions-only)
+            SYNC_PROFILES=0
+            shift
+            ;;
+        --force)
+            FORCE=1
+            shift
+            ;;
+        --prune-missing)
+            PRUNE_MISSING=1
+            shift
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            echo "ERROR: Unknown flag: $1" >&2
+            usage
+            ;;
+    esac
+done
+
+[ "${SYNC_PROFILES}" -eq 1 ] || [ "${SYNC_SESSIONS}" -eq 1 ] || usage
+
+if ! pg_available; then
+    echo "ERROR: Cortex PostgreSQL is not reachable on host ${PG_PORT} and runtime fallback failed." >&2
+    exit 1
+fi
+
+if [ -z "${CONFIG_FILE}" ]; then
+    CONFIG_FILE="$(cortex_workspace_config_file 2>/dev/null || true)"
+fi
+
+if [ -z "${CONFIG_FILE}" ] || [ ! -f "${CONFIG_FILE}" ]; then
+    echo "ERROR: workspace config not found. Expected .agents/config/workspace.json" >&2
+    exit 1
+fi
+
+SCHEMA_FILE="${CORTEX_SCHEMA_FILE:-${CANONICAL_AGENTS_DIR}/data/schema.sql}"
+pg_exec_file "${SCHEMA_FILE}" >/dev/null
+
+TMP_SQL="$(mktemp /tmp/cortex-workspace-sql.XXXXXX)"
+TMP_PLAN="$(mktemp /tmp/cortex-workspace-plan.XXXXXX)"
+TMP_FILTERED_PLAN=""
+
+python3 - "${CONFIG_FILE}" "${TMP_SQL}" "${TMP_PLAN}" "${PRUNE_MISSING}" <<'PYEOF'
+import glob
+import hashlib
+import json
+import os
+import re
+import sys
+import uuid
+
+config_path, sql_path, plan_path, prune_missing_arg = sys.argv[1:5]
+prune_missing = prune_missing_arg == "1"
+
+with open(config_path, "r") as handle:
+    config = json.load(handle)
+
+projects = config.get("projects", [])
+registry_mode = str(config.get("registry_mode") or "partial").strip().lower()
+agent_aliases = config.get("agent_aliases", {}) or {}
+agent_alias_patterns = config.get("agent_alias_patterns", {}) or {}
+configured_project_keys = []
+configured_root_paths = []
+
+
+def sql(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def maybe_sql(value):
+    if value in (None, ""):
+        return "NULL"
+    return f"'{sql(str(value))}'"
+
+
+def project_id_expr(project_key: str) -> str:
+    key = sql(project_key)
+    return f"(SELECT id FROM cortex_projects WHERE project_key = '{key}')"
+
+
+def actor_id_expr(project_key: str, agent_name: str, source: str) -> str:
+    return (
+        "cortex_identity_v2_ensure_actor("
+        f"'{sql(project_key)}', '{sql(agent_name)}', '{sql(source)}'"
+        ")"
+    )
+
+
+GENERATED_HEADER_PREFIX = "GENERATED FROM CORTEX — DO NOT EDIT"
+
+
+def strip_generated_headers(text: str) -> str:
+    lines = text.splitlines()
+    stripped = False
+    while lines and GENERATED_HEADER_PREFIX in lines[0]:
+        lines = lines[1:]
+        if lines and not lines[0].strip():
+            lines = lines[1:]
+        stripped = True
+    if not stripped:
+        return text
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def parse_frontmatter(text: str):
+    metadata = {}
+    if not text.startswith("---\n"):
+        return metadata
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return metadata
+    for raw in text[4:end].splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = value.strip().strip('"').strip("'")
+    return metadata
+
+
+def relative_section(base: str, path: str) -> str:
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return os.path.basename(path)
+
+
+def stable_uuid(seed: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, seed))
+
+
+def normalize_agent(project_key: str, agent_name: str) -> str:
+    normalized = (agent_name or "").strip().lower()
+    normalized = re.sub(r"([:@]).*$", "", normalized)
+    if not normalized:
+        return normalized
+
+    project_aliases = agent_aliases.get(project_key, {}) if isinstance(agent_aliases, dict) else {}
+    global_aliases = agent_aliases.get("*", {}) if isinstance(agent_aliases, dict) else {}
+    project_patterns = agent_alias_patterns.get(project_key, []) if isinstance(agent_alias_patterns, dict) else []
+    global_patterns = agent_alias_patterns.get("*", []) if isinstance(agent_alias_patterns, dict) else []
+
+    resolved = project_aliases.get(normalized) or global_aliases.get(normalized)
+    if not resolved:
+        for bucket in (project_patterns, global_patterns):
+            if not isinstance(bucket, list):
+                continue
+            for entry in bucket:
+                if not isinstance(entry, dict):
+                    continue
+                pattern = str(entry.get("pattern") or "").strip()
+                canonical = str(entry.get("canonical") or "").strip().lower()
+                if not pattern or not canonical:
+                    continue
+                try:
+                    if re.match(pattern, normalized):
+                        resolved = canonical
+                        break
+                except re.error:
+                    continue
+            if resolved:
+                break
+
+    return (resolved or normalized).strip().lower()
+
+
+def allowed_agents_for_project(project: dict) -> set[str]:
+    project_key = str(project.get("key") or "").strip()
+    allowed: set[str] = set()
+
+    default_agent = normalize_agent(project_key, project.get("default_agent") or "")
+    if default_agent:
+        allowed.add(default_agent)
+
+    aliases = agent_aliases.get(project_key, {}) if isinstance(agent_aliases, dict) else {}
+    if isinstance(aliases, dict):
+        for value in aliases.values():
+            normalized = normalize_agent(project_key, str(value or ""))
+            if normalized:
+                allowed.add(normalized)
+
+    for item in project.get("agents", []) or []:
+        if not isinstance(item, dict):
+            continue
+        normalized = normalize_agent(project_key, str(item.get("name") or ""))
+        if normalized:
+            allowed.add(normalized)
+
+    return allowed
+
+
+PROJECT_ALLOWED_AGENTS = {
+    str(project.get("key") or "").strip(): allowed_agents_for_project(project)
+    for project in projects
+    if str(project.get("key") or "").strip()
+}
+
+
+def coerce_session_agent(project_key: str, agent_name: str, default_agent: str) -> str:
+    normalized = normalize_agent(project_key, agent_name)
+    allowed = PROJECT_ALLOWED_AGENTS.get(project_key) or set()
+    if not allowed:
+        return normalized
+    if normalized in allowed:
+        return normalized
+    fallback = normalize_agent(project_key, default_agent or "")
+    if fallback in allowed:
+        return fallback
+    return sorted(allowed)[0]
+
+
+def stable_uuid_for_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return stable_uuid(digest.hexdigest())
+
+
+def detect_provider(session_path: str):
+    real_path = os.path.realpath(session_path)
+    if "/.claude/" in real_path:
+        return "claude"
+    if "/.codex/" in real_path:
+        return "codex"
+
+    with open(real_path, "r") as handle:
+        for index, line in enumerate(handle):
+            if index > 10:
+                break
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "sessionId" in payload or payload.get("type") in {"user", "assistant"}:
+                return "claude"
+            if payload.get("type") in {"session_meta", "event_msg", "response_item"}:
+                return "codex"
+    return None
+
+
+sql_lines = ["BEGIN;"]
+
+for project in projects:
+    key = project["key"]
+    configured_project_keys.append(key)
+    display_name = project.get("display_name", key)
+    parent = project.get("parent")
+    default_agent = project.get("default_agent")
+    repo_type = project.get("repo_type", "repo")
+    status = project.get("status", "active")
+    roots = project.get("roots", [])  # fitness:allow-literal false-match: roots (field name, not agent 'root')
+    primary_root = roots[0]["path"] if roots else ""
+    metadata_json = json.dumps(
+        {
+            "profile_globs": project.get("profile_globs", []),
+            "knowledge_globs": project.get("knowledge_globs", []),
+            "beat": project.get("beat", {}),
+            "roots": roots,  # fitness:allow-literal false-match: roots (field name, not agent 'root')
+            "default_agent": default_agent,
+        }
+    )
+
+    sql_lines.append(
+        "INSERT INTO cortex_projects "
+        "(project_key, display_name, parent_project_key, repo_root, repo_type, status, default_agent, metadata) "
+        f"VALUES ('{sql(key)}', '{sql(display_name)}', {maybe_sql(parent)}, '{sql(primary_root)}', "
+        f"'{sql(repo_type)}', '{sql(status)}', {maybe_sql(default_agent)}, '{sql(metadata_json)}'::jsonb) "
+        "ON CONFLICT (project_key) DO UPDATE SET "
+        "display_name = EXCLUDED.display_name, "
+        "parent_project_key = EXCLUDED.parent_project_key, "
+        "repo_root = EXCLUDED.repo_root, "
+        "repo_type = EXCLUDED.repo_type, "
+        "status = EXCLUDED.status, "
+        "default_agent = EXCLUDED.default_agent, "
+        "metadata = EXCLUDED.metadata, "
+        "updated_at = NOW();"
+        )
+
+    sql_lines.append(
+        f"DELETE FROM agent_profiles WHERE project = '{sql(key)}';"
+    )
+    sql_lines.append(
+        "DELETE FROM knowledge "
+        f"WHERE project = '{sql(key)}' "
+        "AND category IN ('agent-profile', 'role-profile', 'workspace-doc');"
+    )
+
+    for root in roots:
+        root_path = os.path.realpath(root["path"])
+        configured_root_paths.append(root_path)
+        kind = root.get("kind", "primary")
+        root_meta = json.dumps(root)  # fitness:allow-literal false-match: 'root' loop variable, not agent 'root'
+        sql_lines.append(
+            "INSERT INTO cortex_project_paths (project_key, root_path, path_kind, metadata) "
+            f"VALUES ('{sql(key)}', '{sql(root_path)}', '{sql(kind)}', '{sql(root_meta)}'::jsonb) "
+            "ON CONFLICT (root_path) DO UPDATE SET "
+            "project_key = EXCLUDED.project_key, "
+            "path_kind = EXCLUDED.path_kind, "
+            "metadata = EXCLUDED.metadata;"
+        )
+
+    seen_profiles = set()
+    seen_knowledge = set()
+    for root in roots:
+        if root.get("kind", "primary") == "legacy":
+            continue
+        base = root["path"]
+        for pattern in root.get("profile_globs", project.get("profile_globs", [])):
+            for path in glob.glob(os.path.join(base, pattern)):
+                real_path = os.path.realpath(path)
+                if real_path in seen_profiles or not os.path.isfile(real_path):
+                    continue
+                if os.path.basename(real_path).startswith("_"):
+                    continue
+                seen_profiles.add(real_path)
+
+                text = strip_generated_headers(open(real_path, "r").read())
+                frontmatter = parse_frontmatter(text)
+                filename = os.path.basename(real_path)
+                profile_kind = "identity" if filename.endswith("_IDENTITY.md") else "role"
+                derived_name = filename.replace("_IDENTITY.md", "").replace(".md", "")
+                if frontmatter.get("agent_id"):
+                    profile_kind = "identity"
+                agent_name = (
+                    frontmatter.get("name")
+                    or frontmatter.get("agent")
+                    or frontmatter.get("agent_id")
+                    or derived_name
+                ).strip()
+                agent_key = normalize_agent(key, agent_name)
+                role = (frontmatter.get("role") or agent_key).strip()
+                model = (frontmatter.get("model") or frontmatter.get("model_preference") or "").strip()
+                description = (frontmatter.get("description") or "").strip()
+                profile_meta = json.dumps(
+                    {
+                        "frontmatter": frontmatter,
+                        "description": description,
+                        "model": model,
+                    }
+                )
+                category = "agent-profile" if profile_kind == "identity" else "role-profile"
+                section = role if profile_kind == "identity" else agent_key
+
+                sql_lines.append(
+                    "INSERT INTO agent_profiles "
+                    "(project, project_id, actor_id, agent_name, profile_kind, role, source_file, profile_text, metadata, updated_at) "
+                    f"VALUES ('{sql(key)}', {project_id_expr(key)}, "
+                    f"{actor_id_expr(key, agent_key, 'cortex-sync-workspace.agent_profiles')}, "
+                    f"'{sql(agent_key)}', '{profile_kind}', '{sql(role)}', "
+                    f"'{sql(real_path)}', '{sql(text)}', '{sql(profile_meta)}'::jsonb, NOW()) "
+                    "ON CONFLICT (project, agent_name, profile_kind, source_file) DO UPDATE SET "
+                    "project_id = EXCLUDED.project_id, "
+                    "actor_id = EXCLUDED.actor_id, "
+                    "role = EXCLUDED.role, "
+                    "profile_text = EXCLUDED.profile_text, "
+                    "metadata = EXCLUDED.metadata, "
+                    "updated_at = NOW();"
+                )
+
+                sql_lines.append(
+                    "DELETE FROM knowledge "
+                    f"WHERE source_file = '{sql(real_path)}' "
+                    f"AND category = '{category}' "
+                    f"AND project = '{sql(key)}';"
+                )
+                sql_lines.append(
+                    "INSERT INTO knowledge (content, source_file, category, section, project, project_id, updated_at) "
+                    f"VALUES ('{sql(text)}', '{sql(real_path)}', '{category}', '{sql(section)}', "
+                    f"'{sql(key)}', {project_id_expr(key)}, NOW());"
+                )
+
+                # NOTE: agent ROSTER registration (the `agents` table) is
+                # deliberately NOT written here. It used to be a raw-SQL
+                # `INSERT INTO agents ... ON CONFLICT (name, project)` for every
+                # `*_IDENTITY.md` matched by a project's profile_globs. That
+                # bypassed the Cortex HTTP API's caller/scope guards and was the
+                # cross-project contamination vector: when a workspace.json
+                # listed another project's identity file under its globs, the
+                # agent was silently cross-registered into the wrong project's
+                # roster on every sync. Roster registration is now
+                # explicit and guarded: `cortex-add-agent` -> POST /agents
+                # (caller-gated), matching the E006 Inc04 roster-as-data model.
+                # The `agent_profiles` write ABOVE is sufficient for everything
+                # the sync needs: cortex-boot / GET /boot identity + role
+                # resolution read agent_profiles directly, and
+                # cortex-maintain-agents promotes keep_visible for agents whose
+                # profile is project-scoped. Identity files therefore feed
+                # boot/persona/role context without minting roster rows.
+
+        for pattern in root.get("knowledge_globs", project.get("knowledge_globs", [])):
+            for path in glob.glob(os.path.join(base, pattern)):
+                real_path = os.path.realpath(path)
+                if real_path in seen_knowledge or not os.path.isfile(real_path):
+                    continue
+                seen_knowledge.add(real_path)
+
+                text = open(real_path, "r").read()
+                section = relative_section(base, real_path)
+
+                sql_lines.append(
+                    "DELETE FROM knowledge "
+                    f"WHERE source_file = '{sql(real_path)}' "
+                    "AND category = 'workspace-doc' "
+                    f"AND project = '{sql(key)}';"
+                )
+                sql_lines.append(
+                    "INSERT INTO knowledge (content, source_file, category, section, project, project_id, updated_at) "
+                    f"VALUES ('{sql(text)}', '{sql(real_path)}', 'workspace-doc', '{sql(section)}', "
+                    f"'{sql(key)}', {project_id_expr(key)}, NOW());"
+                )
+
+configured_root_paths = list(dict.fromkeys(configured_root_paths))
+configured_project_keys = list(dict.fromkeys(configured_project_keys))
+
+if registry_mode == "authoritative" and prune_missing:
+    if configured_root_paths:
+        keep_root_paths = ", ".join(f"'{sql(path)}'" for path in configured_root_paths)
+        sql_lines.append(
+            "DELETE FROM cortex_project_paths "
+            f"WHERE root_path NOT IN ({keep_root_paths});"
+        )
+    else:
+        sql_lines.append("DELETE FROM cortex_project_paths;")
+
+    if configured_project_keys:
+        keep_project_keys = ", ".join(f"'{sql(key)}'" for key in configured_project_keys)
+        sql_lines.append(
+            "DELETE FROM cortex_projects "
+            f"WHERE project_key NOT IN ({keep_project_keys});"
+        )
+    else:
+        sql_lines.append("DELETE FROM cortex_projects;")
+elif registry_mode != "authoritative" and configured_project_keys and configured_root_paths:
+    target_project_keys = ", ".join(f"'{sql(key)}'" for key in configured_project_keys)
+    keep_root_paths = ", ".join(f"'{sql(path)}'" for path in configured_root_paths)
+    sql_lines.append(
+        "DELETE FROM cortex_project_paths "
+        f"WHERE project_key IN ({target_project_keys}) "
+        f"AND root_path NOT IN ({keep_root_paths});"
+    )
+
+sql_lines.append("COMMIT;")
+
+with open(sql_path, "w") as handle:
+    handle.write("\n".join(sql_lines) + "\n")
+
+
+root_candidates = []
+for project in projects:
+    for root in project.get("roots", []):  # fitness:allow-literal false-match: roots (field name) / 'root' loop var, not agent 'root'
+        root_candidates.append(
+            (
+                os.path.realpath(root["path"]),
+                project["key"],
+                normalize_agent(project["key"], project.get("default_agent") or ""),
+            )
+        )
+root_candidates.sort(key=lambda item: len(item[0]), reverse=True)
+
+
+def match_project(cwd: str):
+    if not cwd:
+        return None
+    real_cwd = os.path.realpath(cwd)
+    for root_path, project_key, default_agent in root_candidates:
+        if real_cwd == root_path or real_cwd.startswith(root_path + os.sep):
+            return project_key, default_agent
+    return None
+
+
+AGENT_PROMPT_PATTERNS = (
+    re.compile(r"\bidentity:\s*([a-z][a-z0-9_-]{1,31})\s*:", re.IGNORECASE),
+    re.compile(r"\bcortex-bootstrap\s+([a-z][a-z0-9_-]{1,31})\b", re.IGNORECASE),
+    re.compile(r"^\s*(?:hi|hello)\s+([a-z][a-z0-9_-]{1,31})\b", re.IGNORECASE | re.MULTILINE),
+    re.compile(r"\byou are\s+([a-z][a-z0-9_-]{1,31})\b", re.IGNORECASE),
+    re.compile(r"-\s*\*\*([a-z][a-z0-9_-]{1,31})\*\*[^\\n]{0,160}?this is me", re.IGNORECASE),
+)
+IGNORED_AGENT_CUES = {
+    "agent",
+    "assistant",
+    "claude",
+    "codex",
+    "everyone",
+    "friend",
+    "here",
+    "project",
+    "system",
+    "team",
+    "there",
+}
+
+
+def extract_text_fragments(content):
+    fragments = []
+    if isinstance(content, str):
+        fragments.append(content)
+    elif isinstance(content, list):
+        for item in content:
+            if isinstance(item, str):
+                fragments.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type") or "").strip().lower()
+            if item_type in {"text", "input_text", "output_text"}:
+                text = item.get("text")
+                if isinstance(text, str):
+                    fragments.append(text)
+            elif item_type == "tool_result":
+                result = item.get("content")
+                if isinstance(result, str):
+                    fragments.append(result)
+    return fragments
+
+
+def infer_explicit_agent(project_key: str, *texts):
+    for raw_text in texts:
+        if not isinstance(raw_text, str):
+            continue
+        text = raw_text.strip()
+        if len(text) < 3:
+            continue
+        for pattern in AGENT_PROMPT_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            candidate = (match.group(1) or "").strip().lower()
+            if not candidate or candidate in IGNORED_AGENT_CUES:
+                continue
+            resolved = normalize_agent(project_key, candidate)
+            if resolved:
+                return resolved
+    return None
+
+
+def parse_claude(session_path: str):
+    cwd = None
+    session_id = None
+    agent_id = None
+    is_sidechain = False
+    candidate_texts = []
+
+    with open(session_path, "r") as handle:
+        for index, line in enumerate(handle):
+            if index > 200:
+                break
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            cwd = cwd or payload.get("cwd")
+            session_id = session_id or payload.get("sessionId")
+            agent_id = agent_id or payload.get("agentId")
+            is_sidechain = is_sidechain or bool(payload.get("isSidechain"))
+            if payload.get("type") != "user":
+                continue
+            message = payload.get("message", {}) if isinstance(payload.get("message"), dict) else {}
+            fragments = extract_text_fragments(message.get("content"))
+            if fragments:
+                candidate_texts.extend(fragments)
+
+    match = match_project(cwd or "")
+    if not match:
+        return None
+
+    project_key, default_agent = match
+    inferred_agent = infer_explicit_agent(project_key, *candidate_texts)
+    if is_sidechain:
+        resolved_agent = coerce_session_agent(
+            project_key,
+            inferred_agent or f"claude-subagent-{(agent_id or os.path.basename(session_path))[:12].lower()}",
+            default_agent,
+        )
+        resolved_session_id = stable_uuid_for_file(session_path)
+    else:
+        resolved_agent = coerce_session_agent(project_key, inferred_agent or default_agent, default_agent)
+        try:
+            resolved_session_id = str(uuid.UUID(str(session_id or os.path.splitext(os.path.basename(session_path))[0])))
+        except (ValueError, TypeError, AttributeError):
+            resolved_session_id = stable_uuid_for_file(session_path)
+
+    return ("claude", os.path.realpath(session_path), resolved_session_id, resolved_agent, project_key)
+
+
+def parse_codex(session_path: str):
+    cwd = None
+    session_id = None
+    agent_name = None
+    agent_role = None
+    candidate_texts = []
+
+    with open(session_path, "r") as handle:
+        for index, line in enumerate(handle):
+            if index > 200:
+                break
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            payload_type = payload.get("type")
+            meta = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+
+            if payload_type == "session_meta":
+                cwd = meta.get("cwd")
+                session_id = meta.get("id")
+                agent_name = meta.get("agent_nickname")
+                agent_role = meta.get("agent_role")
+                continue
+
+            current_texts = []
+            if payload_type == "event_msg" and meta.get("type") == "user_message":
+                message = meta.get("message")
+                if isinstance(message, str):
+                    current_texts.append(message)
+            elif payload_type == "response_item" and meta.get("type") == "message" and meta.get("role") == "user":
+                current_texts.extend(extract_text_fragments(meta.get("content")))
+
+            if current_texts:
+                candidate_texts.extend(current_texts)
+
+    match = match_project(cwd or "")
+    if not match:
+        return None
+
+    project_key, default_agent = match
+    explicit_agent = infer_explicit_agent(project_key, *candidate_texts)
+    try:
+        resolved_session_id = str(uuid.UUID(str(session_id)))
+    except (ValueError, TypeError, AttributeError):
+        resolved_session_id = stable_uuid_for_file(session_path)
+    resolved_agent = coerce_session_agent(
+        project_key,
+        agent_name or explicit_agent or agent_role or default_agent,
+        default_agent,
+    )
+    return ("codex", os.path.realpath(session_path), resolved_session_id, resolved_agent, project_key)
+
+
+plan_rows = []
+seen_session_ids = set()
+
+
+def append_plan_row(row):
+    if not row:
+        return
+    session_id = row[2]
+    if session_id in seen_session_ids:
+        return
+    seen_session_ids.add(session_id)
+    plan_rows.append(row)
+
+
+local_session_roots = set()
+for project in projects:
+    for root in project.get("roots", []):  # fitness:allow-literal false-match: roots (field name) / 'root' loop var, not agent 'root'
+        if root.get("kind", "primary") == "legacy":
+            continue
+        real_root = os.path.realpath(root["path"])
+        for candidate in (
+            os.path.join(real_root, ".claude"),
+            os.path.join(real_root, ".codex"),
+            os.path.join(real_root, "data", "sessions"),
+        ):
+            if os.path.isdir(candidate):
+                local_session_roots.add(candidate)
+
+claude_base = os.path.expanduser("~/.claude/projects")
+if os.path.isdir(claude_base):
+    for root, _, files in os.walk(claude_base):
+        for filename in files:
+            if not filename.endswith(".jsonl"):
+                continue
+            row = parse_claude(os.path.join(root, filename))
+            append_plan_row(row)
+
+codex_base = os.path.expanduser("~/.codex/sessions")
+if os.path.isdir(codex_base):
+    for root, _, files in os.walk(codex_base):
+        for filename in files:
+            if not filename.endswith(".jsonl"):
+                continue
+            row = parse_codex(os.path.join(root, filename))
+            append_plan_row(row)
+
+for base in sorted(local_session_roots):
+    for root, _, files in os.walk(base):
+        for filename in files:
+            if not filename.endswith(".jsonl"):
+                continue
+            session_path = os.path.join(root, filename)
+            provider = detect_provider(session_path)
+            if provider == "claude":
+                append_plan_row(parse_claude(session_path))
+            elif provider == "codex":
+                append_plan_row(parse_codex(session_path))
+
+plan_rows.sort(key=lambda row: (row[4], row[0], row[1]))
+
+with open(plan_path, "w") as handle:
+    for row in plan_rows:
+        handle.write("\t".join(row) + "\n")
+PYEOF
+
+if [ "${SYNC_PROFILES}" -eq 1 ]; then
+    pg_exec_file "${TMP_SQL}" >/dev/null
+
+    # Profiles feed cortex-boot identity and role context. Clear cached boots so
+    # corrected personas take effect immediately after a profile sync.
+    if redis_available; then
+        BOOT_CACHE_KEYS="$(rcli KEYS "*:boot:*" 2>/dev/null || true)"
+        if [ -n "${BOOT_CACHE_KEYS}" ]; then
+            while IFS= read -r key; do
+                [ -n "${key}" ] && rcli DEL "${key}" >/dev/null 2>&1 || true
+            done <<< "${BOOT_CACHE_KEYS}"
+        fi
+    fi
+fi
+
+ingested_count=0
+total_sessions=0
+LOCAL_STATE_SUMMARY=""
+
+if [ "${SYNC_SESSIONS}" -eq 1 ]; then
+    total_sessions="$(wc -l < "${TMP_PLAN}" | tr -d ' ')"
+    TMP_FILTERED_PLAN="$(mktemp /tmp/cortex-workspace-filtered-plan.XXXXXX)"
+
+    if [ "${FORCE}" -eq 1 ]; then
+        cp "${TMP_PLAN}" "${TMP_FILTERED_PLAN}"
+    else
+        TMP_INGESTED_IDS="$(mktemp /tmp/cortex-workspace-ingested-ids.XXXXXX)"
+        TMP_INGESTED_PATHS="$(mktemp /tmp/cortex-workspace-ingested-paths.XXXXXX)"
+
+        pg_query "SELECT id::text FROM agent_sessions UNION SELECT session_id::text FROM session_sources;" 2>/dev/null > "${TMP_INGESTED_IDS}" || true
+        pg_query "SELECT source_path FROM session_sources;" 2>/dev/null > "${TMP_INGESTED_PATHS}" || true
+
+        python3 - "${TMP_PLAN}" "${TMP_FILTERED_PLAN}" "${TMP_INGESTED_IDS}" "${TMP_INGESTED_PATHS}" <<'PYEOF'
+import pathlib
+import sys
+
+plan_path = pathlib.Path(sys.argv[1])
+filtered_path = pathlib.Path(sys.argv[2])
+ids_path = pathlib.Path(sys.argv[3])
+paths_path = pathlib.Path(sys.argv[4])
+
+ingested_ids = {line.strip() for line in ids_path.read_text().splitlines() if line.strip()}
+ingested_paths = {line.rstrip("\n") for line in paths_path.read_text().splitlines() if line.rstrip("\n")}
+
+with plan_path.open("r") as src, filtered_path.open("w") as dst:
+    for raw_line in src:
+        line = raw_line.rstrip("\n")
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        _, transcript_path, session_id, _, _ = parts[:5]
+        if session_id in ingested_ids or transcript_path in ingested_paths:
+            continue
+        dst.write(raw_line)
+PYEOF
+
+        rm -f "${TMP_INGESTED_IDS}" "${TMP_INGESTED_PATHS}"
+    fi
+
+    while IFS=$'\t' read -r provider transcript_path session_id agent_name project_name; do
+        [ -n "${provider}" ] || continue
+
+        if [ "${provider}" = "claude" ]; then
+            "${SCRIPT_DIR}/cortex-ingest-session" "${transcript_path}" "${agent_name}" "${project_name}" >/dev/null
+        else
+            "${SCRIPT_DIR}/cortex-ingest-codex" "${transcript_path}" "${agent_name}" "${project_name}" >/dev/null
+        fi
+
+        ingested_count=$((ingested_count + 1))
+    done < "${TMP_FILTERED_PLAN}"
+fi
+
+if [ "${SYNC_SESSIONS}" -eq 1 ] && [ -x "${SCRIPT_DIR}/cortex-ingest-claude-local-state" ]; then
+    LOCAL_STATE_SUMMARY="$("${SCRIPT_DIR}/cortex-ingest-claude-local-state")"
+fi
+
+RECONCILE_SUMMARY=""
+if [ "${SYNC_PROFILES}" -eq 1 ] || [ "${SYNC_SESSIONS}" -eq 1 ]; then
+    RECONCILE_SUMMARY="$("${SCRIPT_DIR}/cortex-reconcile-identities" --all || true)"
+fi
+
+MAINTAIN_SUMMARY=""
+if [ "${SYNC_PROFILES}" -eq 1 ] || [ "${SYNC_SESSIONS}" -eq 1 ]; then
+    MAINTAIN_SUMMARY="$("${SCRIPT_DIR}/cortex-maintain-agents" --all || true)"
+fi
+
+echo ""
+echo "## Workspace Sync"
+echo ""
+echo "Config:            ${CONFIG_FILE}"
+echo "Profiles synced:   ${SYNC_PROFILES}"
+echo "Sessions scanned:  ${total_sessions}"
+echo "Sessions ingested: ${ingested_count}"
+if [ -n "${LOCAL_STATE_SUMMARY}" ]; then
+    echo "Claude local state:"
+    printf '%s\n' "${LOCAL_STATE_SUMMARY}" | sed 's/^/  /'
+fi
+if [ -n "${RECONCILE_SUMMARY}" ]; then
+    echo "Identity reconcile:"
+    printf '%s\n' "${RECONCILE_SUMMARY}" | sed 's/^/  /'
+fi
+if [ -n "${MAINTAIN_SUMMARY}" ]; then
+    echo "Agent maintenance:"
+    printf '%s\n' "${MAINTAIN_SUMMARY}" | sed 's/^/  /'
+fi
+
+EMBEDDING_BACKLOG="$(pg_query "
+    WITH registered AS (
+        SELECT project_key FROM cortex_projects
+    ),
+    backlog AS (
+        SELECT project, COUNT(*)::bigint AS missing
+          FROM messages
+         WHERE embedding IS NULL
+           AND project IN (SELECT project_key FROM registered)
+         GROUP BY project
+        UNION ALL
+        SELECT project, COUNT(*)::bigint AS missing
+          FROM decisions
+         WHERE embedding IS NULL
+           AND project IN (SELECT project_key FROM registered)
+         GROUP BY project
+        UNION ALL
+        SELECT project, COUNT(*)::bigint AS missing
+          FROM lessons
+         WHERE embedding IS NULL
+           AND project IN (SELECT project_key FROM registered)
+         GROUP BY project
+        UNION ALL
+        SELECT project, COUNT(*)::bigint AS missing
+          FROM knowledge
+         WHERE embedding IS NULL
+           AND project IN (SELECT project_key FROM registered)
+         GROUP BY project
+    )
+    SELECT project, SUM(missing)::text
+      FROM backlog
+     GROUP BY project
+     ORDER BY project;
+" 2>/dev/null || true)"
+
+if [ -n "${EMBEDDING_BACKLOG}" ]; then
+    echo "Embedding backlog:"
+    while IFS='|' read -r project missing; do
+        printf '  %-12s %s\n' "${project}" "${missing}"
+    done <<< "${EMBEDDING_BACKLOG}"
+fi
+echo ""
+
+rm -f "${TMP_SQL}" "${TMP_PLAN}"
+if [ -n "${TMP_FILTERED_PLAN}" ]; then
+    rm -f "${TMP_FILTERED_PLAN}"
+fi
+
+# ---------------------------------------------------------------------------
+# Workspace path guardrail — advisory only.
+# Surfaces stale absolute-path orphans (broken symlinks, legacy prefixes,
+# Claude transcript slug drift) introduced since last sync. Non-blocking;
+# the strict gate is the cust-portal pre-commit hook. Skip with:
+#   CORTEX_SYNC_SKIP_GUARDRAIL=1 cortex-sync-workspace
+# ---------------------------------------------------------------------------
+
+if [ -z "${CORTEX_SYNC_SKIP_GUARDRAIL:-}" ]; then
+    GUARDRAIL_SCRIPT=""
+    for candidate in \
+        "${CORTEX_PROJECT_ROOT:-}/scripts/check-workspace-paths.sh" \
+        "${PWD}/scripts/check-workspace-paths.sh"; do
+        if [ -x "${candidate}" ]; then
+            GUARDRAIL_SCRIPT="${candidate}"
+            break
+        fi
+    done
+    if [ -n "${GUARDRAIL_SCRIPT}" ]; then
+        echo "Workspace path guardrail (advisory):"
+        "${GUARDRAIL_SCRIPT}" 2>&1 | grep -E "PASS|FAIL|✓|✗" | sed 's/^/  /' || true
+        echo ""
+    fi
+fi

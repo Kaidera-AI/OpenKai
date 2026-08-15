@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+# cortex-backup — Full Cortex deployment backup
+#
+# Dumps both Postgres databases and project files into a timestamped tarball.
+# Redis is skipped by default because Cortex is Postgres-first;
+# set CORTEX_BACKUP_INCLUDE_REDIS=1 for an explicit cross-project recovery snapshot.
+# Output: $CORTEX_BACKUP_DIR, or $CORTEX_BACKUP_ROOT/cortex-backups by default.
+#
+# Usage:
+#   cortex-backup              Full backup (pg_dump + project files)
+#   cortex-backup --db-only    Data dumps only (Postgres)
+#   cortex-backup --files-only Project files only (no DB)
+#
+# Created: 2026-06-08
+
+set -euo pipefail
+
+# ── Configuration ───────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_CANDIDATE="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -d "$ROOT_CANDIDATE/local-cortex" ] || [ -d "$ROOT_CANDIDATE/.git" ]; then
+    DEFAULT_PROJECT_ROOT="$ROOT_CANDIDATE"
+else
+    DEFAULT_PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
+BACKUP_DIR="${CORTEX_BACKUP_DIR:-${CORTEX_BACKUP_ROOT:-$HOME/Library/CloudStorage/Dropbox}/cortex-backups}"
+PROJECT_ROOT="${CORTEX_PROJECT_ROOT:-$DEFAULT_PROJECT_ROOT}"
+TIMESTAMP="$(date +%Y-%m-%d-%H%M)"
+BACKUP_NAME="cortex-backup-${TIMESTAMP}"
+STAGE="$(mktemp -d -t cortex-backup-XXXXXX)"
+trap 'rm -rf "$STAGE"' EXIT
+
+MODE="${1:---full}"
+
+# ── Help ────────────────────────────────────────────────────────────────────
+usage() {
+    cat <<'EOF'
+Usage: cortex-backup [--full|--db-only|--files-only]
+
+  --full       Full backup: pg_dump both databases + project files (default)
+  --db-only    Data dumps only (platform_agent_memory + harness_app)
+  --files-only Project files only (no DB dump)
+
+Output: $CORTEX_BACKUP_DIR, or $CORTEX_BACKUP_ROOT/cortex-backups by default.
+EOF
+}
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    usage
+    exit 0
+fi
+
+# ── Ensure output dir exists ────────────────────────────────────────────────
+mkdir -p "$BACKUP_DIR"
+
+echo "═══ Cortex Backup — ${TIMESTAMP} ═══"
+echo "  Mode:      ${MODE}"
+echo "  Project:   ${PROJECT_ROOT}"
+echo "  Output:    ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz"
+echo ""
+
+# ── Function: dump a postgres database via docker exec ──────────────────────
+pg_dump_container() {
+    local container="$1"
+    local db_name="$2"
+    local user="$3"
+    local outfile="$4"
+
+    echo "  Dumping ${db_name} from ${container}..."
+    docker exec "${container}" pg_dump -U "${user}" -d "${db_name}" \
+        --no-owner --no-acl --clean --if-exists \
+        -f "/tmp/${db_name}.sql" 2>&1 | sed 's/^/    /'
+
+    # Copy dump out of container
+    docker cp "${container}:/tmp/${db_name}.sql" "${outfile}" 2>/dev/null
+    docker exec "${container}" rm -f "/tmp/${db_name}.sql" 2>/dev/null || true
+
+    local size
+    size=$(wc -c < "${outfile}" | tr -d ' ')
+    echo "    ✓ ${db_name} dumped ($(awk "BEGIN { printf \"%.2f\", ${size} / 1024 / 1024 }") MB)"
+}
+
+# ── Database Backup ─────────────────────────────────────────────────────────
+do_db_backup() {
+    echo "[DB] Dumping PostgreSQL databases..."
+    mkdir -p "$STAGE/db"
+
+    # Check containers are running
+    if ! docker ps --format '{{.Names}}' | grep -q 'cortex-pg'; then
+        echo "  ⚠ cortex-pg container not running — skipping platform_agent_memory"
+    else
+        pg_dump_container "cortex-pg" "platform_agent_memory" "postgres" "$STAGE/db/platform_agent_memory.sql"
+    fi
+
+    if ! docker ps --format '{{.Names}}' | grep -q 'harness-appdb'; then
+        echo "  ⚠ harness-appdb container not running — skipping harness_app"
+    else
+        pg_dump_container "harness-appdb" "harness_app" "harness" "$STAGE/db/harness_app.sql"
+    fi
+
+    echo "  ✓ Database dumps complete"
+    echo ""
+}
+
+# ── Redis Backup ────────────────────────────────────────────────────────────
+do_redis_backup() {
+    echo "[REDIS] Capturing Redis snapshot..."
+    mkdir -p "$STAGE/db"
+
+    if [ "${CORTEX_BACKUP_INCLUDE_REDIS:-0}" != "1" ]; then
+        echo "  ℹ Redis skipped; Cortex is Postgres-only. Set CORTEX_BACKUP_INCLUDE_REDIS=1 to opt in."
+        echo ""
+        return 0
+    fi
+
+    if ! docker ps --format '{{.Names}}' | grep -q '^cortex-redis$'; then
+        echo "  ⚠ cortex-redis container not running — skipping Redis RDB"
+        echo ""
+        return 0
+    fi
+
+    if docker exec cortex-redis redis-cli SAVE >/dev/null 2>&1; then
+        docker cp cortex-redis:/data/dump.rdb "$STAGE/db/cortex-redis.rdb" >/dev/null 2>&1 || {
+            echo "  ⚠ Redis SAVE succeeded but dump copy failed"
+            echo ""
+            return 0
+        }
+        docker exec cortex-redis redis-cli INFO > "$STAGE/db/cortex-redis.info.txt" 2>/dev/null || true
+        local size
+        size=$(wc -c < "$STAGE/db/cortex-redis.rdb" | tr -d ' ')
+        echo "  ✓ Redis RDB captured ($(awk "BEGIN { printf \"%.2f\", ${size} / 1024 / 1024 }") MB)"
+    else
+        echo "  ⚠ Redis SAVE failed — skipping Redis RDB"
+    fi
+    echo ""
+}
+
+# ── Files Backup ────────────────────────────────────────────────────────────
+do_files_backup() {
+    echo "[FILES] Backing up project files..."
+
+    EXCLUDES=(
+        --exclude='__pycache__/'
+        --exclude='.pytest_cache/'
+        --exclude='*.pyc'
+        --exclude='node_modules/'
+        --exclude='.DS_Store'
+        --exclude='.git/'
+        --exclude='logs/'
+        --exclude='state/'
+        --exclude='output/'
+        --exclude='.venv/'
+        --exclude='*.bak'
+    )
+
+    # .agents/ — scripts, config, api, compose, migrations, roles, rules, bootstrap
+    echo "  Copying .agents/..."
+    mkdir -p "$STAGE/project/.agents"
+    rsync -a "${EXCLUDES[@]}" "$PROJECT_ROOT/.agents/" "$STAGE/project/.agents/" 2>/dev/null || true
+
+    # local-cortex/ — container defs, docs, redistributable tooling
+    echo "  Copying local-cortex/..."
+    mkdir -p "$STAGE/project/local-cortex"
+    rsync -a "${EXCLUDES[@]}" "$PROJECT_ROOT/local-cortex/" "$STAGE/project/local-cortex/" 2>/dev/null || true
+
+    # beat/ — orchestrator, launchers, missions
+    echo "  Copying beat/..."
+    mkdir -p "$STAGE/project/beat"
+    rsync -a "${EXCLUDES[@]}" --exclude='state/' --exclude='logs/' --exclude='__pycache__/' \
+        "$PROJECT_ROOT/beat/" "$STAGE/project/beat/" 2>/dev/null || true
+
+    # agents/ — identity files
+    echo "  Copying agents/..."
+    mkdir -p "$STAGE/project/agents"
+    cp "$PROJECT_ROOT/agents/"*IDENTITY*.md "$STAGE/project/agents/" 2>/dev/null || true
+
+    # AGENTS.md + Makefile
+    echo "  Copying root files..."
+    cp "$PROJECT_ROOT/AGENTS.md" "$STAGE/project/AGENTS.md" 2>/dev/null || true
+    cp "$PROJECT_ROOT/Makefile" "$STAGE/project/Makefile" 2>/dev/null || true
+
+    # Docker compose file copy (for reference)
+    if [ -f "$PROJECT_ROOT/.agents/docker-compose.cortex.yml" ]; then
+        cp "$PROJECT_ROOT/.agents/docker-compose.cortex.yml" "$STAGE/docker-compose.cortex.yml"
+    fi
+
+    echo "  ✓ Project files copied"
+    echo ""
+}
+
+# ── Docker Info ─────────────────────────────────────────────────────────────
+do_docker_info() {
+    echo "[DOCKER] Capturing Docker state..."
+    mkdir -p "$STAGE/docker"
+
+    docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" \
+        > "$STAGE/docker/ps.txt" 2>/dev/null || true
+
+    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" \
+        | grep -i cortex > "$STAGE/docker/images.txt" 2>/dev/null || true
+
+    docker volume ls | grep cortex > "$STAGE/docker/volumes.txt" 2>/dev/null || true
+
+    echo "  ✓ Docker state captured"
+    echo ""
+}
+
+# ── Generate Manifest ───────────────────────────────────────────────────────
+do_manifest() {
+    echo "[MANIFEST] Generating backup manifest..."
+    cat > "$STAGE/BACKUP_MANIFEST.md" <<EOF
+# Cortex Backup Manifest
+
+- **Date:** ${TIMESTAMP}
+- **Mode:** ${MODE}
+- **Project:** ${PROJECT_ROOT}
+- **Host:** $(hostname)
+
+## Backup Contents
+
+| Component | Description |
+|---|---|
+| db/platform_agent_memory.sql | Full pg_dump of agent memory DB |
+| db/harness_app.sql | Full pg_dump of harness operational DB |
+| db/cortex-redis.rdb | Redis snapshot for live/cache streams |
+| db/cortex-redis.info.txt | Redis INFO metadata |
+| project/.agents/ | Cortex scripts, API source, compose, migrations |
+| project/local-cortex/ | Container defs, docs, redistributable tooling |
+| project/beat/ | Beat orchestrator, launchers, missions |
+| project/agents/ | Agent identity files |
+| project/AGENTS.md | Harness boot pointer |
+| docker/ | Docker ps, images, volumes snapshot |
+
+## Restore Instructions
+
+1. Extract: \`tar -xzf ${BACKUP_NAME}.tar.gz\`
+2. Start containers: \`docker compose -f .agents/docker-compose.cortex.yml up -d\`
+3. Wait for health: \`curl http://localhost:8501/health\`
+4. Restore platform_agent_memory:
+   \`docker exec -i cortex-pg psql -U postgres -d platform_agent_memory < db/platform_agent_memory.sql\`
+5. Restore harness_app:
+   \`docker exec -i harness-appdb psql -U harness -d harness_app < db/harness_app.sql\`
+EOF
+    echo "  ✓ Manifest written"
+    echo ""
+}
+
+# ── Build Tarball ───────────────────────────────────────────────────────────
+do_package() {
+    echo "[PACKAGE] Building backup tarball..."
+    ( cd "$STAGE" && COPYFILE_DISABLE=1 tar -czf "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" . )
+
+    local size_bytes size_mb
+    size_bytes=$(stat -f%z "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" 2>/dev/null || stat -c%s "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz")
+    size_mb=$(awk "BEGIN { printf \"%.2f\", ${size_bytes} / 1024 / 1024 }")
+
+    # SHA256 sidecar
+    ( cd "$BACKUP_DIR" && shasum -a 256 "${BACKUP_NAME}.tar.gz" > "${BACKUP_NAME}.tar.gz.sha256" )
+
+    # Append to backup log
+    echo "${TIMESTAMP} | ${BACKUP_NAME}.tar.gz | ${size_mb} MB | ${MODE}" >> "${BACKUP_DIR}/backup.log"
+
+    echo ""
+    echo "═══ Backup Complete ═══"
+    echo "  File:   ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz"
+    echo "  Size:   ${size_mb} MB"
+    echo "  SHA256: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.sha256"
+    echo ""
+}
+
+# ── Main ────────────────────────────────────────────────────────────────────
+case "${MODE}" in
+    --full)
+        do_db_backup
+        do_redis_backup
+        do_files_backup
+        do_docker_info
+        do_manifest
+        do_package
+        ;;
+    --db-only)
+        do_db_backup
+        do_redis_backup
+        do_manifest
+        do_package
+        ;;
+    --files-only)
+        do_files_backup
+        do_docker_info
+        do_manifest
+        do_package
+        ;;
+    *)
+        echo "ERROR: unknown mode '${MODE}'" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

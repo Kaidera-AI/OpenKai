@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# cortex-graph-large-fn — Find oversized functions/classes (risk hotspots)
+# Usage: cortex-graph-large-fn [--min N] [--kind Function|Class] [--repo <path>] [--max-results N]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+MIN_LINES=200
+KIND=""
+LIMIT=100
+REPO_ROOT=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --min)   MIN_LINES="$2"; shift 2 ;;
+        --kind)  KIND="$2"; shift 2 ;;
+        --limit|--max-results) LIMIT="$2"; shift 2 ;;
+        --repo)  REPO_ROOT="$2"; shift 2 ;;
+        --help|-h) printf 'Usage: cortex-graph-large-fn [--min N] [--kind Function|Class] [--repo <path>] [--max-results N]\n'; exit 0 ;;
+        *)       printf 'ERROR: Unknown flag: %s\n' "$1" >&2; exit 1 ;;
+    esac
+done
+
+if [ -z "${REPO_ROOT}" ]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+KIND_ARG=""
+[ -n "${KIND}" ] && KIND_ARG=", kind='${KIND}'"
+
+export EMBEDDING_BACKEND="${CORTEX_CODE_GRAPH_EMBEDDING_BACKEND:-local}"
+
+uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import find_large_functions
+r = find_large_functions(min_lines=${MIN_LINES}${KIND_ARG}, limit=${LIMIT}, repo_root='${REPO_ROOT}')
+if isinstance(r, str):
+    r = json.loads(r)
+results = r.get('results', [])
+print(f'Functions/classes over ${MIN_LINES} lines: {len(results)}')
+print(f'{\"Lines\":>6}  {\"Name\":<40} Location')
+print(f'{\"-----\":>6}  {\"----\":<40} --------')
+for item in results:
+    size = item.get('line_end', 0) - item.get('line_start', 0)
+    loc = f\"{item.get('file_path', '?')}:{item.get('line_start', '?')}\"
+    print(f'{size:6d}  {item.get(\"name\", \"?\"):<40} {loc}')
+" 2>&1

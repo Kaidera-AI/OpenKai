@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# cortex-ingest-claude-local-state — import Claude plans, todos, and IndexedDB
+# cache state into global Cortex knowledge rows.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  cortex-ingest-claude-local-state [--dry-run] [--skip-todos] [--skip-plans] [--skip-indexeddb]
+
+Imports:
+  - ~/.claude/todos/*.json        -> claude-todo
+  - ~/.claude/plans/*.md          -> claude-plan
+  - Claude/claude.ai IndexedDB    -> claude-indexeddb-*
+
+Rows are written to project _global so every workspace project can search them.
+EOF
+    exit 1
+}
+
+DRY_RUN=0
+SKIP_TODOS=0
+SKIP_PLANS=0
+SKIP_INDEXEDDB=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --skip-todos)
+            SKIP_TODOS=1
+            shift
+            ;;
+        --skip-plans)
+            SKIP_PLANS=1
+            shift
+            ;;
+        --skip-indexeddb)
+            SKIP_INDEXEDDB=1
+            shift
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            echo "ERROR: Unknown flag: $1" >&2
+            usage
+            ;;
+    esac
+done
+
+if [ "${SKIP_INDEXEDDB}" -ne 1 ] && ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is required for IndexedDB import." >&2
+    exit 1
+fi
+
+if [ "${DRY_RUN}" -ne 1 ] && ! pg_available; then
+    echo "ERROR: Cortex PostgreSQL is not reachable." >&2
+    exit 1
+fi
+
+ensure_indexeddb_vendor() {
+    local vendor_dir="${AGENTS_DIR}/data/vendor/claude-indexeddb"
+    local stamp_file="${vendor_dir}/.manifest"
+    local required_manifest="dfindexeddb==20260210
+python-snappy==0.7.3
+zstd==1.5.7.3"
+
+    if [ -f "${stamp_file}" ] && [ "$(cat "${stamp_file}")" = "${required_manifest}" ]; then
+        printf '%s\n' "${vendor_dir}"
+        return 0
+    fi
+
+    rm -rf "${vendor_dir}"
+    mkdir -p "${vendor_dir}"
+
+    python3 -m pip install --quiet --target "${vendor_dir}" --no-deps \
+        "dfindexeddb==20260210" "zstd==1.5.7.3"
+    python3 -m pip install --quiet --target "${vendor_dir}" \
+        "python-snappy==0.7.3"
+
+    printf '%s\n' "${required_manifest}" > "${stamp_file}"
+    printf '%s\n' "${vendor_dir}"
+}
+
+TMP_SQL="$(mktemp /tmp/cortex-claude-local-state.XXXXXX)"
+VENDOR_DIR=""
+if [ "${SKIP_INDEXEDDB}" -ne 1 ]; then
+    VENDOR_DIR="$(ensure_indexeddb_vendor)"
+fi
+
+ARGS=(
+    --output-sql "${TMP_SQL}"
+    --project "_global"
+    --vendor-dir "${VENDOR_DIR}"
+)
+
+[ "${DRY_RUN}" -eq 1 ] && ARGS+=(--dry-run)
+[ "${SKIP_TODOS}" -eq 1 ] && ARGS+=(--skip-todos)
+[ "${SKIP_PLANS}" -eq 1 ] && ARGS+=(--skip-plans)
+[ "${SKIP_INDEXEDDB}" -eq 1 ] && ARGS+=(--skip-indexeddb)
+
+SUMMARY="$(python3 "${SCRIPT_DIR}/_cortex_claude_local_state.py" "${ARGS[@]}")"
+
+if [ "${DRY_RUN}" -ne 1 ]; then
+    pg_exec_file "${TMP_SQL}" >/dev/null
+fi
+
+rm -f "${TMP_SQL}"
+printf '%s\n' "${SUMMARY}"

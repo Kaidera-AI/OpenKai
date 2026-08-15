@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# amad-review-pr — self-hosted A.Mad Fleet code review for a GitHub PR.
+#
+# A local replacement for /ultrareview that uses the existing ANTHROPIC_API_KEY
+# and a parallel role-fleet (Find/Verify two-stage) on top of the iterative
+# A.Mad Loop. No cloud sandbox, no GitHub-App auth chain — just gh + Postgres.
+#
+# Usage:
+#   amad-review-pr <PR#> [--repo OWNER/NAME] [--no-fleet] [--no-verify]
+#                        [--max-passes N] [--threshold N] [--json]
+#
+# Exits 0 on no/low findings, 1 on medium, 2 on high (so CI can gate).
+
+set -euo pipefail
+
+case "${1:-}" in
+    --help|-h|"")
+        cat <<'EOF'
+Usage:
+  amad-review-pr <PR#> [--repo OWNER/NAME] [--no-fleet] [--no-verify]
+                       [--max-passes N] [--threshold N] [--json]
+
+Runs the A.Mad iterative PR-review loop when the backend implementation
+`src/backend/app/services/amad` is present in this workspace.
+
+Migration note: this wrapper is present for migration evidence, but the backend
+A.Mad implementation may be absent. Non-help invocations fail clearly in that
+case instead of crossing into another project.
+EOF
+        exit 0
+        ;;
+esac
+
+# Resolve repo root: this script lives at <repo>/.agents/scripts/amad-review-pr
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+BACKEND_DIR="${REPO_ROOT}/src/backend"
+
+if [[ ! -d "${BACKEND_DIR}/app/services/amad" ]]; then
+    echo "amad-review-pr: cannot locate app/services/amad (looked in ${BACKEND_DIR})" >&2
+    exit 1
+fi
+
+# Pick the Python interpreter — prefer a project venv, fall back to python3.
+PY=""
+for candidate in "${BACKEND_DIR}/.venv/bin/python" "${BACKEND_DIR}/venv/bin/python" \
+                  "${REPO_ROOT}/.venv/bin/python" python3 python; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+        PY="${candidate}"
+        break
+    fi
+done
+
+if [[ -z "${PY}" ]]; then
+    echo "amad-review-pr: no python3 interpreter found on PATH" >&2
+    exit 1
+fi
+
+# Make backend importable without an editable install.
+export PYTHONPATH="${BACKEND_DIR}:${PYTHONPATH:-}"
+
+exec "${PY}" -m app.services.amad "$@"

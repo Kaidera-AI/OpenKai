@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# cortex-graph-blast - Blast radius for changed files or named targets
+# Usage: cortex-graph-blast <file1> [file2 ...] [--depth N] [--repo <path>] [--max-results N]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+MAX_DEPTH=2
+MAX_RESULTS=100
+REPO_ROOT=""
+FILES=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --depth)      MAX_DEPTH="$2"; shift 2 ;;
+        --repo)       REPO_ROOT="$2"; shift 2 ;;
+        --target)     FILES+=("$2"); shift 2 ;;
+        --max|--max-results) MAX_RESULTS="$2"; shift 2 ;;
+        --help|-h)
+            printf 'Usage: cortex-graph-blast <file1> [file2 ...] [--depth N] [--repo <path>] [--max-results N]\n'
+            printf '\nShows graph blast radius for changed files. --target <name> is accepted for schema/component probes.\n'
+            exit 0
+            ;;
+        *)            FILES+=("$1"); shift ;;
+    esac
+done
+
+if [ ${#FILES[@]} -eq 0 ]; then
+    printf 'ERROR: at least one file path required\n' >&2
+    exit 1
+fi
+
+# Auto-detect repo root
+if [ -z "${REPO_ROOT}" ]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+cortex_prepare_code_graph_env "${REPO_ROOT}"
+
+# Build Python list of files
+export CORTEX_GRAPH_FILES_JSON
+CORTEX_GRAPH_FILES_JSON="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "${FILES[@]}")"
+
+uv tool run --from better-code-review-graph python3 -c "
+import json
+import os
+from better_code_review_graph.tools import get_impact_radius
+changed_files = json.loads(os.environ['CORTEX_GRAPH_FILES_JSON'])
+r = get_impact_radius(changed_files=changed_files, max_depth=${MAX_DEPTH}, max_results=${MAX_RESULTS}, repo_root='${REPO_ROOT}')
+if isinstance(r, str):
+    r = json.loads(r)
+print(f\"Blast radius: {r.get('total_impacted', '?')} nodes impacted ({r.get('impacted_files_count', '?')} files)\")
+if r.get('truncated'):
+    print(f'  (truncated at ${MAX_RESULTS} results)')
+for f in (r.get('impacted_files', []) or [])[:${MAX_RESULTS}]:
+    print(f'  {f}')
+if r.get('changed_nodes'):
+    print(f\"\\nDirectly changed: {len(r['changed_nodes'])} nodes\")
+" 2>&1

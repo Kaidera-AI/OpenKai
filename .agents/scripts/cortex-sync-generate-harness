@@ -1,0 +1,1793 @@
+#!/usr/bin/env python3
+"""cortex-sync-generate-harness — the REVERSE of cortex-sync-workspace.
+
+cortex-sync-workspace INGESTS a project's on-disk ``.agents/`` mirror tree into
+Cortex (Postgres). This tool does the opposite: it READS Cortex and GENERATES a
+project's per-project, harness-agnostic ``.agents/`` mirror tree, with Cortex as
+the single source of truth for identity, roles, rules, and skills.
+
+This is Phase 2 (the core) of the Cortex-canonical harness system.
+
+Templates live IN CODE (this file). Generation is deterministic / idempotent:
+running twice against the same Cortex state produces byte-identical output. Every
+generated file begins with a provenance header:
+
+    # GENERATED FROM CORTEX — DO NOT EDIT (source: <table>@<short-hash>)
+
+(JSON files use a ``"_generated"`` key since JSON has no comments.)
+
+Modes
+-----
+    --diff            (default) generate to a temp dir, print a unified diff
+                      against the current files, write NOTHING live.
+    --out <dir>       write the generated tree to a staging dir.
+    --apply           write the generated tree LIVE to the project's on-disk
+                      tree (live_root). Takes a timestamped backup first,
+                      checks for hand-edits, records harness_artifacts rows.
+                      Pass --force to overwrite hand-edited files.
+
+Safety
+------
+--diff and --out only READ Cortex and write to temp/staging. --apply writes live
+but backs up every target file first under .agents/.harness-backups/<project>-<ts>/.
+DB connection is taken from the environment, mirroring ``_cortex_lib.sh`` default
+ports so it lands on the live Cortex when run normally, but is fully overridable
+(PG_HOST / PG_PORT / PG_USER / PG_PASS / PG_DB) so tests and the cutover script
+can point at a throwaway Postgres.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import hashlib
+import json
+import os
+import re
+import shutil
+import sys
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+# psycopg2 is the installed driver in this environment (see _cortex_lib.sh world).
+try:
+    import psycopg2
+    import psycopg2.extras
+except Exception:  # pragma: no cover - import guard
+    psycopg2 = None  # type: ignore
+
+
+GENERATED_HEADER_PREFIX = "GENERATED FROM CORTEX — DO NOT EDIT"
+SHORT_HASH_LEN = 12
+
+# Harness symlink files that all point at the neutral AGENTS.md pointer.
+HARNESS_SYMLINKS = ("CLAUDE.md", "GEMINI.md")
+
+# Canonical generated identity location (relative to the repo root dir). build_tree writes
+# identities here; render_workspace_json rewrites profile_globs to match so that
+# profile_globs ALWAYS points at where identities actually live — no orphans.
+# (Coherence fix, Approach A.)
+IDENTITY_DIR = ".agents/agents"
+IDENTITY_GLOB = f"{IDENTITY_DIR}/*_IDENTITY.md"
+CANONICAL_PROJECT_KEY = os.environ.get("CORTEX_CANONICAL_PROJECT", "").strip().lower()
+CANONICAL_SCRIPTS_DIR = Path(__file__).resolve().parent
+
+
+# ---------------------------------------------------------------------------
+# Deterministic serialization helpers (pure — unit-tested directly)
+# ---------------------------------------------------------------------------
+
+
+def short_hash(content: str) -> str:
+    """Stable short content hash used in provenance headers.
+
+    Deterministic: identical input string -> identical output. Uses sha256 so
+    the hash is stable across Python builds (unlike the salted builtin hash()).
+    """
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:SHORT_HASH_LEN]
+
+
+def stable_json(data: Any) -> str:
+    """Serialize a dict/list to canonical JSON bytes-as-str.
+
+    Stable key ordering (sort_keys=True), stable separators, trailing newline.
+    Running twice on an equal object yields byte-identical output. This is the
+    core determinism primitive — tested directly.
+    """
+    return (
+        json.dumps(
+            data,
+            sort_keys=True,
+            indent=2,
+            ensure_ascii=False,
+            separators=(",", ": "),
+        )
+        + "\n"
+    )
+
+
+def md_header(table: str, content_for_hash: str) -> str:
+    """Build the markdown/text provenance header line (with trailing newline)."""
+    return f"# {GENERATED_HEADER_PREFIX} (source: {table}@{short_hash(content_for_hash)})\n"
+
+
+def with_md_header(table: str, body: str) -> str:
+    """Prefix a markdown/text body with its provenance header.
+
+    The hash is computed over the BODY (not including the header) so that the
+    header is stable for a given body and the body alone determines the hash.
+    """
+    if not body.endswith("\n"):
+        body = body + "\n"
+    return md_header(table, body) + "\n" + body
+
+
+def with_json_generated_key(table: str, payload: dict, hash_basis: str) -> str:
+    """Serialize a JSON payload with a leading ``_generated`` provenance key.
+
+    JSON has no comments, so provenance lives in a ``_generated`` object. The
+    payload is merged under a stable ordering; ``_generated`` sorts first only
+    incidentally via sort_keys — its presence (not position) is what matters and
+    is asserted by tests.
+    """
+    enriched = dict(payload)
+    enriched["_generated"] = {
+        "source": table,
+        "hash": short_hash(hash_basis),
+        "note": "GENERATED FROM CORTEX — DO NOT EDIT",
+    }
+    return stable_json(enriched)
+
+
+# ---------------------------------------------------------------------------
+# Cortex read layer
+# ---------------------------------------------------------------------------
+
+
+def db_connect():
+    """Open a psycopg2 connection from environment configuration.
+
+    Mirrors _cortex_lib.sh defaults (host localhost, port 5499, user postgres),
+    but every value is overridable so tests point at the scratch DB.
+    """
+    if psycopg2 is None:  # pragma: no cover - import guard
+        raise RuntimeError("psycopg2 is required but not importable")
+    return psycopg2.connect(
+        host=os.environ.get("PG_HOST", "localhost"),
+        port=int(os.environ.get("PG_PORT", "5499")),
+        user=os.environ.get("PG_USER", "postgres"),
+        password=os.environ.get("PG_PASS", "postgres"),
+        dbname=os.environ.get("PG_DB", "platform_agent_memory"),
+    )
+
+
+def _dict_rows(cur) -> list[dict]:
+    cols = [c.name for c in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def fetch_project(conn, project_key: str) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT project_key, id::text AS project_id, display_name, parent_project_key,
+                   repo_root, repo_type, status, default_agent, metadata
+              FROM cortex_projects
+             WHERE project_key = %s
+            """,
+            (project_key,),
+        )
+        rows = _dict_rows(cur)
+    return rows[0] if rows else None
+
+
+def fetch_profiles(conn, project_key: str) -> list[dict]:
+    """Persona-bearing agent_profiles rows for the project, deterministically ordered."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT ON (project, lower(agent_name), profile_kind)
+                   project, agent_name, profile_kind, role, source_file,
+                   profile_text, metadata
+              FROM agent_profiles
+             WHERE project = %s
+               AND NOT (
+                    profile_kind = 'identity'
+                AND COALESCE(btrim(profile_text), '') = ''
+                AND COALESCE(source_file, '') LIKE 'api:/agents/%%/loop'
+               )
+             ORDER BY project, lower(agent_name), profile_kind,
+                      CASE
+                        WHEN position('/.agents/agents/' in COALESCE(source_file, '')) > 0 THEN 0
+                        WHEN position('/agents/' in COALESCE(source_file, '')) > 0 THEN 1
+                        ELSE 2
+                      END,
+                      updated_at DESC,
+                      source_file
+            """,
+            (project_key,),
+        )
+        return _dict_rows(cur)
+
+
+def fetch_rules(conn, project_key: str) -> list[dict]:
+    """Active rules rows for the project, deterministically ordered by slug."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT project, rule_slug, title, body, source_file, version,
+                   status, metadata
+              FROM rules
+             WHERE project = %s
+               AND status = 'active'
+             ORDER BY lower(rule_slug), version
+            """,
+            (project_key,),
+        )
+        return _dict_rows(cur)
+
+
+def fetch_skills(conn, project_key: str) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT project, skill_slug, name, description, skill_type, scope,
+                   permission, body_ref, body_hash, version, status, trust_tier,
+                   metadata
+              FROM agent_skills
+             WHERE project = %s
+               AND status = 'active'
+             ORDER BY lower(skill_slug), version
+            """,
+            (project_key,),
+        )
+        return _dict_rows(cur)
+
+
+def fetch_skill_bindings(conn, project_key: str) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT project, subject_kind, subject, skill_slug, binding_type,
+                   priority, conditions, version_pin
+              FROM agent_skill_bindings
+             WHERE project = %s
+             ORDER BY subject_kind, lower(subject), lower(skill_slug)
+            """,
+            (project_key,),
+        )
+        return _dict_rows(cur)
+
+
+# ---------------------------------------------------------------------------
+# JSONB normalization
+# ---------------------------------------------------------------------------
+
+
+def _as_obj(value: Any) -> Any:
+    """psycopg2 may hand back JSONB as dict already, or as a JSON string.
+
+    Normalize to a Python object so downstream serialization is deterministic.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return value
+
+
+# ---------------------------------------------------------------------------
+# File renderers — map Cortex rows -> generated file bodies
+# ---------------------------------------------------------------------------
+
+
+def render_agents_md() -> str:
+    """The neutral, thin pointer. Static content (no per-row data)."""
+    body = (
+        "# Agent Boot Pointer\n"
+        "\n"
+        "Boot via `cortex-boot <agent>`. Cortex owns identity, skills, and rules;\n"
+        "do not edit generated files. This file and the harness symlinks\n"
+        "(`CLAUDE.md`, `GEMINI.md`) are generated from Cortex by\n"
+        "`cortex-sync-generate-harness`. Edit Cortex, then regenerate.\n"
+    )
+    return with_md_header("static:pointer", body)
+
+
+def render_workspace_json(project: dict) -> str:
+    """Rebuild .agents/config/workspace.json for THIS project only.
+
+    Reconstructs the single-project registry shape from the cortex_projects row
+    plus its metadata JSONB (which stores roots/profile_globs/knowledge_globs/
+    beat/default_agent as written by the ingest tool).
+    """
+    meta = _as_obj(project.get("metadata"))
+
+    project_entry: dict[str, Any] = {
+        "key": project["project_key"],
+        "display_name": project.get("display_name") or project["project_key"],
+        "parent": project.get("parent_project_key"),
+        "repo_type": project.get("repo_type") or "repo",
+        "status": project.get("status") or "active",
+        "default_agent": project.get("default_agent") or meta.get("default_agent"),
+        # Coherence (Approach A): identities are generated into IDENTITY_DIR, so
+        # profile_globs MUST point there — not at whatever (possibly stale,
+        # repo-root) glob was ingested into metadata. This keeps the generated
+        # workspace.json coherent with the generated identity files (no orphans).
+        "profile_globs": [IDENTITY_GLOB],
+        "knowledge_globs": meta.get("knowledge_globs", []),
+        "roots": meta.get("roots") or (  # fitness:allow-literal false-match: roots (field name, not agent 'root')
+            [{"path": project["repo_root"], "kind": "primary"}]  # fitness:allow-literal false-match: repo_root (field name, not agent 'root')
+            if project.get("repo_root")  # fitness:allow-literal false-match: repo_root (field name, not agent 'root')
+            else []
+        ),
+    }
+    # Optional runtime blocks, only when present in metadata.
+    for opt in ("beat",):
+        if meta.get(opt):
+            project_entry[opt] = meta[opt]
+
+    payload = {
+        "registry_mode": "partial",
+        "program": {
+            "key": project["project_key"],
+            "name": project.get("display_name") or project["project_key"],
+            "root": (project_entry["roots"][0]["path"] if project_entry["roots"] else project.get("repo_root", "")),  # fitness:allow-literal false-match: root/roots/repo_root (field names, not agent 'root')
+        },
+        "projects": [project_entry],
+    }
+    hash_basis = stable_json(payload)
+    return with_json_generated_key("cortex_projects", payload, hash_basis)
+
+
+def render_runtime_yaml(project: dict) -> str:
+    project_key = project["project_key"]
+    body = (
+        f"# Local Cortex runtime for the {project_key} workspace.\n"
+        "# Generated by cortex-sync-generate-harness. Project-local runtime\n"
+        "# points at the shared Cortex API/Postgres stack; Redis is retired.\n"
+        "runtime: auto\n"
+        "\n"
+        "project:\n"
+        f"  name: {project_key}\n"
+        f"  key_prefix: \"{project_key}:\"\n"
+        f"  stream_name: \"{project_key}:cortex:events\"\n"
+        "  consumer_group: \"cortex-agents\"\n"
+        "\n"
+        "api:\n"
+        "  url: http://localhost:8501\n"
+        "\n"
+        "postgres:\n"
+        "  port: 5499\n"
+        "  container_name: cortex-pg\n"
+        "  database: platform_agent_memory\n"
+        "  user: postgres\n"
+        "  password: postgres\n"
+    )
+    return with_md_header("static:runtime", body)
+
+
+def render_rules_file(project_key: str, rules: list[dict]) -> str:
+    """Render .agents/rules/<project>.md by concatenating the rules table.
+
+    Empty-safe: with no rules, emit a minimal generated stub.
+    """
+    if not rules:
+        body = (
+            f"# {project_key} rules\n"
+            "\n"
+            "_No active rules registered in Cortex for this project._\n"
+        )
+        return with_md_header("rules", body)
+
+    sections: list[str] = [f"# {project_key} rules\n"]
+    for rule in rules:
+        title = rule.get("title") or rule.get("rule_slug") or "rule"
+        slug = rule.get("rule_slug") or ""
+        rule_body = (rule.get("body") or "").rstrip("\n")
+        sections.append("")
+        sections.append(f"## {title}")
+        if slug:
+            sections.append("")
+            sections.append(f"<!-- rule_slug: {slug} -->")
+        sections.append("")
+        sections.append(rule_body)
+    body = "\n".join(sections) + "\n"
+    return with_md_header("rules", body)
+
+
+def _profile_filename(profile: dict) -> str:
+    """Derive the generated identity/role filename from a profile row.
+
+    Identity profiles mirror the repo-root ``agents/<NAME>_IDENTITY.md``
+    convention (uppercased agent name). Role profiles mirror
+    ``.agents/roles/<role>.md``. We key off profile_kind, falling back to the
+    source_file basename so any unusual rows still round-trip stably.
+    """
+    kind = (profile.get("profile_kind") or "").strip().lower()
+    agent = (profile.get("agent_name") or "").strip()
+    role = (profile.get("role") or "").strip()
+    if kind == "identity":
+        return f"{agent.upper()}_IDENTITY.md"
+    if kind == "role":
+        base = role or agent
+        return f"{base}.md"
+    # Unknown kind: preserve the original basename for stability.
+    src = profile.get("source_file") or f"{agent or 'agent'}.md"
+    return os.path.basename(src)
+
+
+def render_profile_file(profile: dict) -> str:
+    """Render an identity/role markdown file from a stored profile.
+
+    ``profile_text`` holds the full original file verbatim (as ingested), so we
+    emit the provenance header + that text. Deterministic for a given row.
+    """
+    body = profile.get("profile_text") or ""
+    if not body.strip():
+        # Minimal stub if the stored text is empty.
+        name = profile.get("agent_name") or "agent"
+        body = f"# {name}\n\n_No profile text stored in Cortex._\n"
+    return with_md_header("agent_profiles", body)
+
+
+def render_skills_manifest(
+    project_key: str,
+    skills: list[dict],
+    bindings: list[dict],
+) -> str:
+    """Render .agents/skills/manifest.json from skills + bindings.
+
+    Empty-safe: with no skills/bindings emit a valid, minimal manifest with
+    empty arrays — never crash.
+    """
+    skill_entries = []
+    for s in skills:
+        skill_entries.append(
+            {
+                "skill_slug": s.get("skill_slug"),
+                "name": s.get("name"),
+                "description": s.get("description"),
+                "skill_type": s.get("skill_type"),
+                "scope": s.get("scope"),
+                "permission": s.get("permission"),
+                "body_ref": s.get("body_ref"),
+                "body_hash": s.get("body_hash"),
+                "version": s.get("version"),
+                "trust_tier": s.get("trust_tier"),
+                "metadata": _as_obj(s.get("metadata")),
+            }
+        )
+
+    binding_entries = []
+    for b in bindings:
+        binding_entries.append(
+            {
+                "subject_kind": b.get("subject_kind"),
+                "subject": b.get("subject"),
+                "skill_slug": b.get("skill_slug"),
+                "binding_type": b.get("binding_type"),
+                "priority": b.get("priority"),
+                "conditions": _as_obj(b.get("conditions")),
+                "version_pin": b.get("version_pin"),
+            }
+        )
+
+    payload = {
+        "project": project_key,
+        "skills": skill_entries,
+        "bindings": binding_entries,
+    }
+    hash_basis = stable_json(payload)
+    return with_json_generated_key("agent_skills+agent_skill_bindings", payload, hash_basis)
+
+
+# ---------------------------------------------------------------------------
+# Tree assembly
+# ---------------------------------------------------------------------------
+
+
+def build_tree(conn, project_key: str) -> dict[str, str]:
+    """Return a mapping of relative-path -> file content for the whole tree.
+
+    This is the deterministic core: same Cortex state -> identical mapping ->
+    identical bytes. Symlink targets are represented as ``__symlink__:<target>``
+    sentinel values so the writer can create real symlinks while the diff/test
+    layer can still compare them as strings.
+    """
+    project = fetch_project(conn, project_key)
+    if project is None:
+        raise SystemExit(f"ERROR: project '{project_key}' not found in cortex_projects")
+
+    profiles = fetch_profiles(conn, project_key)
+    rules = fetch_rules(conn, project_key)
+    skills = fetch_skills(conn, project_key)
+    bindings = fetch_skill_bindings(conn, project_key)
+
+    tree: dict[str, str] = {}
+
+    # Neutral thin pointer + harness symlinks.
+    tree["AGENTS.md"] = render_agents_md()
+    for link in HARNESS_SYMLINKS:
+        tree[link] = "__symlink__:AGENTS.md"
+
+    # workspace.json (this project only).
+    tree[".agents/config/workspace.json"] = render_workspace_json(project)
+    tree[".agents/config/runtime.yaml"] = render_runtime_yaml(project)
+    if CANONICAL_PROJECT_KEY and project_key.strip().lower() != CANONICAL_PROJECT_KEY:
+        tree[".agents/scripts"] = f"__symlink__:{CANONICAL_SCRIPTS_DIR}"
+
+    # rules/<project>.md
+    tree[f".agents/rules/{project_key}.md"] = render_rules_file(project_key, rules)
+
+    # roles + agent identities from agent_profiles.
+    for profile in profiles:
+        kind = (profile.get("profile_kind") or "").strip().lower()
+        filename = _profile_filename(profile)
+        content = render_profile_file(profile)
+        if kind == "role":
+            tree[f".agents/roles/{filename}"] = content
+        else:
+            # identity (or unknown) -> IDENTITY_DIR. profile_globs in
+            # render_workspace_json points at exactly this dir, so the generated
+            # workspace.json and the generated identity files stay coherent.
+            tree[f"{IDENTITY_DIR}/{filename}"] = content
+
+    # skills manifest (may be empty).
+    tree[".agents/skills/manifest.json"] = render_skills_manifest(
+        project_key, skills, bindings
+    )
+
+    return tree
+
+
+# ---------------------------------------------------------------------------
+# Writers + diff
+# ---------------------------------------------------------------------------
+
+
+def write_tree(tree: dict[str, str], out_dir: Path) -> list[Path]:
+    """Materialize the tree under out_dir. Returns the list of written paths.
+
+    Symlink sentinels (``__symlink__:<target>``) become real relative symlinks.
+    """
+    written: list[Path] = []
+    for rel, content in sorted(tree.items()):
+        dest = out_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if content.startswith("__symlink__:"):
+            target = content.split(":", 1)[1]
+            if dest.is_dir() and not dest.is_symlink():
+                shutil.rmtree(dest)
+            elif dest.exists() or dest.is_symlink():
+                dest.unlink()
+            os.symlink(target, dest)
+        else:
+            dest.write_text(content, encoding="utf-8")
+        written.append(dest)
+    return written
+
+
+def _current_file_text(live_root: Path, rel: str) -> list[str]:
+    """Read the current on-disk file for diffing (empty list if missing)."""
+    path = live_root / rel
+    if path.is_symlink():
+        return [f"__symlink__:{os.readlink(path)}\n"]
+    if path.is_file():
+        return path.read_text(encoding="utf-8").splitlines(keepends=True)
+    return []
+
+
+def diff_tree(tree: dict[str, str], live_root: Path) -> str:
+    """Produce a unified diff of generated tree vs the current live files."""
+    chunks: list[str] = []
+    for rel, content in sorted(tree.items()):
+        current = _current_file_text(live_root, rel)
+        if content.startswith("__symlink__:"):
+            generated = [content + "\n"]
+        else:
+            generated = content.splitlines(keepends=True)
+        diff = difflib.unified_diff(
+            current,
+            generated,
+            fromfile=f"a/{rel}",
+            tofile=f"b/{rel}",
+        )
+        chunk = "".join(diff)
+        if chunk:
+            chunks.append(chunk)
+    return "".join(chunks)
+
+
+# ---------------------------------------------------------------------------
+# Reverse-migration seed: profile/role/rules files -> DB tables
+# ---------------------------------------------------------------------------
+
+def _parse_identity_frontmatter(text: str) -> dict[str, str]:
+    """Extract YAML frontmatter from an identity/role file body.
+
+    Returns a dict of key -> value strings (stripped, unquoted).  Mirrors the
+    parse_frontmatter helper in cortex-sync-workspace so the same files round-
+    trip correctly through both ingest and reverse-seed paths.
+    """
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return {}
+    metadata: dict[str, str] = {}
+    for raw in text[4:end].splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = value.strip().strip('"').strip("'")
+    return metadata
+
+
+def _normalize_identity_v2_profile_text(
+    text: str,
+    agent_name: str,
+    project_key: str,
+    frontmatter: dict[str, str],
+) -> tuple[str, dict[str, str]]:
+    """Normalize legacy generated identity text before seeding agent_profiles.
+
+    Generated identity mirrors can be the only on-disk recovery source, but an
+    older mirror may still contain ``project_hex`` frontmatter and
+    ``agent:hex`` display text. Seed the v2 source form instead of preserving
+    those retired strings.
+    """
+    agent_slug = re.sub(r"([:@]).*$", "", agent_name.strip().lower())
+    project = project_key.strip().lower()
+    if not agent_slug or not project:
+        return text, frontmatter
+
+    display = f"{agent_slug}@{project}"
+    normalized = re.sub(r"(?m)^project_hex:[^\n]*(?:\n|$)", "", text)
+    normalized = re.sub(
+        rf"(^|[^A-Za-z0-9_@-]){re.escape(agent_slug)}:[A-Fa-f0-9?]{{4}}([^A-Za-z0-9_@-]|$)",
+        rf"\1{display}\2",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"Compound identity always\s+`[^`]+`\.",
+        f"Working identity is `{display}`.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\bidentity always\s+`[^`]+`\.",
+        f"Working identity is `{display}`.",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"Use the compound identity\s+`[^`]+`",
+        f"Use the identity `{display}`",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"compound identity",
+        "identity",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized_fm = dict(frontmatter)
+    normalized_fm.pop("project_hex", None)
+    return normalized, normalized_fm
+
+
+def _strip_generated_header(text: str) -> tuple[str, bool]:
+    """Remove this generator's provenance header so generated files can seed recovery.
+
+    The seed path may be used after a DB loss when the generated mirror is the
+    only disk copy left. Store the underlying profile/rule body, not a generated
+    header wrapped in another generated header.
+    """
+    lines = text.splitlines()
+    if not lines or GENERATED_HEADER_PREFIX not in lines[0]:
+        return text, False
+    lines = lines[1:]
+    if lines and not lines[0].strip():
+        lines = lines[1:]
+    return "\n".join(lines).rstrip() + "\n", True
+
+
+def _slug_from_title(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9_-]+", "-", title.lower()).strip("-")
+    return slug or "rule"
+
+
+def _split_generated_rules_file(project_key: str, body: str) -> list[tuple[str, str, str]]:
+    """Split a generated .agents/rules/<project>.md body back into rule rows."""
+    body = body.lstrip()
+    heading = f"# {project_key} rules"
+    if body.startswith(heading):
+        body = body[len(heading):].lstrip("\n")
+
+    marker_re = re.compile(
+        r"(?m)^##\s+(.+?)\s*\n\n<!--\s*rule_slug:\s*([^>]+?)\s*-->\s*\n\n"
+    )
+    matches = list(marker_re.finditer(body))
+    if not matches:
+        return []
+
+    rows: list[tuple[str, str, str]] = []
+    for index, match in enumerate(matches):
+        title = match.group(1).strip()
+        slug = match.group(2).strip() or _slug_from_title(title)
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        section = body[start:end].strip()
+        if section:
+            rows.append((slug, title, section.rstrip() + "\n"))
+    return rows
+
+
+def seed_project_profiles(conn, project_key: str, root: Path, *, prune_stale_sources: bool = False) -> dict:
+    """Seed agent_profiles (identities + roles) from on-disk files.
+
+    Identities: matched by the project's ``profile_globs`` in workspace.json.
+    For each file the glob returns:
+      - parse frontmatter to extract ``name`` / ``agent`` -> agent_name, ``role``.
+      - UPSERT with profile_kind='identity', profile_text=full file content,
+        source_file=realpath.
+
+    Roles: all ``<root>/.agents/roles/*.md`` files.
+      - agent_name = file stem (same convention as cortex-sync-workspace).
+      - UPSERT with profile_kind='role', role = file stem, source_file=realpath.
+
+    Both use the same UNIQUE key as the ingest tool:
+      ON CONFLICT (project, agent_name, profile_kind, source_file) DO UPDATE SET
+        role=..., profile_text=..., metadata=..., updated_at=NOW()
+    so re-running is safe and idempotent.
+
+    Generated files that carry this tool's provenance header are accepted as a
+    recovery source after stripping that header, so a disk mirror can reseed a
+    scratch DB without nesting generated headers.
+
+    Returns a summary dict:
+      {"identities_upserted": N, "roles_upserted": N,
+       "identities_skipped": N, "roles_skipped": N,
+       "stale_sources_pruned": N}
+    """
+    identities_upserted = 0
+    identities_skipped = 0
+    roles_upserted = 0
+    roles_skipped = 0
+    stale_sources_pruned = 0
+
+    # ---- Resolve profile_globs from workspace.json -------------------------
+    ws_path = root / ".agents" / "config" / "workspace.json"
+    profile_globs: list[str] = []
+    if ws_path.is_file():
+        try:
+            ws = json.loads(ws_path.read_text(encoding="utf-8"))
+            proj_entries = [
+                p for p in ws.get("projects", [])
+                if p.get("key") == project_key
+            ]
+            if proj_entries:
+                profile_globs = proj_entries[0].get("profile_globs", [])
+        except Exception as exc:
+            print(
+                f"WARN: could not read profile_globs from {ws_path}: {exc}",
+                file=sys.stderr,
+            )
+
+    # ---- Identity files -------------------------------------------------------
+    seen_paths: set[str] = set()
+    with conn.cursor() as cur:
+        for glob_pattern in profile_globs:
+            import glob as _glob
+            for path_str in sorted(_glob.glob(str(root / glob_pattern))):
+                real_path = os.path.realpath(path_str)
+                if real_path in seen_paths or not os.path.isfile(real_path):
+                    identities_skipped += 1
+                    continue
+                seen_paths.add(real_path)
+
+                try:
+                    text = Path(real_path).read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(
+                        f"WARN: could not read identity file {real_path}: {exc} — skipping",
+                        file=sys.stderr,
+                    )
+                    identities_skipped += 1
+                    continue
+
+                text, was_generated = _strip_generated_header(text)
+                if was_generated:
+                    print(
+                        f"INFO: seeding generated identity file {os.path.basename(real_path)} "
+                        "after stripping Cortex provenance header",
+                        file=sys.stderr,
+                    )
+
+                filename = os.path.basename(real_path)
+
+                # Skip template files: stems starting with '_' (e.g. _template.md).
+                stem = Path(filename).stem
+                if stem.startswith("_"):
+                    print(
+                        f"INFO: skipping template identity file {filename} "
+                        "(stem starts with '_' — not a real identity)",
+                        file=sys.stderr,
+                    )
+                    identities_skipped += 1
+                    continue
+
+                fm = _parse_identity_frontmatter(text)
+                # cortex-sync-workspace uses frontmatter "name" -> agent_name.
+                # Older identity files may use "agent" instead of "name".
+                derived = stem.replace("_IDENTITY", "").replace("_identity", "").lower()
+                agent_name = (
+                    fm.get("name") or fm.get("agent") or derived
+                ).strip().lower()
+                role = (fm.get("role") or agent_name).strip()
+
+                # Skip placeholder profiles: if agent_name or role contains '<'
+                # (e.g. name: <display-name>, role: <role-id>).
+                if "<" in agent_name or "<" in role:
+                    print(
+                        f"INFO: skipping placeholder identity file {filename} "
+                        f"(agent_name={agent_name!r} or role={role!r} contains '<' — not a real identity)",
+                        file=sys.stderr,
+                    )
+                    identities_skipped += 1
+                    continue
+
+                text, fm = _normalize_identity_v2_profile_text(
+                    text,
+                    agent_name,
+                    project_key,
+                    fm,
+                )
+                profile_meta = json.dumps({
+                    "frontmatter": fm,
+                    "description": fm.get("description", ""),
+                    "model": fm.get("model") or fm.get("model_preference", ""),
+                })
+
+                cur.execute(
+                    """
+                    INSERT INTO agent_profiles
+                        (project, agent_name, profile_kind, role, source_file,
+                         profile_text, metadata, updated_at)
+                    VALUES (%s, %s, 'identity', %s, %s, %s, %s::jsonb, NOW())
+                    ON CONFLICT (project, agent_name, profile_kind, source_file)
+                    DO UPDATE SET
+                        role         = EXCLUDED.role,
+                        profile_text = EXCLUDED.profile_text,
+                        metadata     = EXCLUDED.metadata,
+                        updated_at   = NOW()
+                    """,
+                    (project_key, agent_name, role, real_path, text, profile_meta),
+                )
+                identities_upserted += 1
+
+        # ---- Role files -------------------------------------------------------
+        roles_dir = root / ".agents" / "roles"
+        if roles_dir.is_dir():
+            for role_file in sorted(roles_dir.glob("*.md")):
+                real_path = os.path.realpath(str(role_file))
+                try:
+                    text = Path(real_path).read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(
+                        f"WARN: could not read role file {real_path}: {exc} — skipping",
+                        file=sys.stderr,
+                    )
+                    roles_skipped += 1
+                    continue
+
+                # Skip generated files.
+                first_line = text.splitlines()[0] if text else ""
+                if GENERATED_HEADER_PREFIX in first_line:
+                    print(
+                        f"INFO: skipping generated role file {role_file.name} "
+                        "(carries Cortex provenance header — not a source role)",
+                        file=sys.stderr,
+                    )
+                    roles_skipped += 1
+                    continue
+
+                role_stem = role_file.stem
+
+                # Skip template role files: stems starting with '_' (e.g. _template.md).
+                if role_stem.startswith("_"):
+                    print(
+                        f"INFO: skipping template role file {role_file.name} "
+                        "(stem starts with '_' — not a real role)",
+                        file=sys.stderr,
+                    )
+                    roles_skipped += 1
+                    continue
+
+                fm = _parse_identity_frontmatter(text)
+                # For role files, agent_name = file stem (matches cortex-sync-workspace).
+                agent_name = role_stem
+                role_val = fm.get("role") or role_stem
+
+                # Skip placeholder role files: if role_val contains '<'
+                # (e.g. role: <role-id> — still a template, not a real role).
+                if "<" in role_val or "<" in agent_name:
+                    print(
+                        f"INFO: skipping placeholder role file {role_file.name} "
+                        f"(role_val={role_val!r} or agent_name={agent_name!r} contains '<' — not a real role)",
+                        file=sys.stderr,
+                    )
+                    roles_skipped += 1
+                    continue
+
+                profile_meta = json.dumps({
+                    "frontmatter": fm,
+                    "description": fm.get("description", ""),
+                    "model": fm.get("model") or fm.get("model_preference", ""),
+                })
+
+                cur.execute(
+                    """
+                    INSERT INTO agent_profiles
+                        (project, agent_name, profile_kind, role, source_file,
+                         profile_text, metadata, updated_at)
+                    VALUES (%s, %s, 'role', %s, %s, %s, %s::jsonb, NOW())
+                    ON CONFLICT (project, agent_name, profile_kind, source_file)
+                    DO UPDATE SET
+                        role         = EXCLUDED.role,
+                        profile_text = EXCLUDED.profile_text,
+                        metadata     = EXCLUDED.metadata,
+                        updated_at   = NOW()
+                    """,
+                    (project_key, agent_name, role_val, real_path, text, profile_meta),
+                )
+                roles_upserted += 1
+
+        if prune_stale_sources:
+            root_prefix = str(root.resolve()).rstrip("/") + "/"
+            cur.execute(
+                """
+                DELETE FROM agent_profiles
+                 WHERE project = %s
+                   AND COALESCE(source_file, '') LIKE '/%%'
+                   AND COALESCE(source_file, '') NOT LIKE %s
+                   AND (
+                        COALESCE(source_file, '') LIKE '%%/.agents/%%'
+                     OR COALESCE(source_file, '') LIKE '%%/agents/%%'
+                   )
+                """,
+                (project_key, root_prefix + "%"),
+            )
+            stale_sources_pruned = cur.rowcount
+
+    conn.commit()
+    return {
+        "identities_upserted": identities_upserted,
+        "roles_upserted": roles_upserted,
+        "identities_skipped": identities_skipped,
+        "roles_skipped": roles_skipped,
+        "stale_sources_pruned": stale_sources_pruned,
+    }
+
+
+def _resolve_rule_file(path: Path, root: Path) -> Path | None:
+    """Resolve a rules .md path through symlinks.
+
+    If the path is a broken symlink, try .claude/rules/<stem>.md under root.
+    Returns the real readable path, or None if unresolvable (emits a warning).
+    """
+    if path.is_symlink() and not path.exists():
+        # Broken symlink — try .claude/rules/<stem>.md fallback.
+        fallback = root / ".claude" / "rules" / path.name
+        if fallback.is_file():
+            print(
+                f"WARN: {path} is a broken symlink — "
+                f"using fallback {fallback}",
+                file=sys.stderr,
+            )
+            return fallback
+        print(
+            f"WARN: {path} is a broken symlink and no fallback found at {fallback} "
+            "— skipping",
+            file=sys.stderr,
+        )
+        return None
+    if path.is_file():
+        return path
+    return None
+
+
+def _source_cortex_rule(root: Path) -> tuple[str, str, str, str] | None:
+    """Return the repo-root cortex.md row when it exists.
+
+    The generated consolidated rules file (``.agents/rules/<project>.md``) is a
+    mirror of Cortex state, not the authored source. During a reverse seed it
+    may still contain stale rule text from the DB. The repo-root ``cortex.md``
+    is the Kaidera OS-owned source for the ``cortex`` rule, so seed it last and
+    let it override any stale generated mirror section.
+    """
+    path = root / "cortex.md"
+    if not path.is_file():
+        return None
+    try:
+        body = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(
+            f"WARN: could not read {path}: {exc} — root cortex.md not seeded",
+            file=sys.stderr,
+        )
+        return None
+    body, _ = _strip_generated_header(body)
+    if not body.strip():
+        return None
+    return ("cortex", "cortex", body, "cortex.md")
+
+
+def _workspace_project_seed(root: Path, project_key: str) -> tuple[dict, dict, str] | None:
+    """Read the checked-in workspace project entry for reverse seeding."""
+    ws_path = root / ".agents" / "config" / "workspace.json"
+    if not ws_path.is_file():
+        return None
+    try:
+        ws = json.loads(ws_path.read_text(encoding="utf-8"))
+        proj_entries = [
+            p for p in ws.get("projects", [])
+            if p.get("key") == project_key
+        ]
+        if not proj_entries:
+            return None
+        p = proj_entries[0]
+        meta = {
+            "profile_globs": p.get("profile_globs", []),
+            "knowledge_globs": p.get("knowledge_globs", []),
+            "beat": p.get("beat", {}),
+            "roots": p.get("roots", []),  # fitness:allow-literal false-match: roots (field name, not agent 'root')
+            "default_agent": p.get("default_agent"),
+        }
+        repo_root_val = p["roots"][0]["path"] if p.get("roots") else str(root)  # fitness:allow-literal false-match: roots/root (field name + var, not agent 'root')
+        return p, meta, repo_root_val
+    except Exception as exc:
+        print(
+            f"WARN: could not read project metadata from {ws_path}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+
+
+def seed_project_rules(conn, project_key: str, root: Path, *, include_project_and_profiles: bool = True) -> dict:
+    """Seed the rules table (and profiles) from on-disk files — complete reverse-migration seed.
+
+    Calls ``seed_project_profiles`` first (idempotent UPSERT of identity + role
+    rows into agent_profiles), then seeds rules from <root>/.agents/rules/*.md.
+
+    For each readable rules .md file (resolving symlinks; broken -> fallback or
+    skip+warn): UPSERT a rules row — rule_slug = file stem, title = stem, body =
+    file content, source_file = relpath from root, version='1', status='active'.
+
+    Idempotent: ON CONFLICT (project, rule_slug, version) DO UPDATE SET
+    body/source_file/title so re-running is safe.
+
+    Skills: no-op for now (no skills source exists); does not fail.
+
+    cortex_projects row: if MISSING, seed it from workspace.json. If PRESENT,
+    refresh checked-in metadata from workspace.json when available.
+
+    Returns a summary dict:
+      {"upserted": N, "skipped": N, "project_seeded": bool,
+       "project_corrected": bool,
+       "identities_upserted": N, "roles_upserted": N,
+       "identities_skipped": N, "roles_skipped": N}.
+    """
+    rules_dir = root / ".agents" / "rules"
+    upserted = 0
+    skipped = 0
+    generated_consolidated_slugs: set[str] = set()
+    workspace_seed = _workspace_project_seed(root, project_key) if include_project_and_profiles else None
+
+    with conn.cursor() as cur:
+        # --- cortex_projects row handling ---
+        project_seeded = False
+        project_corrected = False
+
+        if include_project_and_profiles:
+            cur.execute(
+                "SELECT repo_root, metadata FROM cortex_projects WHERE project_key = %s",
+                (project_key,),
+            )
+            existing_proj = cur.fetchone()
+
+            if existing_proj is None:
+                # Seed from workspace.json if present.
+                if workspace_seed is not None:
+                    p, meta, repo_root_val = workspace_seed
+                    cur.execute(
+                        """
+                        INSERT INTO cortex_projects
+                            (project_key, display_name, parent_project_key,
+                             repo_root, repo_type, status,
+                             default_agent, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                        ON CONFLICT (project_key) DO UPDATE
+                          SET repo_root = EXCLUDED.repo_root,
+                              metadata  = EXCLUDED.metadata
+                        """,
+                        (
+                            project_key,
+                            p.get("display_name", project_key),
+                            p.get("parent"),
+                            repo_root_val,
+                            p.get("repo_type", "repo"),
+                            p.get("status", "active"),
+                            p.get("default_agent"),
+                            json.dumps(meta),
+                        ),
+                    )
+                    project_seeded = True
+            else:
+                # Row exists — refresh checked-in metadata from the project workspace.
+                if workspace_seed is not None:
+                    p, meta_obj, repo_root_val = workspace_seed
+                    existing_repo_root, existing_metadata = existing_proj
+                    if not isinstance(existing_metadata, dict):
+                        existing_metadata = json.loads(existing_metadata or "{}")
+                    project_corrected = (
+                        str(existing_repo_root or "") != str(repo_root_val or "")
+                        or existing_metadata != meta_obj
+                    )
+                    cur.execute(
+                        """
+                        UPDATE cortex_projects
+                           SET display_name = %s,
+                               parent_project_key = %s,
+                               repo_root = %s,
+                               repo_type = %s,
+                               status = %s,
+                               default_agent = %s,
+                               metadata = %s::jsonb,
+                               updated_at = NOW()
+                         WHERE project_key = %s
+                        """,
+                        (
+                            p.get("display_name", project_key),
+                            p.get("parent"),
+                            repo_root_val,
+                            p.get("repo_type", "repo"),
+                            p.get("status", "active"),
+                            p.get("default_agent"),
+                            json.dumps(meta_obj),
+                            project_key,
+                        ),
+                    )
+
+        # --- Rules seeding ---
+        if not rules_dir.is_dir():
+            print(
+                f"WARN: rules dir {rules_dir} does not exist — no rules to seed",
+                file=sys.stderr,
+            )
+        else:
+            for md_path in sorted(rules_dir.glob("*.md")):
+                resolved = _resolve_rule_file(md_path, root)  # fitness:allow-literal false-match: 'root' path variable, not agent 'root'
+                if resolved is None:
+                    skipped += 1
+                    continue
+                try:
+                    body = resolved.read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(
+                        f"WARN: could not read {resolved}: {exc} — skipping",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+
+                try:
+                    source_file_base = str(md_path.relative_to(root))  # fitness:allow-literal false-match: 'root' path variable, not agent 'root'
+                except ValueError:
+                    source_file_base = str(md_path)
+
+                body, was_generated = _strip_generated_header(body)
+                rule_rows: list[tuple[str, str, str, str]] = []
+                if was_generated and md_path.stem == project_key:
+                    split_rows = _split_generated_rules_file(project_key, body)
+                    if not split_rows:
+                        print(
+                            f"INFO: skipping generated consolidated rules file {md_path.name} "
+                            "(no split rule sections found)",
+                            file=sys.stderr,
+                        )
+                        skipped += 1
+                        continue
+                    for slug, title, rule_body in split_rows:
+                        generated_consolidated_slugs.add(slug)
+                        rule_rows.append((slug, title, rule_body, f"{source_file_base}#{slug}"))
+                else:
+                    if was_generated:
+                        print(
+                            f"INFO: seeding generated rule file {md_path.name} "
+                            "after stripping Cortex provenance header",
+                            file=sys.stderr,
+                        )
+                    slug = md_path.stem  # use the original .agents/rules/ stem
+                    rule_rows.append((slug, slug, body, source_file_base))
+
+                for slug, title, rule_body, source_file in rule_rows:
+                    cur.execute(
+                        """
+                        INSERT INTO rules
+                            (project, rule_slug, title, body, source_file,
+                             version, status, metadata)
+                        VALUES (%s, %s, %s, %s, %s, '1', 'active', '{}'::jsonb)
+                        ON CONFLICT (project, rule_slug, version)
+                        DO UPDATE SET
+                            body        = EXCLUDED.body,
+                            source_file = EXCLUDED.source_file,
+                            title       = EXCLUDED.title
+                        """,
+                        (project_key, slug, title, rule_body, source_file),
+                    )
+                    upserted += 1
+
+            source_cortex = _source_cortex_rule(root)  # fitness:allow-literal identity-v2 benign Python "root" identifier, not a project literal
+            if source_cortex is not None:
+                slug, title, rule_body, source_file = source_cortex
+                cur.execute(
+                    """
+                    INSERT INTO rules
+                        (project, rule_slug, title, body, source_file,
+                         version, status, metadata)
+                    VALUES (%s, %s, %s, %s, %s, '1', 'active', '{}'::jsonb)
+                    ON CONFLICT (project, rule_slug, version)
+                    DO UPDATE SET
+                        body        = EXCLUDED.body,
+                        source_file = EXCLUDED.source_file,
+                        title       = EXCLUDED.title
+                    """,
+                    (project_key, slug, title, rule_body, source_file),
+                )
+                upserted += 1
+
+            if generated_consolidated_slugs:
+                cur.execute(
+                    """
+                    DELETE FROM rules
+                     WHERE project = %s
+                       AND source_file LIKE %s
+                       AND NOT (rule_slug = ANY(%s::text[]))
+                    """,
+                    (
+                        project_key,
+                        f".agents/rules/{project_key}.md#%",
+                        sorted(generated_consolidated_slugs),
+                    ),
+                )
+
+    conn.commit()
+
+    # --- Profiles + roles seed (idempotent UPSERT into agent_profiles) ---
+    # Run AFTER the cortex_projects row is guaranteed to exist (seeded above if
+    # it was missing), because some environments enforce FK-like integrity checks
+    # on the project column.  seed_project_profiles is self-contained and commits
+    # its own transaction, so we don't double-commit.
+    if include_project_and_profiles:
+        profiles_summary = seed_project_profiles(conn, project_key, root)  # fitness:allow-literal false-match: 'root' path variable, not agent 'root'
+    else:
+        profiles_summary = {
+            "identities_upserted": 0,
+            "roles_upserted": 0,
+            "identities_skipped": 0,
+            "roles_skipped": 0,
+        }
+
+    return {
+        "upserted": upserted,
+        "skipped": skipped,
+        "project_seeded": project_seeded,
+        "project_corrected": project_corrected,
+        "identities_upserted": profiles_summary["identities_upserted"],
+        "roles_upserted": profiles_summary["roles_upserted"],
+        "identities_skipped": profiles_summary["identities_skipped"],
+        "roles_skipped": profiles_summary["roles_skipped"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Superseded-file cleanup (Approach A coherence)
+# ---------------------------------------------------------------------------
+
+# Globs (relative to live_root) of files that the NEW layout supersedes. After
+# generating the canonical tree, any on-disk file matching one of these globs
+# that is NOT itself part of the freshly-generated tree is an orphan from the
+# old layout and must be removed (backed up first) so the harness is coherent:
+#   - repo-root  agents/*IDENTITY.md  -> superseded by IDENTITY_DIR/*_IDENTITY.md
+#   - .agents/rules/*.md              -> superseded by .agents/rules/<project>.md
+# The "not in the generated tree" guard makes this self-correcting and idempotent
+# and structurally prevents deleting a file we are about to (re)write — e.g. the
+# generated .agents/rules/<project>.md is in the tree, so it is never removed even
+# though it matches the rules glob.
+SUPERSEDED_GLOBS = (
+    "agents/*IDENTITY.md",
+    ".agents/rules/*.md",
+)
+
+
+def superseded_files(tree: dict[str, str], live_root: Path) -> list[str]:
+    """Return the relpaths under live_root that the new layout supersedes.
+
+    A path qualifies when it (a) matches a SUPERSEDED_GLOBS pattern, (b) exists
+    on disk (regular file or symlink), and (c) is NOT a key in ``tree`` (i.e. the
+    generator is not itself writing that exact path). Deterministically sorted.
+    """
+    tree_keys = set(tree.keys())
+    found: set[str] = set()
+    for pattern in SUPERSEDED_GLOBS:
+        for path in live_root.glob(pattern):
+            if not (path.is_file() or path.is_symlink()):
+                continue
+            rel = str(path.relative_to(live_root))
+            if rel in tree_keys:
+                # The generator writes this exact path — keep it.
+                continue
+            found.add(rel)
+    return sorted(found)
+
+
+def remove_superseded(removable: list[str], live_root: Path) -> list[str]:
+    """Unlink each superseded relpath under live_root. Returns those removed.
+
+    Backup is the CALLER's responsibility (done before this, via backup_tree's
+    extra-paths argument) so rollback can restore them. Idempotent: a path that
+    is already gone is silently skipped. Only unlinks the path itself (for the
+    cortex.md symlink this removes the link, never its target).
+    """
+    removed: list[str] = []
+    for rel in removable:
+        dest = live_root / rel
+        if dest.is_symlink() or dest.exists():
+            try:
+                dest.unlink()
+                removed.append(rel)
+            except OSError as exc:  # pragma: no cover - defensive
+                print(f"WARN: could not remove superseded {rel}: {exc}", file=sys.stderr)
+    return removed
+
+
+# ---------------------------------------------------------------------------
+# Apply mode — backup, hand-edit guard, live write, harness_artifacts record
+# ---------------------------------------------------------------------------
+
+
+def file_sha256(path: Path) -> str:
+    """Sha256 hex digest of an on-disk file."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def content_sha256(content: str) -> str:
+    """Sha256 hex digest of a string (UTF-8 encoded)."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _lookup_project_id(conn, project_key: str) -> str:
+    """Return the registry UUID for a project."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id::text FROM cortex_projects WHERE project_key = %s LIMIT 1",
+                (project_key,),
+            )
+            row = cur.fetchone()
+        value = str(row[0] if row else "").strip()
+        if value:
+            try:
+                uuid.UUID(value)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"project {project_key!r} has invalid registry project_id {value!r}"
+                ) from exc
+            return value
+    except Exception as exc:
+        raise RuntimeError(f"could not resolve project_id for {project_key!r}: {exc}") from exc
+    raise RuntimeError(
+        f"project {project_key!r} has no registry project_id; "
+        "run cortex-init-project or the startup wizard before generating harness artifacts"
+    )
+
+
+def _fetch_artifact_hash(conn, project_key: str, rel_path: str) -> str | None:
+    """Return the stored generated_from_hash for a harness_artifacts row, or None.
+
+    The unique key is (project_id, harness, path).
+    """
+    if psycopg2 is None:
+        return None
+    try:
+        project_id = _lookup_project_id(conn, project_key)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT generated_from_hash
+                  FROM harness_artifacts
+                 WHERE project_id = %s::uuid
+                   AND harness = 'gen-harness'
+                   AND path = %s
+                 LIMIT 1
+                """,
+                (project_id, rel_path),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _upsert_artifact(conn, project_key: str, rel_path: str, content_hash: str) -> None:
+    """UPSERT a harness_artifacts row for a successfully written file.
+
+    Uses project_id from cortex_projects.
+    """
+    if psycopg2 is None:
+        return
+    try:
+        project_id = _lookup_project_id(conn, project_key)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO harness_artifacts
+                    (project_id, harness, path,
+                     generated_from_hash, last_compiled_at, status)
+                VALUES (%s::uuid, 'gen-harness', %s, %s, now(), 'current')
+                ON CONFLICT (project_id, harness, path)
+                DO UPDATE SET
+                    generated_from_hash = EXCLUDED.generated_from_hash,
+                    last_compiled_at = EXCLUDED.last_compiled_at,
+                    status = 'current'
+                """,
+                (project_id, rel_path, content_hash),
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+
+
+def backup_tree(
+    tree: dict[str, str],
+    live_root: Path,
+    project_key: str,
+    extra_paths: list[str] | None = None,
+) -> Path | None:
+    """Snapshot every target file/dir from live_root into a timestamped backup dir.
+
+    Backs up every path the apply will TOUCH: the generated tree keys (overwritten)
+    plus ``extra_paths`` (the superseded files that will be REMOVED). Backing up the
+    removed files here is what lets rollback restore them.
+
+    Returns the backup directory path (always created, even if all targets are new).
+    Relative paths inside the backup mirror their live position so rollback can
+    restore exactly.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = live_root / ".agents" / ".harness-backups" / f"{project_key}-{ts}"
+    backup_root.mkdir(parents=True, exist_ok=True)
+
+    # Union of overwritten (tree) and removed (extra_paths) targets, de-duplicated.
+    targets = sorted(set(tree.keys()) | set(extra_paths or []))
+    for rel in targets:
+        src = live_root / rel
+        dst = backup_root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            # Preserve symlink as a text file containing the target.
+            dst.write_text(f"__symlink__:{os.readlink(src)}\n", encoding="utf-8")
+        elif src.is_file():
+            shutil.copy2(str(src), str(dst))
+        elif src.is_dir():
+            shutil.copytree(str(src), str(dst), symlinks=True)
+        # If src does not exist yet, nothing to back up for that path.
+
+    return backup_root
+
+
+def apply_tree(
+    conn,
+    tree: dict[str, str],
+    live_root: Path,
+    project_key: str,
+    force: bool = False,
+) -> tuple[str, list[str], list[str], list[str], list[str]]:
+    """Write the generated tree LIVE to live_root and remove superseded old files.
+
+    Steps:
+    1. Compute the superseded old files (old layout orphans) to remove.
+    2. Back up every TOUCHED target (overwritten tree files + removed old files)
+       into one timestamped backup dir, so rollback restores all of them.
+    3. For each file with a prior harness_artifacts row, compare current on-disk
+       sha256 to stored hash. If they differ (hand-edit), warn and skip unless
+       --force.
+    4. Write the file / create the symlink.
+    5. UPSERT a harness_artifacts row for each written file.
+    6. Remove the superseded old files (idempotent; already backed up in step 2).
+
+    Returns (backup_path_str, written_rels, skipped_rels, error_rels, removed_rels).
+    """
+    _lookup_project_id(conn, project_key)
+
+    # 1. What the new layout supersedes (computed against the tree we will write).
+    removable = superseded_files(tree, live_root)
+
+    # 2. Back up overwritten + removed targets together.
+    backup_dir = backup_tree(tree, live_root, project_key, extra_paths=removable)
+    print(f"Backup created: {backup_dir}")
+
+    written: list[str] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+
+    for rel, content in sorted(tree.items()):
+        dest = live_root / rel
+        is_symlink_entry = content.startswith("__symlink__:")
+
+        # --- hand-edit guard ---
+        prior_hash = _fetch_artifact_hash(conn, project_key, rel)
+        if prior_hash is not None and dest.is_file() and not dest.is_symlink():
+            # A prior row exists: check if the file was hand-edited.
+            current_hash = file_sha256(dest)
+            if current_hash != prior_hash:
+                if not force:
+                    print(
+                        f"WARN: hand-edit detected in {rel} "
+                        f"(disk sha256={current_hash[:12]} != stored={prior_hash[:12]}) "
+                        "— skipping (use --force to overwrite)",
+                        file=sys.stderr,
+                    )
+                    skipped.append(rel)
+                    continue
+                else:
+                    print(
+                        f"INFO: --force: overwriting hand-edited {rel}",
+                        file=sys.stderr,
+                    )
+
+        # --- write ---
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if is_symlink_entry:
+                target = content.split(":", 1)[1]
+                if dest.is_dir() and not dest.is_symlink():
+                    shutil.rmtree(dest)
+                elif dest.exists() or dest.is_symlink():
+                    dest.unlink()
+                os.symlink(target, dest)
+                # Record the symlink target text as the artifact hash.
+                _upsert_artifact(conn, project_key, rel, content_sha256(content))
+            else:
+                dest.write_text(content, encoding="utf-8")
+                _upsert_artifact(conn, project_key, rel, content_sha256(content))
+            written.append(rel)
+        except Exception as exc:
+            print(f"ERROR writing {rel}: {exc}", file=sys.stderr)
+            errors.append(rel)
+
+    # 6. Remove superseded old files (already backed up in step 2). Idempotent.
+    removed = remove_superseded(removable, live_root)
+    for rel in removed:
+        print(f"INFO: removed superseded {rel}", file=sys.stderr)
+
+    return str(backup_dir), written, skipped, errors, removed
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="cortex-sync-generate-harness",
+        description="Generate a project's harness-agnostic .agents/ mirror tree from Cortex.",
+    )
+    parser.add_argument("project_key", help="Cortex project_key to generate for (e.g. a project)")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--diff",
+        action="store_true",
+        help="(default) print a unified diff vs current files, write nothing live",
+    )
+    mode.add_argument(
+        "--out",
+        metavar="DIR",
+        help="write the generated tree to a staging directory",
+    )
+    mode.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Write the generated tree LIVE to live_root. "
+            "Takes a timestamped backup first, checks for hand-edits (skip unless --force), "
+            "and records harness_artifacts rows in Cortex."
+        ),
+    )
+    mode.add_argument(
+        "--seed-rules",
+        action="store_true",
+        help=(
+            "Seed the rules table from <root>/.agents/rules/*.md (reverse-migration). "
+            "Requires --root. Idempotent UPSERT on (project, rule_slug, version). "
+            "Also seeds/corrects cortex_projects if needed. No-op for skills."
+        ),
+    )
+    mode.add_argument(
+        "--seed-rules-only",
+        action="store_true",
+        help=(
+            "Seed only the rules table from <root>/.agents/rules/*.md. "
+            "Requires --root. Does not update cortex_projects or agent_profiles."
+        ),
+    )
+    mode.add_argument(
+        "--seed-profiles-only",
+        action="store_true",
+        help=(
+            "Seed only agent_profiles from <root>/.agents/agents and <root>/.agents/roles. "
+            "Requires --root. Does not update cortex_projects or rules."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --apply: overwrite hand-edited files instead of skipping them.",
+    )
+    parser.add_argument(
+        "--prune-stale-profile-sources",
+        action="store_true",
+        help=(
+            "With --seed-profiles-only: delete absolute agent_profiles source rows for this "
+            "project that point outside --root. Use after a project root rename/move."
+        ),
+    )
+    parser.add_argument(
+        "--live-root",  # fitness:allow-literal false-match: CLI flag name, not agent 'root'
+        default=None,
+        help="the dir used as the 'current' side of --diff and the write target of --apply "
+             "(default: repo root inferred from this script)",
+    )
+    parser.add_argument(
+        "--root",  # fitness:allow-literal false-match: CLI flag name, not agent 'root'
+        default=None,
+        metavar="DIR",
+        help="Project repo root directory. Required for --seed-rules, --seed-rules-only, and --seed-profiles-only.",
+    )
+    args = parser.parse_args(argv)
+
+    # Repo root (the parent of .agents/) is the default live-root for diffing/applying.
+    script_path = Path(__file__).resolve()
+    repo_root = script_path.parents[2]  # .agents/scripts/<this> -> repo root
+    live_root = Path(args.live_root).resolve() if args.live_root else repo_root
+
+    # --seed-rules modes: seed rules table from on-disk files, then exit.
+    if args.seed_rules or args.seed_rules_only:
+        seed_root = Path(args.root).resolve() if args.root else repo_root  # fitness:allow-literal false-match: args.root attribute, not agent 'root'
+        conn = db_connect()
+        try:
+            summary = seed_project_rules(
+                conn,
+                args.project_key,
+                seed_root,
+                include_project_and_profiles=not args.seed_rules_only,
+            )
+        finally:
+            conn.close()
+        mode_name = "Seed rules-only complete" if args.seed_rules_only else "Seed complete"
+        print(
+            f"{mode_name} for '{args.project_key}': "
+            f"rules_upserted={summary['upserted']} rules_skipped={summary['skipped']} "
+            f"identities_upserted={summary['identities_upserted']} "
+            f"roles_upserted={summary['roles_upserted']} "
+            f"project_seeded={summary['project_seeded']} "
+            f"project_corrected={summary['project_corrected']}"
+        )
+        # Legacy alias: keep "upserted=" in stdout so existing tests that grep for it still pass.
+        print(
+            f"upserted={summary['upserted']} skipped={summary['skipped']}"
+        )
+        return 0
+
+    if args.seed_profiles_only:
+        seed_root = Path(args.root).resolve() if args.root else repo_root  # fitness:allow-literal false-match: args.root attribute, not agent 'root'
+        conn = db_connect()
+        try:
+            summary = seed_project_profiles(
+                conn,
+                args.project_key,
+                seed_root,
+                prune_stale_sources=args.prune_stale_profile_sources,
+            )
+        finally:
+            conn.close()
+        print(
+            f"Seed profiles-only complete for '{args.project_key}': "
+            f"identities_upserted={summary['identities_upserted']} "
+            f"roles_upserted={summary['roles_upserted']} "
+            f"identities_skipped={summary['identities_skipped']} "
+            f"roles_skipped={summary['roles_skipped']} "
+            f"stale_sources_pruned={summary['stale_sources_pruned']}"
+        )
+        print(
+            f"upserted={summary['identities_upserted'] + summary['roles_upserted']} "
+            f"skipped={summary['identities_skipped'] + summary['roles_skipped']}"
+        )
+        return 0
+
+    conn = db_connect()
+    try:
+        tree = build_tree(conn, args.project_key)
+
+        if args.apply:
+            backup_path, written, skipped, errors, removed = apply_tree(
+                conn, tree, live_root, args.project_key, force=args.force
+            )
+            print(f"\nApply complete for '{args.project_key}':")
+            print(f"  Backup:  {backup_path}")
+            print(f"  Written: {len(written)} file(s)")
+            print(f"  Removed: {len(removed)} superseded old file(s)")
+            print(f"  Skipped: {len(skipped)} file(s) (hand-edit guard)")
+            if errors:
+                print(f"  ERRORS:  {len(errors)} file(s) FAILED to write")
+            if written:
+                for r in written:
+                    print(f"    [written]  {r}")
+            if removed:
+                for r in removed:
+                    print(f"    [removed]  {r}")
+            if skipped:
+                for r in skipped:
+                    print(f"    [skipped]  {r}")
+            if errors:
+                for r in errors:
+                    print(f"    [ERROR]    {r}")
+            print(f"\nRollback command:")
+            print(f"  cortex-harness-rollback {args.project_key}")
+            # Non-zero exit on partial write so cutover's `set -e` halts + the operator can rollback.
+            return 1 if errors else 0
+
+        if args.out:
+            out_dir = Path(args.out).resolve()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            written_paths = write_tree(tree, out_dir)
+            print(f"Wrote {len(written_paths)} files to staging dir: {out_dir}")
+            for path in written_paths:
+                print(f"  {path.relative_to(out_dir)}")
+            return 0
+
+        # Default mode: --diff.
+        diff = diff_tree(tree, live_root)
+        if diff:
+            sys.stdout.write(diff)
+        else:
+            print(f"# No differences: generated tree matches current files under {live_root}")
+        return 0
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

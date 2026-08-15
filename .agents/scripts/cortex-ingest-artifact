@@ -1,0 +1,813 @@
+#!/usr/bin/env bash
+# cortex-ingest-artifact — ingest a non-chat artifact into Cortex durable memory
+# Usage:
+#   cortex-ingest-artifact <artifact-path> [agent-name] [project]
+#     [--source-type vault_file|repo_file|upload|api_capture|transcript]
+#     [--customer-id <uuid>] [--org-id <uuid>]
+#     [--parent-artifact-id <uuid>] [--section-context <text>]
+#     [--modality <text>] [--extraction-method <text>]
+#     [--raw-content-file <path>] [--metadata-json '{"k":"v"}']
+#     [--edge-type <type> --target-type <type> --target-ref <ref>]
+#     [--dry-run]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  cortex-ingest-artifact <artifact-path> [agent-name] [project] [options]
+
+Options:
+  --source-type <type>         Source class. Defaults from the file path.
+  --customer-id <uuid>         Optional customer boundary ID.
+  --org-id <uuid>              Optional org ID.
+  --parent-artifact-id <uuid>  Optional parent artifact ID.
+  --section-context <text>     Optional surrounding context.
+  --modality <type>            Override detected modality.
+  --extraction-method <text>   Override detected extraction method.
+  --raw-content-file <path>    Use this text file as extracted content.
+  --metadata-json <json>       Merge extra metadata into the artifact row.
+  --edge-type <type>           Optional relationship type.
+  --target-type <type>         Required with --edge-type.
+  --target-ref <ref>           Required with --edge-type.
+  --dry-run                    Print the extracted summary without writing.
+
+Examples:
+  cortex-ingest-artifact docs/architecture.md sample-worker
+  cortex-ingest-artifact diagram.excalidraw sample-worker sample-project --source-type repo_file
+  cortex-ingest-artifact deck.pdf sample-worker --source-type vault_file --section-context "Sprint 36 architecture review"
+EOF
+    exit 1
+}
+
+if [[ $# -lt 1 ]]; then
+    usage
+fi
+
+ARTIFACT_PATH="$1"
+shift
+
+AGENT_NAME=""
+SESSION_PROJECT="${CORTEX_PROJECT}"
+SOURCE_TYPE=""
+CUSTOMER_ID=""
+ORG_ID=""
+PARENT_ARTIFACT_ID=""
+SECTION_CONTEXT=""
+MODALITY_OVERRIDE=""
+EXTRACTION_METHOD_OVERRIDE=""
+RAW_CONTENT_FILE=""
+METADATA_JSON="{}"
+EDGE_TYPE=""
+TARGET_TYPE=""
+TARGET_REF=""
+DRY_RUN=0
+
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+    AGENT_NAME="$1"
+    shift
+fi
+
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+    SESSION_PROJECT="$1"
+    shift
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --source-type)
+            SOURCE_TYPE="${2:-}"
+            shift 2
+            ;;
+        --customer-id)
+            CUSTOMER_ID="${2:-}"
+            shift 2
+            ;;
+        --org-id)
+            ORG_ID="${2:-}"
+            shift 2
+            ;;
+        --parent-artifact-id)
+            PARENT_ARTIFACT_ID="${2:-}"
+            shift 2
+            ;;
+        --section-context)
+            SECTION_CONTEXT="${2:-}"
+            shift 2
+            ;;
+        --modality)
+            MODALITY_OVERRIDE="${2:-}"
+            shift 2
+            ;;
+        --extraction-method)
+            EXTRACTION_METHOD_OVERRIDE="${2:-}"
+            shift 2
+            ;;
+        --raw-content-file)
+            RAW_CONTENT_FILE="${2:-}"
+            shift 2
+            ;;
+        --metadata-json)
+            METADATA_JSON="${2:-}"
+            shift 2
+            ;;
+        --edge-type)
+            EDGE_TYPE="${2:-}"
+            shift 2
+            ;;
+        --target-type)
+            TARGET_TYPE="${2:-}"
+            shift 2
+            ;;
+        --target-ref)
+            TARGET_REF="${2:-}"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            echo "ERROR: Unknown flag: $1" >&2
+            usage
+            ;;
+    esac
+done
+
+if [[ ! -f "${ARTIFACT_PATH}" ]]; then
+    echo "ERROR: Artifact file not found: ${ARTIFACT_PATH}" >&2
+    exit 1
+fi
+
+if [[ -n "${RAW_CONTENT_FILE}" && ! -f "${RAW_CONTENT_FILE}" ]]; then
+    echo "ERROR: Raw content file not found: ${RAW_CONTENT_FILE}" >&2
+    exit 1
+fi
+
+if [[ -n "${EDGE_TYPE}" || -n "${TARGET_TYPE}" || -n "${TARGET_REF}" ]]; then
+    if [[ -z "${EDGE_TYPE}" || -z "${TARGET_TYPE}" || -z "${TARGET_REF}" ]]; then
+        echo "ERROR: --edge-type, --target-type, and --target-ref must be provided together." >&2
+        exit 1
+    fi
+fi
+
+if [[ -n "${AGENT_NAME}" ]]; then
+    AGENT_NAME="$(cortex_normalize_agent_name "${AGENT_NAME}" "${SESSION_PROJECT}")"
+else
+    AGENT_NAME="system"
+fi
+
+ARTIFACT_PATH="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${ARTIFACT_PATH}")"
+if [[ -n "${RAW_CONTENT_FILE}" ]]; then
+    RAW_CONTENT_FILE="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${RAW_CONTENT_FILE}")"
+fi
+export CORTEX_WORKSPACE_ROOT="$(cortex_workspace_root)"
+export CORTEX_VENDOR_ROOT="$(cortex_vendor_root)"
+SQL_FILE="$(mktemp /tmp/cortex-artifact.sql.XXXXXX)"
+PAYLOAD_FILE="$(mktemp /tmp/cortex-artifact.json.XXXXXX)"
+trap 'rm -f "${PAYLOAD_FILE:-}" "${SQL_FILE:-}"' EXIT
+
+python3 - "${ARTIFACT_PATH}" "${AGENT_NAME}" "${SESSION_PROJECT}" "${SOURCE_TYPE}" "${CUSTOMER_ID}" "${ORG_ID}" "${PARENT_ARTIFACT_ID}" "${SECTION_CONTEXT}" "${MODALITY_OVERRIDE}" "${EXTRACTION_METHOD_OVERRIDE}" "${RAW_CONTENT_FILE}" "${METADATA_JSON}" "${EDGE_TYPE}" "${TARGET_TYPE}" "${TARGET_REF}" "${PAYLOAD_FILE}" "${SQL_FILE}" <<'PYEOF'
+import csv
+import hashlib
+import json
+import mimetypes
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.request
+from collections import Counter
+
+(
+    artifact_path,
+    agent_name,
+    project,
+    source_type,
+    customer_id,
+    org_id,
+    parent_artifact_id,
+    section_context_override,
+    modality_override,
+    extraction_method_override,
+    raw_content_file,
+    metadata_json,
+    edge_type,
+    target_type,
+    target_ref,
+    payload_file,
+    sql_file,
+) = sys.argv[1:18]
+
+artifact = pathlib.Path(artifact_path)
+extension = artifact.suffix.lower()
+mime_type, _ = mimetypes.guess_type(artifact_path)
+file_size = artifact.stat().st_size
+repo_root = os.getcwd()
+workspace_root = os.environ.get("CORTEX_WORKSPACE_ROOT") or repo_root
+vendor_root = pathlib.Path(os.environ.get("CORTEX_VENDOR_ROOT") or (pathlib.Path(workspace_root) / ".agents" / "data" / "vendor"))
+max_chars = 120000
+
+try:
+    extra_metadata = json.loads(metadata_json or "{}")
+    if not isinstance(extra_metadata, dict):
+        raise ValueError("metadata JSON must decode to an object")
+except Exception as exc:
+    raise SystemExit(f"Invalid --metadata-json payload: {exc}")
+
+code_exts = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".rb", ".go", ".rs", ".java", ".kt", ".kts",
+    ".swift", ".scala", ".php", ".sh", ".bash", ".zsh", ".sql", ".html", ".css",
+    ".scss", ".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml",
+}
+diagram_exts = {".excalidraw", ".drawio", ".mmd", ".mermaid", ".svg"}
+image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".heic"}
+audio_exts = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+table_exts = {".csv", ".tsv"}
+
+
+def sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def truncate(text: str | None) -> tuple[str | None, bool]:
+    if text is None:
+        return None, False
+    if len(text) <= max_chars:
+        return text, False
+    return text[:max_chars], True
+
+
+def read_text(path: pathlib.Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def image_dimensions(path: pathlib.Path) -> dict:
+    metadata: dict[str, object] = {}
+    try:
+        from PIL import Image  # type: ignore
+
+        with Image.open(path) as image:
+            metadata["width"] = int(image.width)
+            metadata["height"] = int(image.height)
+            metadata["image_mode"] = str(image.mode)
+        return metadata
+    except Exception:
+        pass
+
+    if shutil_which("sips"):
+        result = subprocess.run(
+            ["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "pixelWidth:" in line:
+                    try:
+                        metadata["width"] = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        pass
+                elif "pixelHeight:" in line:
+                    try:
+                        metadata["height"] = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        pass
+    return metadata
+
+
+def csv_preview(path: pathlib.Path) -> str:
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    rows = []
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+        reader = csv.reader(handle, delimiter=delimiter)
+        for idx, row in enumerate(reader):
+            rows.append(" | ".join(cell.strip() for cell in row))
+            if idx >= 19:
+                break
+    return "\n".join(rows)
+
+
+def excalidraw_summary(path: pathlib.Path) -> tuple[str, dict]:
+    data = json.loads(read_text(path))
+    elements = data.get("elements") or []
+    counts = Counter()
+    labels = []
+    for element in elements:
+        if not isinstance(element, dict):
+            continue
+        element_type = str(element.get("type") or "unknown")
+        counts[element_type] += 1
+        text = str(element.get("text") or "").strip()
+        if text:
+            labels.append(text)
+    label_lines = "\n".join(f"- {label}" for label in labels[:30])
+    summary = [
+        f"Excalidraw diagram: {path.name}",
+        f"Elements: {len(elements)}",
+        "Element types:",
+    ]
+    summary.extend(f"- {name}: {count}" for name, count in sorted(counts.items()))
+    if label_lines:
+        summary.append("Text labels:")
+        summary.append(label_lines)
+    return "\n".join(summary), {
+        "diagram_kind": "excalidraw",
+        "element_count": len(elements),
+        "element_types": dict(counts),
+        "labels": labels[:30],
+    }
+
+
+def pdf_text(path: pathlib.Path) -> tuple[str | None, dict]:
+    metadata = {"parser": None, "page_count": None}
+    if shutil_which("pdfinfo"):
+        result = subprocess.run(
+            ["pdfinfo", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            metadata["parser"] = "pdfinfo"
+            for line in result.stdout.splitlines():
+                if line.lower().startswith("pages:"):
+                    try:
+                        metadata["page_count"] = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        pass
+    magic_pdf_text_value, magic_pdf_meta = magic_pdf_markdown(path)
+    if magic_pdf_meta:
+        metadata["magic_pdf"] = magic_pdf_meta
+    if magic_pdf_text_value:
+        metadata["parser"] = "magic-pdf"
+        return magic_pdf_text_value, metadata
+    if shutil_which("pdftotext"):
+        tmp_txt = f"{path}.cortex.txt"
+        result = subprocess.run(
+            ["pdftotext", "-layout", str(path), tmp_txt],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and os.path.exists(tmp_txt):
+            try:
+                metadata["parser"] = "pdftotext"
+                return pathlib.Path(tmp_txt).read_text(encoding="utf-8", errors="replace"), metadata
+            finally:
+                try:
+                    os.remove(tmp_txt)
+                except OSError:
+                    pass
+    metadata["parser_status"] = "missing_local_parser"
+    return None, metadata
+
+
+def magic_pdf_markdown(path: pathlib.Path) -> tuple[str | None, dict | None]:
+    magic_pdf_bin = vendor_root / "magic-pdf-env" / "bin" / "magic-pdf"
+    magic_pdf_config = vendor_root / "magic-pdf.json"
+    if not magic_pdf_bin.exists() or not magic_pdf_config.exists():
+        return None, {
+            "status": "not_configured",
+            "binary": str(magic_pdf_bin),
+            "config": str(magic_pdf_config),
+        }
+
+    temp_dir = pathlib.Path(tempfile.mkdtemp(prefix="cortex-magic-pdf."))
+    try:
+        result = subprocess.run(
+            [
+                str(magic_pdf_bin),
+                "--path",
+                str(path),
+                "--output-dir",
+                str(temp_dir),
+                "--method",
+                "txt",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "MINERU_TOOLS_CONFIG_JSON": str(magic_pdf_config)},
+        )
+        markdown_files = sorted(temp_dir.rglob("*.md"))
+        metadata = {
+            "status": "ready" if result.returncode == 0 else "failed",
+            "binary": str(magic_pdf_bin),
+            "config": str(magic_pdf_config),
+            "returncode": result.returncode,
+        }
+        if result.stdout.strip():
+            metadata["stdout_excerpt"] = result.stdout.strip()[-400:]
+        if result.stderr.strip():
+            metadata["stderr_excerpt"] = result.stderr.strip()[-400:]
+        if result.returncode == 0 and markdown_files:
+            markdown_path = markdown_files[0]
+            metadata["output_file"] = str(markdown_path)
+            metadata["output_format"] = "markdown"
+            return markdown_path.read_text(encoding="utf-8", errors="replace"), metadata
+        if result.returncode == 0:
+            metadata["status"] = "missing_output"
+        return None, metadata
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def resolve_ollama_vlm_model() -> str | None:
+    explicit = os.environ.get("CORTEX_VLM_MODEL")
+    if explicit:
+        return explicit
+
+    if not shutil_which("ollama"):
+        return None
+
+    candidates = [
+        "qwen3-vl:4b",
+        "qwen3-vl",
+        "qwen2.5vl:7b",
+        "qwen2.5vl:3b",
+        "gemma3",
+        "gemma3:4b",
+    ]
+    for candidate in candidates:
+        result = subprocess.run(
+            ["ollama", "show", candidate],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return candidate
+    return None
+
+
+def ollama_image_summary(path: pathlib.Path) -> tuple[str | None, dict]:
+    model = resolve_ollama_vlm_model()
+    metadata = {
+        "binary": shutil_which("ollama"),
+        "model": model,
+        "status": "not_configured" if model is None else "ready",
+    }
+    if not metadata["binary"]:
+        metadata["status"] = "missing_ollama"
+        return None, metadata
+    if model is None:
+        return None, metadata
+
+    prompt = (
+        "Describe this image for durable project memory. "
+        "If it is a product UI screenshot, capture the page or surface, visible navigation, "
+        "major sections, cards, forms, tables, statuses, and notable text. "
+        "If it is a diagram, capture the components, relationships, arrows, groupings, and labels. "
+        "Be factual, concise, and plain text. Start with a one-line summary, then short lines."
+    )
+    image_b64 = base64_encode(path)
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [image_b64],
+            }
+        ],
+    }
+    request = urllib.request.Request(
+        "http://127.0.0.1:11434/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        metadata["status"] = "request_failed"
+        metadata["error"] = str(exc)
+        return None, metadata
+
+    message = body.get("message") or {}
+    content = (message.get("content") or "").strip()
+    metadata["status"] = "ready" if content else "empty"
+    metadata["total_duration"] = body.get("total_duration")
+    metadata["eval_count"] = body.get("eval_count")
+    metadata["prompt_eval_count"] = body.get("prompt_eval_count")
+    metadata["done_reason"] = body.get("done_reason")
+    return (content or None), metadata
+
+
+def base64_encode(path: pathlib.Path) -> str:
+    import base64
+
+    return base64.b64encode(path.read_bytes()).decode("utf-8")
+
+
+def shutil_which(binary: str) -> str | None:
+    return subprocess.run(
+        ["bash", "-lc", f"command -v {binary} >/dev/null 2>&1 && command -v {binary}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.strip() or None
+
+
+def infer_source_type(path_str: str) -> str:
+    if source_type:
+        return source_type
+    if "/Library/CloudStorage/Dropbox/" in path_str:
+        return "vault_file"
+    try:
+        if pathlib.Path(path_str).resolve().is_relative_to(pathlib.Path(workspace_root).resolve()):
+            return "repo_file"
+    except Exception:
+        pass
+    return "local_file"
+
+
+def infer_modality(path: pathlib.Path, mime: str | None) -> str:
+    if modality_override:
+        return modality_override
+    if path.suffix.lower() in audio_exts:
+        return "audio"
+    if path.suffix.lower() in image_exts:
+        return "image"
+    if path.suffix.lower() in table_exts:
+        return "table"
+    if path.suffix.lower() == ".pdf":
+        return "pdf"
+    if path.suffix.lower() in diagram_exts:
+        return "diagram"
+    if path.suffix.lower() in code_exts:
+        return "code"
+    if mime and mime.startswith("text/"):
+        return "text"
+    return "text"
+
+
+def sql_literal(value: str | None) -> str:
+    if value is None or value == "":
+        return "NULL"
+    return "'" + value.replace("'", "''") + "'"
+
+
+def json_literal(value: dict) -> str:
+    return sql_literal(json.dumps(value, ensure_ascii=False, sort_keys=True)) + "::jsonb"
+
+
+def compact_line(text: str | None, limit: int) -> str | None:
+    if not text:
+        return None
+    compact = " ".join(text.split())
+    return compact[:limit] or None
+
+
+modality = infer_modality(artifact, mime_type)
+resolved_source_type = infer_source_type(str(artifact))
+resolved_section_context = section_context_override or artifact.name
+raw_content = None
+extraction_method = "direct"
+derived_metadata = {
+    "agent_name": agent_name,
+    "extension": extension,
+    "file_size_bytes": file_size,
+    "mime_type": mime_type,
+    "repo_root": repo_root,  # fitness:allow-literal false-match: repo_root (field name, not agent 'root')
+}
+
+if raw_content_file:
+    extraction_method = extraction_method_override or "direct"
+    raw_content = pathlib.Path(raw_content_file).read_text(encoding="utf-8", errors="replace")
+    derived_metadata["raw_content_file"] = raw_content_file
+elif modality in {"text", "code"} and extension != ".excalidraw":
+    raw_content = read_text(artifact)
+elif modality == "table":
+    extraction_method = "parsed"
+    raw_content = csv_preview(artifact)
+elif modality == "diagram" and extension == ".excalidraw":
+    extraction_method = "parsed"
+    raw_content, excalidraw_meta = excalidraw_summary(artifact)
+    derived_metadata.update(excalidraw_meta)
+elif modality == "diagram" and extension in {".mmd", ".mermaid", ".drawio", ".svg"}:
+    extraction_method = "parsed"
+    raw_content = read_text(artifact)
+elif modality == "pdf":
+    extraction_method = "parsed"
+    raw_content, pdf_meta = pdf_text(artifact)
+    derived_metadata.update(pdf_meta)
+    if raw_content is None:
+        extraction_method = "metadata_only"
+        resolved_section_context = section_context_override or (
+            f"{artifact.name} (install MinerU or pdftotext for text extraction)"
+        )
+elif modality == "image":
+    extraction_method = "metadata_only"
+    derived_metadata.update(image_dimensions(artifact))
+    raw_content, image_meta = ollama_image_summary(artifact)
+    derived_metadata["vision"] = image_meta
+    if raw_content:
+        extraction_method = "vlm_enriched"
+    else:
+        derived_metadata["parser_status"] = image_meta.get("status") or "vlm_not_configured"
+        resolved_section_context = section_context_override or (
+            f"{artifact.name} (install/configure local VLM for image enrichment)"
+        )
+elif modality == "audio":
+    extraction_method = "metadata_only"
+    derived_metadata["parser_status"] = "transcription_not_configured"
+    resolved_section_context = section_context_override or (
+        f"{artifact.name} (use cortex-ingest-audio or provide a transcript)"
+    )
+else:
+    raw_content = read_text(artifact)
+
+if extraction_method_override:
+    extraction_method = extraction_method_override
+
+raw_content_original_length = len(raw_content) if raw_content else 0
+raw_content, truncated = truncate(raw_content)
+if truncated:
+    # LCX-UR-002: truncation must be loud + auditable, not a silent success.
+    derived_metadata["truncated"] = True
+    derived_metadata["raw_content_limit"] = max_chars
+    derived_metadata["raw_content_original_length"] = raw_content_original_length
+    sys.stderr.write(
+        "WARNING: cortex-ingest-artifact truncated raw_content for "
+        f"{artifact} — kept {max_chars} of {raw_content_original_length} chars; "
+        "full content is NOT stored (LCX-UR-002). Set "
+        "CORTEX_ARTIFACT_FAIL_ON_TRUNCATE=1 to fail instead of truncating.\n"
+    )
+    if os.environ.get("CORTEX_ARTIFACT_FAIL_ON_TRUNCATE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        sys.stderr.write(
+            "ERROR: aborting ingest because CORTEX_ARTIFACT_FAIL_ON_TRUNCATE is set.\n"
+        )
+        sys.exit(3)
+
+content_hash = sha256(artifact)
+caption = compact_line(raw_content, 500) or resolved_section_context
+neighborhood_parts = [
+    f"Artifact: {artifact.name}",
+    f"Modality: {modality}",
+    f"Section: {resolved_section_context}",
+]
+if raw_content:
+    neighborhood_parts.append(raw_content[:3500])
+neighborhood_text = "\n\n".join(part for part in neighborhood_parts if part)[:4000]
+source_doc_metadata = {
+    "source_type": resolved_source_type,
+    "source_file": str(artifact),
+    "modality": modality,
+    "extraction_method": extraction_method,
+    "content_hash": content_hash,
+    "parent_artifact_id": parent_artifact_id or None,
+}
+
+derived_metadata.update(extra_metadata)
+
+with open(payload_file, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "artifact_path": str(artifact),
+            "agent_name": agent_name,
+            "project": project,
+            "source_type": resolved_source_type,
+            "modality": modality,
+            "extraction_method": extraction_method,
+            "content_hash": content_hash,
+            "section_context": resolved_section_context,
+            "raw_content_preview": (raw_content or "")[:240],
+            "target_ref": target_ref or None,
+            "target_type": target_type or None,
+            "edge_type": edge_type or None,
+        },
+        handle,
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    )
+
+customer_sql = sql_literal(customer_id)
+org_sql = sql_literal(org_id)
+parent_sql = sql_literal(parent_artifact_id)
+project_sql = sql_literal(project)
+source_file_sql = sql_literal(str(artifact))
+source_type_sql = sql_literal(resolved_source_type)
+modality_sql = sql_literal(modality)
+method_sql = sql_literal(extraction_method)
+hash_sql = sql_literal(content_hash)
+raw_content_sql = sql_literal(raw_content)
+section_context_sql = sql_literal(resolved_section_context)
+metadata_sql = json_literal(derived_metadata)
+caption_sql = sql_literal(caption)
+neighborhood_sql = sql_literal(neighborhood_text)
+source_doc_metadata_sql = json_literal(source_doc_metadata)
+
+sql_lines = [
+    "SET client_min_messages = warning;",
+    "ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS caption TEXT;",
+    "ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS neighborhood_text TEXT;",
+    "ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS source_doc_metadata JSONB DEFAULT '{}'::jsonb;",
+    "WITH upserted AS (",
+    "    INSERT INTO artifacts (",
+    "        project, customer_id, org_id, modality, source_file, source_type,",
+    "        extraction_method, parent_artifact_id, content_hash, raw_content,",
+    "        section_context, caption, neighborhood_text, source_doc_metadata, metadata, updated_at",
+    "    ) VALUES (",
+    f"        {project_sql}, {customer_sql}, {org_sql}, {modality_sql}, {source_file_sql}, {source_type_sql},",
+    f"        {method_sql}, {parent_sql}, {hash_sql}, {raw_content_sql},",
+    f"        {section_context_sql}, {caption_sql}, {neighborhood_sql}, {source_doc_metadata_sql}, {metadata_sql}, NOW()",
+    "    )",
+    "    ON CONFLICT (project, source_file, content_hash) DO UPDATE",
+    "    SET customer_id = COALESCE(EXCLUDED.customer_id, artifacts.customer_id),",
+    "        org_id = COALESCE(EXCLUDED.org_id, artifacts.org_id),",
+    "        modality = EXCLUDED.modality,",
+    "        source_type = EXCLUDED.source_type,",
+    "        extraction_method = EXCLUDED.extraction_method,",
+    "        parent_artifact_id = COALESCE(EXCLUDED.parent_artifact_id, artifacts.parent_artifact_id),",
+    "        raw_content = COALESCE(EXCLUDED.raw_content, artifacts.raw_content),",
+    "        section_context = COALESCE(EXCLUDED.section_context, artifacts.section_context),",
+    "        caption = COALESCE(EXCLUDED.caption, artifacts.caption),",
+    "        neighborhood_text = COALESCE(EXCLUDED.neighborhood_text, artifacts.neighborhood_text),",
+    "        source_doc_metadata = COALESCE(artifacts.source_doc_metadata, '{}'::jsonb) || COALESCE(EXCLUDED.source_doc_metadata, '{}'::jsonb),",
+    "        metadata = COALESCE(artifacts.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),",
+    "        updated_at = NOW()",
+    "    RETURNING id",
+    ")",
+    "SELECT id::text, "
+    f"{modality_sql}, {method_sql}, {source_file_sql}",
+    "  FROM upserted;",
+]
+
+if edge_type and target_type and target_ref:
+    edge_sql = [
+        "",
+        "INSERT INTO artifact_edges (project, source_id, target_type, target_ref, edge_type, metadata)",
+        "SELECT",
+        f"    {project_sql},",
+        "    a.id,",
+        f"    {sql_literal(target_type)},",
+        f"    {sql_literal(target_ref)},",
+        f"    {sql_literal(edge_type)},",
+        f"    {json_literal({'agent_name': agent_name})}",
+        "  FROM artifacts a",
+        f" WHERE a.project = {project_sql}",
+        f"   AND a.source_file = {source_file_sql}",
+        f"   AND a.content_hash = {hash_sql}",
+        "ON CONFLICT (project, source_id, target_type, target_ref, edge_type) DO NOTHING;",
+    ]
+    sql_lines.extend(edge_sql)
+
+with open(sql_file, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(sql_lines) + "\n")
+PYEOF
+PY_RC=$?
+
+# LCX-UR-002: if extraction/serialization failed (e.g. CORTEX_ARTIFACT_FAIL_ON_TRUNCATE
+# triggered a hard exit), do NOT fall through to the SQL write with a stale/empty file.
+if [[ "${PY_RC}" -ne 0 ]]; then
+    echo "ERROR: artifact extraction step failed (rc=${PY_RC}); not writing to Cortex." >&2
+    exit "${PY_RC}"
+fi
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+    python3 -m json.tool "${PAYLOAD_FILE}"
+    exit 0
+fi
+
+RESULT="$(pg_query_file "${SQL_FILE}" | head -1 | tr -d '\r')"
+ARTIFACT_ID="$(printf '%s' "${RESULT}" | awk -F'|' 'NR==1 {print $1}')"
+MODALITY="$(printf '%s' "${RESULT}" | awk -F'|' 'NR==1 {print $2}')"
+METHOD="$(printf '%s' "${RESULT}" | awk -F'|' 'NR==1 {print $3}')"
+SOURCE_FILE="$(printf '%s' "${RESULT}" | awk -F'|' 'NR==1 {print $4}')"
+
+if [[ -z "${ARTIFACT_ID}" ]]; then
+    echo "ERROR: Artifact ingest did not return an ID." >&2
+    exit 1
+fi
+
+status green "Artifact ingested: ${ARTIFACT_ID}"
+printf '  Agent: %s\n' "${AGENT_NAME}"
+printf '  Project: %s\n' "${SESSION_PROJECT}"
+printf '  Modality: %s\n' "${MODALITY}"
+printf '  Extraction: %s\n' "${METHOD}"
+printf '  Source: %s\n' "${SOURCE_FILE}"
+if [[ -n "${EDGE_TYPE}" ]]; then
+    printf '  Edge: %s -> %s:%s\n' "${EDGE_TYPE}" "${TARGET_TYPE}" "${TARGET_REF}"
+fi

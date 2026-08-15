@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Agent Cortex — Retention management
+# Moves aged data from Tier 2 (pgvector) to Tier 3 (archive tables)
+# Trims Redis Streams to configured max length
+#
+# Usage:
+#   cortex-retain                    — Run retention for current project
+#   cortex-retain --dry-run          — Preview what would be archived
+#   cortex-retain --status           — Show retention stats
+#   cortex-retain --all-projects     — Run for all projects
+set -euo pipefail
+source "$(dirname "$0")/_cortex_lib.sh"
+
+ACTION="run"
+DRY_RUN=false
+ALL_PROJECTS=false
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY_RUN=true; shift ;;
+        --status) ACTION="status"; shift ;;
+        --all-projects) ALL_PROJECTS=true; shift ;;
+        --help|-h)
+            echo "Usage: cortex-retain [--status] [--dry-run] [--all-projects]"
+            echo ""
+            echo "Manage data retention across the 3-tier lifecycle."
+            echo ""
+            echo "  --status        Show data distribution across all tiers"
+            echo "  --dry-run       Preview what would be archived"
+            echo "  --all-projects  Run for all projects (not just current)"
+            echo "  --help          Show this help"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1 (use --help for usage)" >&2
+            exit 1
+            ;;
+    esac
+done
+
+REDIS_STREAM_MAX=1000  # Max entries in Redis Stream
+REDIS_EVENT_TTL=604800 # 7 days in seconds
+
+if [ "${ACTION}" = "status" ]; then
+    echo "## Cortex Retention Status — ${CORTEX_PROJECT}"
+    echo ""
+
+    echo "### Redis"
+    if redis_available; then
+        stream_len=$(rcli XLEN "${CORTEX_STREAM}" 2>/dev/null || echo "?")
+        echo "  Stream entries: ${stream_len} (max: ${REDIS_STREAM_MAX})"
+    else
+        echo "  (Redis unavailable)"
+    fi
+    echo ""
+
+    echo "### PostgreSQL (Tier 2 — Active)"
+    for tbl in messages team_events decisions lessons handoffs; do
+        count=$(pg_query "SELECT COUNT(*) FROM ${tbl} WHERE project = '$(sql_escape "${CORTEX_PROJECT}")';" 2>/dev/null || echo "?")
+        oldest=$(pg_query "SELECT to_char(MIN(COALESCE(ts, created_at)), 'YYYY-MM-DD') FROM ${tbl} WHERE project = '$(sql_escape "${CORTEX_PROJECT}")';" 2>/dev/null || echo "?")
+        retention=$(pg_query "SELECT tier2_days FROM retention_config WHERE table_name = '${tbl}';" 2>/dev/null || echo "90")
+        echo "  ${tbl}: ${count} rows (oldest: ${oldest}, retain: ${retention} days)"
+    done
+    echo ""
+
+    echo "### Archive (Tier 3 — Cold)"
+    for tbl in archive_messages archive_events archive_decisions archive_lessons archive_handoffs; do
+        count=$(pg_query "SELECT COUNT(*) FROM ${tbl} WHERE project = '$(sql_escape "${CORTEX_PROJECT}")';" 2>/dev/null || echo "0")
+        echo "  ${tbl}: ${count} rows"
+    done
+    exit 0
+fi
+
+echo "## Cortex Retention — ${CORTEX_PROJECT}"
+[ "${DRY_RUN}" = true ] && echo "(dry-run mode)"
+echo ""
+
+# --- Tier 1 → Trim Redis Stream ---
+echo "### Redis Stream Trim"
+if redis_available; then
+    before=$(rcli XLEN "${CORTEX_STREAM}" 2>/dev/null || echo "0")
+    if [ "${DRY_RUN}" = false ]; then
+        rcli XTRIM "${CORTEX_STREAM}" MAXLEN "~" "${REDIS_STREAM_MAX}" 2>/dev/null || true
+    fi
+    after=$(rcli XLEN "${CORTEX_STREAM}" 2>/dev/null || echo "0")
+    echo "  Stream: ${before} → ${after} (max: ${REDIS_STREAM_MAX})"
+else
+    echo "  (Redis unavailable)"
+fi
+echo ""
+
+# --- Tier 2 → Tier 3: Archive aged data ---
+echo "### Archiving aged data"
+
+archive_table() {
+    local src="$1" dst="$2" ts_col="$3" cols="$4" days="$5"
+
+    # Count what would be archived
+    local count
+    count=$(pg_query "SELECT COUNT(*) FROM ${src} WHERE ${ts_col} < now() - interval '${days} days' AND project = '$(sql_escape "${CORTEX_PROJECT}")';" 2>/dev/null || echo "0")
+
+    if [ "${count}" = "0" ] || [ -z "${count}" ]; then
+        echo "  ${src} → ${dst}: nothing to archive"
+        return
+    fi
+
+    if [ "${DRY_RUN}" = true ]; then
+        echo "  ${src} → ${dst}: would archive ${count} rows (older than ${days} days)"
+    else
+        # Copy to archive (INSERT ... SELECT, skip embedding columns)
+        pg_exec "INSERT INTO ${dst} (${cols}) SELECT ${cols} FROM ${src} WHERE ${ts_col} < now() - interval '${days} days' AND project = '$(sql_escape "${CORTEX_PROJECT}")' ON CONFLICT DO NOTHING;" 2>/dev/null
+        # Delete from source
+        pg_exec "DELETE FROM ${src} WHERE ${ts_col} < now() - interval '${days} days' AND project = '$(sql_escape "${CORTEX_PROJECT}")';" 2>/dev/null
+        echo "  ${src} → ${dst}: archived ${count} rows"
+    fi
+}
+
+# Get retention days from config (with defaults)
+msg_days=$(pg_query "SELECT tier2_days FROM retention_config WHERE table_name = 'messages';" 2>/dev/null || echo "90")
+evt_days=$(pg_query "SELECT tier2_days FROM retention_config WHERE table_name = 'team_events';" 2>/dev/null || echo "90")
+dec_days=$(pg_query "SELECT tier2_days FROM retention_config WHERE table_name = 'decisions';" 2>/dev/null || echo "365")
+les_days=$(pg_query "SELECT tier2_days FROM retention_config WHERE table_name = 'lessons';" 2>/dev/null || echo "365")
+hnd_days=$(pg_query "SELECT tier2_days FROM retention_config WHERE table_name = 'handoffs';" 2>/dev/null || echo "30")
+
+archive_table "messages" "archive_messages" "ts" "id, session_id, project, agent_name, role, content, metadata, ts" "${msg_days}"
+archive_table "team_events" "archive_events" "ts" "id, ts, agent_name, event_type, summary, detail, files, project, sprint_id" "${evt_days}"
+archive_table "decisions" "archive_decisions" "created_at" "id, sprint_id, agent_name, summary, rationale, outcome, category, files_affected, tags, project, created_at" "${dec_days}"
+archive_table "lessons" "archive_lessons" "created_at" "id, agent_name, category, summary, detail, code_right, code_wrong, project, created_at" "${les_days}"
+archive_table "handoffs" "archive_handoffs" "created_at" "id, project, from_agent, to_role, priority, summary, files_changed, status, created_at, completed_at" "${hnd_days}"
+
+echo ""
+status green "Retention complete."

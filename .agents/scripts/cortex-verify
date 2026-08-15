@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# cortex-verify — Check a claim against code, knowledge, and runtime truth
+# Part of the Cortex verification tooling.
+#
+# Usage:
+#   cortex-verify "<claim>"                           Check a claim
+#   cortex-verify --file-exists <path>                Check if file exists
+#   cortex-verify --function-exists <name> [--repo]   Check if function exists in code graph
+#   cortex-verify --callers <name> [--min N] [--repo] Check caller count meets threshold
+#   cortex-verify --decision "<text>"                 Check if a matching decision exists
+#   cortex-verify --table-has-rows <table> [--min N]  Check Cortex table has rows
+#   cortex-verify --env-var <name>                    Check if env var is set (locally)
+#   cortex-verify --helm-key <key> [--values <file>]  Check if key exists in Helm values
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+# Source env
+ENV_FILE="$(cd "${AGENTS_DIR}/../scripts" 2>/dev/null && pwd)/_cortex_env.sh"
+[ -f "${ENV_FILE}" ] && source "${ENV_FILE}" 2>/dev/null
+
+# REN-ARCH-01: decision/table verification now goes through the typed API
+# (/verify/decision, /verify/table) instead of direct superuser SQL.
+if ! declare -F cortex_api_call >/dev/null; then
+    # shellcheck source=./_cortex_api.sh
+    source "${SCRIPT_DIR}/_cortex_api.sh"
+fi
+
+usage() {
+    printf 'Usage:\n'
+    printf '  cortex-verify "<claim>"                           Free-form claim check\n'
+    printf '  cortex-verify --file-exists <path>                File existence\n'
+    printf '  cortex-verify --function-exists <name> [--repo p] Function in code graph\n'
+    printf '  cortex-verify --callers <name> [--min N] [--repo] Caller count threshold\n'
+    printf '  cortex-verify --decision "<text>"                 Decision exists\n'
+    printf '  cortex-verify --table-has-rows <table> [--min N]  DB table has rows\n'
+    printf '  cortex-verify --env-var <name>                    Env var is set\n'
+    printf '  cortex-verify --helm-key <key> [--values <file>]  Key in Helm values\n'
+    exit 1
+}
+
+if [ "$#" -lt 1 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    usage
+fi
+
+PROJECT="${CORTEX_PROJECT}"
+
+# Result codes
+VERIFIED=0
+CONTRADICTED=1
+UNVERIFIABLE=2
+
+print_result() {
+    local code="$1"
+    local claim="$2"
+    local evidence="$3"
+
+    case "${code}" in
+        0) status green "VERIFIED: ${claim}"   ;;
+        1) status red   "CONTRADICTED: ${claim}" ;;
+        2) status yellow "UNVERIFIABLE: ${claim}" ;;
+    esac
+    printf '  Evidence: %s\n' "${evidence}"
+}
+
+# ---------------------------------------------------------------------------
+# Structured checks
+# ---------------------------------------------------------------------------
+
+MODE="$1"
+shift
+
+case "${MODE}" in
+
+    --file-exists)
+        TARGET="${1:?path required}"
+        if [ -e "${TARGET}" ]; then
+            print_result ${VERIFIED} "File exists: ${TARGET}" "$(ls -la "${TARGET}" 2>/dev/null | head -1)"
+        else
+            print_result ${CONTRADICTED} "File exists: ${TARGET}" "File not found on disk"
+        fi
+        ;;
+
+    --function-exists)
+        FUNC="${1:?function name required}"; shift
+        REPO=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --repo) REPO="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        [ -z "${REPO}" ] && REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+        result=$(uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import query_graph
+r = query_graph(pattern='file_summary', target='', repo_root='${REPO}')
+" 2>/dev/null || echo "")
+
+        # Try callers_of which does the name resolution
+        result=$(uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import query_graph
+r = query_graph(pattern='callers_of', target='${FUNC}', repo_root='${REPO}')
+if isinstance(r, str): r = json.loads(r)
+# If we get results OR the function was found (even with 0 callers), it exists
+results = r.get('results', [])
+target_info = r.get('target', {})
+if target_info or len(results) > 0:
+    print(f'FOUND|{len(results)} callers')
+else:
+    # Try callees_of as a secondary check
+    r2 = query_graph(pattern='callees_of', target='${FUNC}', repo_root='${REPO}')
+    if isinstance(r2, str): r2 = json.loads(r2)
+    results2 = r2.get('results', [])
+    if results2:
+        print(f'FOUND|{len(results2)} callees')
+    else:
+        print('NOT_FOUND|')
+" 2>/dev/null)
+
+        if [[ "${result}" == FOUND* ]]; then
+            detail="${result#FOUND|}"
+            print_result ${VERIFIED} "Function '${FUNC}' exists in code graph" "${detail}"
+        elif [[ "${result}" == NOT_FOUND* ]]; then
+            print_result ${CONTRADICTED} "Function '${FUNC}' exists in code graph" "Not found in Tree-sitter AST graph for ${REPO}"
+        else
+            print_result ${UNVERIFIABLE} "Function '${FUNC}' exists" "Code graph query failed — graph may not be built for this repo"
+        fi
+        ;;
+
+    --callers)
+        FUNC="${1:?function name required}"; shift
+        MIN_CALLERS=1
+        REPO=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --min)  MIN_CALLERS="$2"; shift 2 ;;
+                --repo) REPO="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        [ -z "${REPO}" ] && REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+        count=$(uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import query_graph
+r = query_graph(pattern='callers_of', target='${FUNC}', repo_root='${REPO}')
+if isinstance(r, str): r = json.loads(r)
+print(len(r.get('results', [])))
+" 2>/dev/null)
+
+        if [ -n "${count}" ] && [ "${count}" -ge "${MIN_CALLERS}" ]; then
+            print_result ${VERIFIED} "'${FUNC}' has >= ${MIN_CALLERS} callers" "${count} callers found"
+        elif [ -n "${count}" ]; then
+            print_result ${CONTRADICTED} "'${FUNC}' has >= ${MIN_CALLERS} callers" "Only ${count} callers found"
+        else
+            print_result ${UNVERIFIABLE} "'${FUNC}' caller count" "Code graph query failed"
+        fi
+        ;;
+
+    --decision)
+        SEARCH="${1:?search text required}"
+
+        resp="$(cortex_api_call GET "/verify/decision?q=$(cortex_api_urlencode "${SEARCH}")" 2>/dev/null || true)"
+        matches="$(CORTEX_VJSON="${resp}" python3 -c 'import json,os; print(json.loads(os.environ.get("CORTEX_VJSON") or "{}").get("matches",0))' 2>/dev/null || echo 0)"
+
+        if [ "${matches:-0}" -gt 0 ]; then
+            latest="$(CORTEX_VJSON="${resp}" python3 -c 'import json,os; print(json.loads(os.environ.get("CORTEX_VJSON") or "{}").get("latest") or "")' 2>/dev/null || echo "")"
+            print_result ${VERIFIED} "Decision matching '${SEARCH}' exists" "${matches} match(es). Latest: ${latest}"
+        else
+            print_result ${CONTRADICTED} "Decision matching '${SEARCH}' exists" "No active decisions match '${SEARCH}' in project '${PROJECT}'"
+        fi
+        ;;
+
+    --table-has-rows)
+        TABLE="${1:?table name required}"; shift
+        MIN_ROWS=1
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --min) MIN_ROWS="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+
+        resp="$(cortex_api_call GET "/verify/table/$(cortex_api_urlencode "${TABLE}")" 2>/dev/null || true)"
+        count="$(CORTEX_VJSON="${resp}" python3 -c 'import json,os; print(json.loads(os.environ.get("CORTEX_VJSON") or "{}").get("count",0))' 2>/dev/null || echo 0)"
+
+        if [ "${count:-0}" -ge "${MIN_ROWS}" ]; then
+            print_result ${VERIFIED} "Table '${TABLE}' has >= ${MIN_ROWS} rows" "${count} rows found"
+        else
+            print_result ${CONTRADICTED} "Table '${TABLE}' has >= ${MIN_ROWS} rows" "Only ${count:-0} rows found"
+        fi
+        ;;
+
+    --env-var)
+        VAR_NAME="${1:?variable name required}"
+        if [ -n "${!VAR_NAME:-}" ]; then
+            val="${!VAR_NAME}"
+            masked="${val:0:4}...${val: -4}"
+            print_result ${VERIFIED} "Env var '${VAR_NAME}' is set" "Value: ${masked} (${#val} chars)"
+        else
+            print_result ${CONTRADICTED} "Env var '${VAR_NAME}' is set" "Variable is empty or unset"
+        fi
+        ;;
+
+    --helm-key)
+        KEY="${1:?Helm key required}"; shift
+        VALUES_FILE=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --values) VALUES_FILE="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+
+        # Auto-find values file
+        if [ -z "${VALUES_FILE}" ]; then
+            KAIDERA_ROOT="$(cortex_workspace_root)"
+            for candidate in \
+                "${KAIDERA_ROOT}/02-cust-portal/infrastructure/profiles/dev/values.yaml" \
+                "${KAIDERA_ROOT}/02-cust-portal/infrastructure/helm/kaidera-platform/values-dev.yaml" \
+                "${KAIDERA_ROOT}/02-cust-portal/infrastructure/helm/kaidera-platform/values-prod-v2.yaml" \
+                "${KAIDERA_ROOT}/02-cust-portal/infrastructure/profiles/prod/values.yaml"; do
+                if [ -f "${candidate}" ]; then
+                    VALUES_FILE="${candidate}"
+                    break
+                fi
+            done
+        fi
+
+        if [ -z "${VALUES_FILE}" ] || [ ! -f "${VALUES_FILE}" ]; then
+            print_result ${UNVERIFIABLE} "Helm key '${KEY}'" "No values file found"
+        elif grep -q "${KEY}" "${VALUES_FILE}" 2>/dev/null; then
+            line=$(grep -n "${KEY}" "${VALUES_FILE}" | head -1)
+            print_result ${VERIFIED} "Helm key '${KEY}' exists" "Found in ${VALUES_FILE}: ${line}"
+        else
+            print_result ${CONTRADICTED} "Helm key '${KEY}' exists" "Not found in ${VALUES_FILE}"
+        fi
+        ;;
+
+    # -----------------------------------------------------------------------
+    # Free-form claim — run multiple checks
+    # -----------------------------------------------------------------------
+    *)
+        CLAIM="${MODE} $*"
+        printf '\n## cortex-verify: "%s"\n\n' "${CLAIM}"
+
+        checks=0
+        verified=0
+        contradicted=0
+        unverifiable=0
+
+        # Check 1: Does the claim reference a file path?
+        file_paths=$(printf '%s' "${CLAIM}" | grep -oE '/[a-zA-Z0-9_./-]+\.[a-z]+' | head -5)
+        if [ -n "${file_paths}" ]; then
+            while IFS= read -r fpath; do
+                [ -z "${fpath}" ] && continue
+                checks=$((checks + 1))
+                if [ -e "${fpath}" ]; then
+                    printf '  ✓ File exists: %s\n' "${fpath}"
+                    verified=$((verified + 1))
+                else
+                    printf '  ✗ File NOT found: %s\n' "${fpath}"
+                    contradicted=$((contradicted + 1))
+                fi
+            done <<< "${file_paths}"
+        fi
+
+        # Check 2: Does the claim reference a function name? (look for common patterns)
+        func_names=$(printf '%s' "${CLAIM}" | grep -oE '[a-z_][a-z_0-9]+\(\)' | sed 's/()//' | head -3)
+        if [ -n "${func_names}" ]; then
+            REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+            while IFS= read -r func; do
+                [ -z "${func}" ] && continue
+                checks=$((checks + 1))
+                count=$(uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import query_graph
+r = query_graph(pattern='callers_of', target='${func}', repo_root='${REPO}')
+if isinstance(r, str): r = json.loads(r)
+print(len(r.get('results', [])))
+" 2>/dev/null || echo "?")
+                if [ "${count}" != "?" ] && [ "${count}" != "0" ]; then
+                    printf '  ✓ Function %s exists (%s callers)\n' "${func}" "${count}"
+                    verified=$((verified + 1))
+                elif [ "${count}" = "0" ]; then
+                    printf '  ? Function %s found but 0 callers (may be dead code)\n' "${func}"
+                    unverifiable=$((unverifiable + 1))
+                else
+                    printf '  ✗ Function %s not found in code graph\n' "${func}"
+                    contradicted=$((contradicted + 1))
+                fi
+            done <<< "${func_names}"
+        fi
+
+        # Check 3: Search Cortex for related decisions
+        claim_words=$(printf '%s' "${CLAIM}" | tr ' ' '\n' | awk 'length > 5' | head -3 | tr '\n' ' ')
+        if [ -n "${claim_words}" ]; then
+            for word in ${claim_words}; do
+                wresp="$(cortex_api_call GET "/verify/decision?q=$(cortex_api_urlencode "${word}")" 2>/dev/null || true)"
+                match_count="$(CORTEX_VJSON="${wresp}" python3 -c 'import json,os; print(json.loads(os.environ.get("CORTEX_VJSON") or "{}").get("matches",0))' 2>/dev/null || echo 0)"
+                if [ "${match_count:-0}" -gt 0 ]; then
+                    checks=$((checks + 1))
+                    printf '  ℹ %s matching decisions for "%s"\n' "${match_count}" "${word}"
+                    verified=$((verified + 1))
+                fi
+            done
+        fi
+
+        # Summary
+        printf '\n  --- Summary ---\n'
+        printf '  Checks run:    %d\n' "${checks}"
+        printf '  Verified:      %d\n' "${verified}"
+        printf '  Contradicted:  %d\n' "${contradicted}"
+        printf '  Unverifiable:  %d\n' "${unverifiable}"
+
+        if [ "${contradicted}" -gt 0 ]; then
+            status red "  VERDICT: CONTRADICTED (${contradicted} check(s) failed)"
+            exit 1
+        elif [ "${checks}" -eq 0 ]; then
+            status yellow "  VERDICT: UNVERIFIABLE (no checkable assertions found)"
+            exit 2
+        else
+            status green "  VERDICT: VERIFIED (${verified}/${checks} checks passed)"
+        fi
+        ;;
+esac

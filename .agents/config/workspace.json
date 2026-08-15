@@ -1,0 +1,33 @@
+{
+  "_generated": {
+    "hash": "d7b00523a274",
+    "note": "GENERATED FROM CORTEX — DO NOT EDIT",
+    "source": "cortex_projects"
+  },
+  "program": {
+    "key": "openkai",
+    "name": "OpenKai",
+    "root": "/Users/amadmalik/DevVault/OpenKai"
+  },
+  "projects": [
+    {
+      "default_agent": "kai",
+      "display_name": "OpenKai",
+      "key": "openkai",
+      "knowledge_globs": [],
+      "parent": null,
+      "profile_globs": [
+        ".agents/agents/*_IDENTITY.md"
+      ],
+      "repo_type": "repo",
+      "roots": [
+        {
+          "kind": "primary",
+          "path": "/Users/amadmalik/DevVault/OpenKai"
+        }
+      ],
+      "status": "active"
+    }
+  ],
+  "registry_mode": "partial"
+}

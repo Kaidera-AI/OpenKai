@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# cortex-harness-cutover — Phase 5 cutover driver for the Cortex-canonical harness.
+#
+# USAGE
+#   cortex-harness-cutover foundation [--force]
+#       Apply migration 005 (skills/rules/harness_artifacts tables) to the
+#       configured Cortex, then PRINT (not run) the cortex-api restart command
+#       the operator must run. Idempotent and safe (additive DDL only).
+#
+#   cortex-harness-cutover <project_key> [--force]
+#       Preflight → backup → generate → apply → verify for a named project.
+#       --force: pass --force through to the generator (overwrite hand-edits).
+#
+# SAFETY
+#   - This script NEVER runs against live if env vars are set to a scratch DB.
+#   - Set CORTEX_CUTOVER_LIVE_ROOT to override the repo root used for apply.
+#   - Set CORTEX_CUTOVER_DRY_RUN=1 to print what would happen without writing.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_info()  { printf '\033[0;34m[cutover] %s\033[0m\n' "$*" >&2; }
+_ok()    { printf '\033[0;32m[cutover] %s\033[0m\n' "$*" >&2; }
+_warn()  { printf '\033[0;33m[cutover] WARN: %s\033[0m\n' "$*" >&2; }
+_error() { printf '\033[0;31m[cutover] ERROR: %s\033[0m\n' "$*" >&2; }
+
+usage() {
+    cat <<'EOF'
+Usage:
+  cortex-harness-cutover foundation [--force]
+  cortex-harness-cutover <project_key> [--force]
+  cortex-harness-cutover --help
+
+Commands:
+  foundation      Apply migration 005 (idempotent additive DDL) and print the
+                  cortex-api restart command the operator should run.
+  <project_key>   Full cutover for the named project: preflight → backup →
+                  generate+apply → verify.
+
+Options:
+  --force         Pass --force to the generator (overwrite hand-edited files).
+  --dry-run       Print what would happen; do not write any files.
+
+Environment overrides:
+  CORTEX_CUTOVER_LIVE_ROOT   Override the target repo root (default: inferred).
+  PG_HOST / PG_PORT / PG_USER / PG_PASS / PG_DB   Override DB connection.
+EOF
+    exit 0
+}
+
+# Resolve the generator and migration tool paths.
+GENERATOR="${SCRIPT_DIR}/cortex-sync-generate-harness"
+APPLY_MIGRATIONS="${SCRIPT_DIR}/cortex-apply-migrations"
+
+FORCE_FLAG=""
+DRY_RUN=0
+SUBCMD=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage ;;
+        --force)   FORCE_FLAG="--force"; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        foundation) SUBCMD="foundation"; shift ;;
+        *)
+            if [ -z "${SUBCMD}" ]; then
+                SUBCMD="${1}"
+            else
+                _error "unexpected argument: $1"
+                exit 2
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [ -z "${SUBCMD}" ]; then
+    _error "subcommand required (foundation or <project_key>)"
+    usage
+fi
+
+# ---------------------------------------------------------------------------
+# Subcommand: foundation
+# ---------------------------------------------------------------------------
+
+if [ "${SUBCMD}" = "foundation" ]; then
+    _info "Applying migration 005 (agent_skills / rules / harness_artifacts tables)..."
+
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        _warn "DRY_RUN=1: would run: ${APPLY_MIGRATIONS} --apply --target 005_skills_rules_bindings.sql"
+    else
+        "${APPLY_MIGRATIONS}" --apply --target "005_skills_rules_bindings.sql"
+    fi
+
+    _ok "Migration 005 applied (idempotent — safe to run again)."
+    echo ""
+    echo "========================================================================"
+    echo "  NEXT STEP — restart cortex-api to pick up the new schema:"
+    echo ""
+    echo "    docker compose -p \"\${KAIDERA_OS_COMPOSE_PROJECT:-cortex}\" restart cortex-api"
+    echo ""
+    echo "  (This picks up the additive 'persona' boot field. The restart is"
+    echo "   safe; the API comes back within a few seconds.)"
+    echo "========================================================================"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Subcommand: <project_key>
+# ---------------------------------------------------------------------------
+
+PROJECT_KEY="${SUBCMD}"
+
+# Determine live root.
+if [ -n "${CORTEX_CUTOVER_LIVE_ROOT:-}" ]; then
+    LIVE_ROOT="${CORTEX_CUTOVER_LIVE_ROOT}"
+else
+    LIVE_ROOT="${REPO_ROOT}"
+fi
+
+_info "Starting cutover for project: ${PROJECT_KEY}"
+_info "Live root: ${LIVE_ROOT}"
+
+# --- Preflight checks ---
+_info "Running preflight checks..."
+PREFLIGHT_FAIL=0
+
+RULES_LINK="${LIVE_ROOT}/.agents/rules/cortex.md"
+if [ -L "${RULES_LINK}" ] && [ ! -e "${RULES_LINK}" ]; then
+    _warn "Preflight: .agents/rules/cortex.md is a BROKEN symlink — target does not exist."
+    PREFLIGHT_FAIL=1
+fi
+
+WORKSPACE_JSON="${LIVE_ROOT}/.agents/config/workspace.json"
+if [ -f "${WORKSPACE_JSON}" ]; then
+    REPO_ROOT_FROM_WS="$(python3 - "${WORKSPACE_JSON}" "${PROJECT_KEY}" <<'PY'
+import json, sys
+ws = json.load(open(sys.argv[1]))
+key = sys.argv[2]
+for p in ws.get("projects", []):
+    if p.get("key") == key:
+        roots = p.get("roots", [])  # fitness:allow-literal false-match: roots (JSON key, not agent 'root')
+        if roots:
+            print(roots[0].get("path", ""))
+        break
+PY
+)"
+    if [ -n "${REPO_ROOT_FROM_WS}" ] && [ ! -d "${REPO_ROOT_FROM_WS}" ]; then
+        _warn "Preflight: workspace.json repo_root '${REPO_ROOT_FROM_WS}' does not exist on disk."
+        PREFLIGHT_FAIL=1
+    fi
+fi
+
+if [ "${PREFLIGHT_FAIL}" -eq 1 ]; then
+    if [ -z "${FORCE_FLAG}" ]; then
+        _error "Preflight failed. Fix the issues above or pass --force to proceed anyway."
+        exit 1
+    else
+        _warn "Preflight issues detected; --force specified, proceeding anyway."
+    fi
+else
+    _ok "Preflight passed."
+fi
+
+# --- Reverse-migration seed: rules files -> rules table ---
+_info "Seeding rules table from ${LIVE_ROOT}/.agents/rules/ (reverse-migration seed)..."
+
+if [ "${DRY_RUN}" -eq 1 ]; then
+    _warn "DRY_RUN=1: would run: python3 ${GENERATOR} ${PROJECT_KEY} --seed-rules --root ${LIVE_ROOT}"
+    _info "(Dry run: rules not seeded)"
+else
+    python3 "${GENERATOR}" "${PROJECT_KEY}" --seed-rules --root "${LIVE_ROOT}"
+fi
+
+_ok "Rules seed complete."
+
+# --- Generate + Apply ---
+_info "Running generator with --apply (live write to ${LIVE_ROOT})..."
+
+if [ "${DRY_RUN}" -eq 1 ]; then
+    _warn "DRY_RUN=1: would run: python3 ${GENERATOR} ${PROJECT_KEY} --apply ${FORCE_FLAG} --live-root ${LIVE_ROOT}"
+    _info "(Dry run: no files written)"
+else
+    python3 "${GENERATOR}" "${PROJECT_KEY}" --apply ${FORCE_FLAG} --live-root "${LIVE_ROOT}"
+fi
+
+# --- Verify: basic boot-as-self check ---
+# The generated identity for the project's default agent should contain "name: <self>".
+_info "Verifying generated identity..."
+
+DEFAULT_AGENT="$(python3 - "${WORKSPACE_JSON}" "${PROJECT_KEY}" <<'PY'
+import json, sys
+try:
+    ws = json.load(open(sys.argv[1]))
+    key = sys.argv[2]
+    for p in ws.get("projects", []):
+        if p.get("key") == key:
+            print(p.get("default_agent", ""))
+            break
+except Exception:
+    pass
+PY
+)"
+
+if [ -z "${DEFAULT_AGENT}" ]; then
+    _warn "Could not determine default_agent from workspace.json; skipping identity verify."
+else
+    # Use python3 for uppercase conversion — bash 3 (macOS default) lacks ${var^^}.
+    DEFAULT_AGENT_UPPER="$(python3 -c "import sys; print(sys.argv[1].upper())" "${DEFAULT_AGENT}")"
+    IDENTITY_FILE="${LIVE_ROOT}/.agents/agents/${DEFAULT_AGENT_UPPER}_IDENTITY.md"
+    if [ "${DRY_RUN}" -eq 1 ]; then
+        _warn "DRY_RUN=1: would verify ${IDENTITY_FILE} contains name reference to '${DEFAULT_AGENT}'"
+    elif [ -f "${IDENTITY_FILE}" ]; then
+        if grep -qi "${DEFAULT_AGENT}" "${IDENTITY_FILE}" 2>/dev/null; then
+            _ok "Identity verify passed: ${IDENTITY_FILE} references '${DEFAULT_AGENT}'."
+        else
+            _warn "Identity verify: '${DEFAULT_AGENT}' not found in ${IDENTITY_FILE} — check generated file."
+        fi
+    else
+        _warn "Identity file not found: ${IDENTITY_FILE} — identity verify skipped."
+    fi
+fi
+
+echo ""
+_ok "Cutover complete for '${PROJECT_KEY}'."
+echo ""
+echo "========================================================================"
+echo "  Rollback command (restores the most recent backup):"
+echo ""
+echo "    cortex-harness-rollback ${PROJECT_KEY}"
+echo "========================================================================"

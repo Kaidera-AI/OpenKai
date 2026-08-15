@@ -1,0 +1,21 @@
+{
+  "name": "openkai",
+  "private": true,
+  "version": "0.0.0",
+  "description": "OpenKai — open-source agent harness + TUI with Cortex memory and fusion. Workspace root.",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}

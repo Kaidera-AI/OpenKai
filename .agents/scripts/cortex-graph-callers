@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# cortex-graph-callers — Who calls a function/class
+# Usage: cortex-graph-callers <function_name> [--repo <path>] [--max-results N]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+REPO_ROOT=""
+TARGET=""
+PATTERN="callers_of"
+MAX_RESULTS=100
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo)       REPO_ROOT="$2"; shift 2 ;;
+        --callees)    PATTERN="callees_of"; shift ;;
+        --imports)    PATTERN="imports_of"; shift ;;
+        --importers)  PATTERN="importers_of"; shift ;;
+        --tests)      PATTERN="tests_for"; shift ;;
+        --inheritors) PATTERN="inheritors_of"; shift ;;
+        --children)   PATTERN="children_of"; shift ;;
+        --max|--max-results) MAX_RESULTS="$2"; shift 2 ;;
+        --help|-h)    printf 'Usage: cortex-graph-callers <target> [--callees|--imports|--importers|--tests|--inheritors] [--repo <path>] [--max-results N]\n'; exit 0 ;;
+        *)            TARGET="$1"; shift ;;
+    esac
+done
+
+if [ -z "${TARGET}" ]; then
+    printf 'ERROR: function/class name required\n' >&2; exit 1
+fi
+
+if [ -z "${REPO_ROOT}" ]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+cortex_prepare_code_graph_env "${REPO_ROOT}"
+
+uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import query_graph
+r = query_graph(pattern='${PATTERN}', target='${TARGET}', repo_root='${REPO_ROOT}')
+if isinstance(r, str):
+    r = json.loads(r)
+results = r.get('results', [])
+shown = results[:${MAX_RESULTS}]
+print(f'${PATTERN}(${TARGET}): {len(results)} result(s)')
+if len(results) > ${MAX_RESULTS}:
+    print(f'  (showing first ${MAX_RESULTS}; use --max-results to adjust)')
+for item in shown:
+    loc = f\"{item.get('file_path', '?')}:{item.get('line_start', '?')}\"
+    print(f\"  {item.get('name', '?')} @ {loc}\")
+" 2>&1

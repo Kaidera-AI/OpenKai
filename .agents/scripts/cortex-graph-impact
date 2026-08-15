@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# cortex-graph-impact — Risk-scored impact of a git commit or diff
+# Usage: cortex-graph-impact [<commit>] [--repo <path>] [--max-results N]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+BASE="HEAD~1"
+REPO_ROOT=""
+MAX_RESULTS=100
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo)  REPO_ROOT="$2"; shift 2 ;;
+        --base)  BASE="$2"; shift 2 ;;
+        --max|--max-results) MAX_RESULTS="$2"; shift 2 ;;
+        --help|-h) printf 'Usage: cortex-graph-impact [--base <ref>] [--repo <path>] [--max-results N]\n'; exit 0 ;;
+        *)       BASE="$1"; shift ;;
+    esac
+done
+
+if [ -z "${REPO_ROOT}" ]; then
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+cortex_prepare_code_graph_env "${REPO_ROOT}"
+
+uv tool run --from better-code-review-graph python3 -c "
+import json
+from better_code_review_graph.tools import get_review_context
+r = get_review_context(max_depth=2, include_source=False, repo_root='${REPO_ROOT}', base='${BASE}')
+if isinstance(r, str):
+    r = json.loads(r)
+
+subgraph = r.get('subgraph', {})
+guidance = r.get('review_guidance', {})
+
+changed = len(subgraph.get('changed_nodes', []))
+impacted = len(subgraph.get('impacted_nodes', []))
+files = subgraph.get('impacted_files_count', 0)
+
+print(f'Impact: {changed} changed nodes -> {impacted} impacted ({files} files)')
+
+warnings = guidance.get('warnings', [])
+if warnings:
+    print('\\nWarnings:')
+    for w in warnings[:${MAX_RESULTS}]:
+        print(f'  ! {w}')
+    if len(warnings) > ${MAX_RESULTS}:
+        print(f'  (showing first ${MAX_RESULTS}; use --max-results to adjust)')
+
+untested = guidance.get('untested_functions', 0)
+if untested:
+    print(f'\\nUntested functions in change set: {untested}')
+" 2>&1

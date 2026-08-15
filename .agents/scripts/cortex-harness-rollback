@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# cortex-harness-rollback — restore a harness backup created by --apply.
+#
+# USAGE
+#   cortex-harness-rollback <project_key> [<backup-timestamp>]
+#
+#   With no timestamp: restores the MOST RECENT backup for the project.
+#   With a timestamp:  restores the named backup (e.g. 20260605T120000Z).
+#
+# Backups live under:
+#   <live_root>/.agents/.harness-backups/<project_key>-<UTC-timestamp>/
+#
+# The backup preserves relative paths so rollback can restore exactly.
+# Symlinks are stored as __symlink__:<target> text files and restored as
+# real symlinks.
+#
+# SAFETY
+#   - Only restores files that existed in the backup (files that did not
+#     exist before apply are NOT deleted — rollback does not clean up new files).
+#   - Set CORTEX_CUTOVER_LIVE_ROOT to override the repo root.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+_info()  { printf '\033[0;34m[rollback] %s\033[0m\n' "$*" >&2; }
+_ok()    { printf '\033[0;32m[rollback] %s\033[0m\n' "$*" >&2; }
+_warn()  { printf '\033[0;33m[rollback] WARN: %s\033[0m\n' "$*" >&2; }
+_error() { printf '\033[0;31m[rollback] ERROR: %s\033[0m\n' "$*" >&2; }
+
+usage() {
+    cat <<'EOF'
+Usage:
+  cortex-harness-rollback <project_key> [<backup-timestamp>]
+
+Arguments:
+  project_key        The Cortex project key (e.g. a project).
+  backup-timestamp   Optional UTC timestamp of the backup to restore
+                     (e.g. 20260605T120000Z). Defaults to the most recent.
+
+Environment:
+  CORTEX_CUTOVER_LIVE_ROOT   Override the target repo root (default: inferred).
+EOF
+    exit 0
+}
+
+PROJECT_KEY="${1:-}"
+BACKUP_TS="${2:-}"
+
+if [ -z "${PROJECT_KEY}" ] || [ "${PROJECT_KEY}" = "--help" ] || [ "${PROJECT_KEY}" = "-h" ]; then
+    usage
+fi
+
+LIVE_ROOT="${CORTEX_CUTOVER_LIVE_ROOT:-${REPO_ROOT}}"
+BACKUPS_DIR="${LIVE_ROOT}/.agents/.harness-backups"
+
+if [ ! -d "${BACKUPS_DIR}" ]; then
+    _error "No backups directory found at: ${BACKUPS_DIR}"
+    exit 1
+fi
+
+# --- find the backup to restore ---
+if [ -n "${BACKUP_TS}" ]; then
+    BACKUP_DIR="${BACKUPS_DIR}/${PROJECT_KEY}-${BACKUP_TS}"
+    if [ ! -d "${BACKUP_DIR}" ]; then
+        _error "Backup not found: ${BACKUP_DIR}"
+        _info "Available backups for '${PROJECT_KEY}':"
+        ls -1 "${BACKUPS_DIR}" 2>/dev/null | grep "^${PROJECT_KEY}-" | sort -r | head -20 >&2 || true
+        exit 1
+    fi
+else
+    # Most recent backup = alphabetically last (timestamps are ISO8601 UTC).
+    BACKUP_DIR="$(ls -1d "${BACKUPS_DIR}/${PROJECT_KEY}-"* 2>/dev/null | sort | tail -1 || true)"
+    if [ -z "${BACKUP_DIR}" ]; then
+        _error "No backups found for project '${PROJECT_KEY}' under: ${BACKUPS_DIR}"
+        exit 1
+    fi
+fi
+
+_info "Restoring from backup: ${BACKUP_DIR}"
+_info "Live root: ${LIVE_ROOT}"
+
+# --- restore each file in the backup ---
+RESTORED=0
+SYMLINKS=0
+SKIPPED=0
+
+while IFS= read -r -d '' BACKUP_FILE; do
+    REL="${BACKUP_FILE#${BACKUP_DIR}/}"
+    DEST="${LIVE_ROOT}/${REL}"
+
+    # Detect symlink sentinel files.
+    if python3 - "${BACKUP_FILE}" <<'PY'
+import sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        content = f.read()
+    sys.exit(0 if content.startswith("__symlink__:") else 1)
+except Exception:
+    sys.exit(1)
+PY
+    then
+        # Restore as a symlink.
+        SYMLINK_TARGET="$(python3 - "${BACKUP_FILE}" <<'PY'
+import sys
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    content = f.read().strip()
+print(content.split(":", 1)[1])
+PY
+)"
+        mkdir -p "$(dirname "${DEST}")"
+        if [ -e "${DEST}" ] || [ -L "${DEST}" ]; then
+            rm -f "${DEST}"
+        fi
+        ln -s "${SYMLINK_TARGET}" "${DEST}"
+        _info "  [symlink]  ${REL} -> ${SYMLINK_TARGET}"
+        SYMLINKS=$((SYMLINKS + 1))
+    else
+        # Restore as a regular file.
+        mkdir -p "$(dirname "${DEST}")"
+        cp -f "${BACKUP_FILE}" "${DEST}"
+        _info "  [restored] ${REL}"
+        RESTORED=$((RESTORED + 1))
+    fi
+done < <(find "${BACKUP_DIR}" -type f -print0 | sort -z)
+
+echo ""
+_ok "Rollback complete."
+_info "  Regular files restored: ${RESTORED}"
+_info "  Symlinks restored:      ${SYMLINKS}"
+_info "  Backup used:            ${BACKUP_DIR}"
+echo ""
+_info "Note: files that did NOT exist before --apply (i.e. new files) are not"
+_info "removed by rollback. Delete them manually if needed."

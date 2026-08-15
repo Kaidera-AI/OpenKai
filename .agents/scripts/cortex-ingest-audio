@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+# cortex-ingest-audio — transcribe or import an audio transcript into Cortex
+# Usage:
+#   cortex-ingest-audio <audio-path> [agent-name] [project]
+#     [--transcript-file <path>] [--whisper-model <name>] [--whisper-model-file <path>]
+#     [--source-type <type>] [--customer-id <uuid>] [--org-id <uuid>]
+#     [--section-context <text>] [--metadata-json '{"k":"v"}']
+#     [--edge-type <type> --target-type <type> --target-ref <ref>]
+#     [--dry-run]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/_cortex_lib.sh"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  cortex-ingest-audio <audio-path> [agent-name] [project] [options]
+
+Options:
+  --transcript-file <path>     Use an existing transcript instead of transcribing.
+  --whisper-model <name>       Model name for the `whisper` CLI. Default: base
+  --whisper-model-file <path>  GGML model file for `whisper-cli`.
+  --source-type <type>         Forwarded to cortex-ingest-artifact.
+  --customer-id <uuid>         Optional customer boundary ID.
+  --org-id <uuid>              Optional org ID.
+  --section-context <text>     Optional context for the audio artifact.
+  --metadata-json <json>       Merge extra metadata into the artifact row.
+  --edge-type <type>           Optional relationship type.
+  --target-type <type>         Required with --edge-type.
+  --target-ref <ref>           Required with --edge-type.
+  --dry-run                    Do everything except write to Cortex.
+
+Notes:
+  - If --transcript-file is omitted, this command will try the `whisper` CLI.
+  - If `whisper` is not installed, this command falls back to `whisper-cli` with a GGML model.
+  - This wrapper stores the audio file as the artifact source and the transcript as raw content.
+EOF
+    exit 1
+}
+
+if [[ $# -lt 1 ]]; then
+    usage
+fi
+
+AUDIO_PATH="$1"
+shift
+
+AGENT_NAME=""
+SESSION_PROJECT="${CORTEX_PROJECT}"
+TRANSCRIPT_FILE=""
+WHISPER_MODEL="base"
+WHISPER_MODEL_FILE=""
+SOURCE_TYPE=""
+CUSTOMER_ID=""
+ORG_ID=""
+SECTION_CONTEXT=""
+METADATA_JSON="{}"
+EDGE_TYPE=""
+TARGET_TYPE=""
+TARGET_REF=""
+DRY_RUN=0
+
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+    AGENT_NAME="$1"
+    shift
+fi
+
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+    SESSION_PROJECT="$1"
+    shift
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --transcript-file)
+            TRANSCRIPT_FILE="${2:-}"
+            shift 2
+            ;;
+        --whisper-model)
+            WHISPER_MODEL="${2:-}"
+            shift 2
+            ;;
+        --whisper-model-file)
+            WHISPER_MODEL_FILE="${2:-}"
+            shift 2
+            ;;
+        --source-type)
+            SOURCE_TYPE="${2:-}"
+            shift 2
+            ;;
+        --customer-id)
+            CUSTOMER_ID="${2:-}"
+            shift 2
+            ;;
+        --org-id)
+            ORG_ID="${2:-}"
+            shift 2
+            ;;
+        --section-context)
+            SECTION_CONTEXT="${2:-}"
+            shift 2
+            ;;
+        --metadata-json)
+            METADATA_JSON="${2:-}"
+            shift 2
+            ;;
+        --edge-type)
+            EDGE_TYPE="${2:-}"
+            shift 2
+            ;;
+        --target-type)
+            TARGET_TYPE="${2:-}"
+            shift 2
+            ;;
+        --target-ref)
+            TARGET_REF="${2:-}"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            echo "ERROR: Unknown flag: $1" >&2
+            usage
+            ;;
+    esac
+done
+
+if [[ ! -f "${AUDIO_PATH}" ]]; then
+    echo "ERROR: Audio file not found: ${AUDIO_PATH}" >&2
+    exit 1
+fi
+
+AUDIO_PATH="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${AUDIO_PATH}")"
+WORKSPACE_ROOT="$(cortex_workspace_root)"
+VENDOR_ROOT="$(cortex_vendor_root)"
+TMP_DIR=""
+cleanup() {
+    if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
+        rm -rf "${TMP_DIR}"
+    fi
+}
+trap cleanup EXIT
+
+if [[ -n "${WHISPER_MODEL_FILE}" ]]; then
+    if [[ ! -f "${WHISPER_MODEL_FILE}" ]]; then
+        echo "ERROR: Whisper model file not found: ${WHISPER_MODEL_FILE}" >&2
+        exit 1
+    fi
+    WHISPER_MODEL_FILE="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${WHISPER_MODEL_FILE}")"
+fi
+
+if [[ -n "${TRANSCRIPT_FILE}" ]]; then
+    if [[ ! -f "${TRANSCRIPT_FILE}" ]]; then
+        echo "ERROR: Transcript file not found: ${TRANSCRIPT_FILE}" >&2
+        exit 1
+    fi
+    TRANSCRIPT_FILE="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${TRANSCRIPT_FILE}")"
+    TRANSCRIPTION_TOOL="provided-transcript"
+else
+    TMP_DIR="$(mktemp -d /tmp/cortex-audio.XXXXXX)"
+
+    if command -v whisper >/dev/null 2>&1; then
+        whisper "${AUDIO_PATH}" \
+            --model "${WHISPER_MODEL}" \
+            --task transcribe \
+            --output_format txt \
+            --output_dir "${TMP_DIR}" >/dev/null
+
+        TRANSCRIPT_FILE="${TMP_DIR}/$(basename "${AUDIO_PATH%.*}").txt"
+        if [[ ! -f "${TRANSCRIPT_FILE}" ]]; then
+            echo "ERROR: whisper did not produce a transcript file." >&2
+            exit 1
+        fi
+        TRANSCRIPTION_TOOL="whisper:${WHISPER_MODEL}"
+    elif command -v whisper-cli >/dev/null 2>&1; then
+        if [[ -z "${WHISPER_MODEL_FILE}" ]]; then
+            for candidate in \
+                "${CORTEX_WHISPER_MODEL:-}" \
+                "${VENDOR_ROOT}/whisper/ggml-tiny.en.bin" \
+                "${WORKSPACE_ROOT}/.agents/data/vendor/whisper/ggml-tiny.en.bin" \
+                "${SCRIPT_DIR}/../data/vendor/whisper/ggml-tiny.en.bin" \
+                "/opt/homebrew/opt/whisper-cpp/share/whisper-cpp/for-tests-ggml-tiny.bin"; do
+                if [[ -n "${candidate}" && -f "${candidate}" ]]; then
+                    WHISPER_MODEL_FILE="${candidate}"
+                    break
+                fi
+            done
+        fi
+
+        if [[ -z "${WHISPER_MODEL_FILE}" ]]; then
+            echo "ERROR: No transcript provided and no GGML model file found for whisper-cli." >&2
+            echo "Use --transcript-file now, or pass --whisper-model-file <path>." >&2
+            exit 1
+        fi
+
+        OUTPUT_PREFIX="${TMP_DIR}/$(basename "${AUDIO_PATH}")"
+        whisper-cli \
+            -m "${WHISPER_MODEL_FILE}" \
+            -f "${AUDIO_PATH}" \
+            -otxt \
+            -of "${OUTPUT_PREFIX}" \
+            -np >/dev/null
+
+        TRANSCRIPT_FILE="${OUTPUT_PREFIX}.txt"
+        if [[ ! -f "${TRANSCRIPT_FILE}" ]]; then
+            echo "ERROR: whisper-cli did not produce a transcript file." >&2
+            exit 1
+        fi
+        TRANSCRIPTION_TOOL="whisper-cli:${WHISPER_MODEL_FILE}"
+    else
+        echo "ERROR: No transcript provided and no transcription CLI is installed." >&2
+        echo "Use --transcript-file now, or install whisper/openai-whisper or whisper-cpp." >&2
+        exit 1
+    fi
+fi
+
+FORWARD_METADATA_JSON="$(
+    python3 - "${METADATA_JSON}" "${AUDIO_PATH}" "${TRANSCRIPT_FILE}" "${TRANSCRIPTION_TOOL}" <<'PYEOF'
+import json
+import sys
+
+user_metadata = json.loads(sys.argv[1] or "{}")
+if not isinstance(user_metadata, dict):
+    raise SystemExit("metadata JSON must decode to an object")
+
+user_metadata.update(
+    {
+        "audio_source": sys.argv[2],
+        "transcript_source": sys.argv[3],
+        "transcription_tool": sys.argv[4],
+    }
+)
+print(json.dumps(user_metadata, ensure_ascii=False, sort_keys=True))
+PYEOF
+)"
+
+cmd=(
+    "${SCRIPT_DIR}/cortex-ingest-artifact"
+    "${AUDIO_PATH}"
+)
+
+if [[ -n "${AGENT_NAME}" ]]; then
+    cmd+=("${AGENT_NAME}")
+fi
+
+if [[ -n "${SESSION_PROJECT}" ]]; then
+    cmd+=("${SESSION_PROJECT}")
+fi
+
+cmd+=(
+    --modality audio
+    --extraction-method transcribed
+    --raw-content-file "${TRANSCRIPT_FILE}"
+    --metadata-json "${FORWARD_METADATA_JSON}"
+)
+
+if [[ -n "${SOURCE_TYPE}" ]]; then
+    cmd+=(--source-type "${SOURCE_TYPE}")
+fi
+if [[ -n "${CUSTOMER_ID}" ]]; then
+    cmd+=(--customer-id "${CUSTOMER_ID}")
+fi
+if [[ -n "${ORG_ID}" ]]; then
+    cmd+=(--org-id "${ORG_ID}")
+fi
+if [[ -n "${SECTION_CONTEXT}" ]]; then
+    cmd+=(--section-context "${SECTION_CONTEXT}")
+fi
+if [[ -n "${EDGE_TYPE}" ]]; then
+    cmd+=(--edge-type "${EDGE_TYPE}" --target-type "${TARGET_TYPE}" --target-ref "${TARGET_REF}")
+fi
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+    cmd+=(--dry-run)
+fi
+
+"${cmd[@]}"

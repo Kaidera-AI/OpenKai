@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# cortex-ingest-beat-sessions - ingest Beat PI/harness logs through Cortex API.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./_cortex_api.sh
+source "${SCRIPT_DIR}/_cortex_api.sh"
+
+exec python3 "${SCRIPT_DIR}/_cortex_beat_session_ingest.py" "$@"
