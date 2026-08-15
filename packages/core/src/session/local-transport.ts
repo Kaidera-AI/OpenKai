@@ -26,7 +26,11 @@ import type { Message, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Models } from "@earendil-works/pi-ai";
 import { mapAgentEvent } from "./events.js";
-import { readOnlyTools } from "./tools.js";
+import { gatedTools, readOnlyTools } from "./tools.js";
+import { SessionPermissionGate, type PermissionGate, type PushPermissionEvent } from "./permission-gate.js";
+
+/** The stripped `permission_request` payload the gate pushes onto the queue. */
+type PermissionRequestPayload = PushPermissionEvent extends (event: infer E) => void ? E : never;
 import type { SessionEvent, SessionTransport, SessionTransportOptions } from "./transport.js";
 
 /** Default model: cheap tool-calling OpenRouter model from the bundled catalogue. */
@@ -63,6 +67,14 @@ export interface InProcessTransportOptions extends SessionTransportOptions {
    * model context. Empty by default (fresh session).
    */
   initialMessages?: AgentMessage[];
+  /**
+   * P4b: enable the permission gate. When true the transport owns a
+   * {@link SessionPermissionGate} and exposes the gated tool set
+   * (write_file / edit_file / bash) behind {@link SessionTransport.respond}.
+   * When false (default — the `openkai chat` v1-compat path) the transport
+   * uses the read-only trio and `respond()` throws (no approval channel).
+   */
+  enablePermissions?: boolean;
 }
 
 /** A bounded async queue for bridging agent events to the consumer stream. */
@@ -117,6 +129,18 @@ export class InProcessTransport implements SessionTransport {
   private readonly queue: EventQueue;
   private seq = 0;
   private closed = false;
+  /** P4b permission gate (undefined when permissions are disabled — v1 path). */
+  private readonly gate: SessionPermissionGate | undefined;
+
+  /** Stamp + push a permission_request event onto the session queue. */
+  private emitPermissionEvent(e: PermissionRequestPayload): void {
+    this.seq += 1;
+    this.queue.push({
+      ...e,
+      sessionId: this.sessionId,
+      seq: this.seq,
+    } as SessionEvent);
+  }
 
   constructor(options: InProcessTransportOptions) {
     this.sessionId = options.sessionId;
@@ -143,12 +167,22 @@ export class InProcessTransport implements SessionTransport {
       );
     }
 
-    const tools = options.tools ?? readOnlyTools(options.cwd);
+    // P4b: the permission gate. When enabled, the transport owns a
+    // session-scoped gate and the gated tool set (write/edit/bash). When
+    // disabled (the v1-compat `openkai chat` path) the read-only trio is used
+    // and `respond()` is refused — exactly the "remote-approval banned"
+    // guarantee, now explicit instead of by absence (scope §2).
+    const enablePermissions = options.enablePermissions === true;
+    this.queue = new EventQueue();
+    this.gate = enablePermissions
+      ? new SessionPermissionGate({ cwd: options.cwd, pushEvent: (e) => this.emitPermissionEvent(e) })
+      : undefined;
+    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate) : readOnlyTools(options.cwd));
     const systemPrompt =
       options.systemPrompt ??
-      "You are OpenKai, a helpful coding assistant. Use the read-only tools (read_file, list_files, grep) when asked to inspect files.";
-
-    this.queue = new EventQueue();
+      (this.gate
+        ? "You are OpenKai, a helpful coding assistant. You can read files (read_file, list_files, grep), edit files (write_file, edit_file), and run shell commands (bash). File edits and shell commands require operator approval — if one is denied, report that to the user rather than retrying."
+        : "You are OpenKai, a helpful coding assistant. Use the read-only tools (read_file, list_files, grep) when asked to inspect files.");
 
     this.agent = new Agent({
       sessionId: options.sessionId,
@@ -199,6 +233,23 @@ export class InProcessTransport implements SessionTransport {
 
   abort(): void {
     this.agent.abort();
+  }
+
+  /**
+   * P4b: answer a {@link permission_request}. Implemented on this transport
+   * only — the trust boundary (scope §2). When the permission gate is not
+   * enabled (the v1-compat `openkai chat` path) this throws rather than
+   * silently no-op'ing, so the "remote approval injection banned" guarantee is
+   * an explicit refusal instead of being dropped.
+   */
+  respond(requestId: string, decision: "once" | "always" | "reject"): void {
+    if (!this.gate) {
+      throw new Error(
+        "respond() not supported: permission gate is not enabled on this transport. " +
+          "Approval injection is only available on the in-process, operator-input path (scope §2).",
+      );
+    }
+    this.gate.respond(requestId, decision);
   }
 
   async *events(): AsyncIterable<SessionEvent> {

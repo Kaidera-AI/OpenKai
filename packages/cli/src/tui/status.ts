@@ -27,6 +27,8 @@ export interface StatusState {
   persistMode: string;
   /** True while an assistant turn is streaming. */
   busy: boolean;
+  /** True while a gated tool is awaiting operator approval (P4b). */
+  awaitingApproval: boolean;
 }
 
 /** Default chrome state for a fresh session. */
@@ -38,6 +40,7 @@ export function defaultStatusState(modelId: string, sessionId: string, persistMo
     usage: null,
     persistMode,
     busy: false,
+    awaitingApproval: false,
   };
 }
 
@@ -47,8 +50,13 @@ function chip(label: string, value: string, width: number): string {
   return `${textToken.muted(label)} ${textToken.base(slot)}`;
 }
 
-/** Render the spinner chip — reflects true turn state (scope §3.3). */
-function spinnerChip(busy: boolean): string {
+/**
+ * Render the spinner chip — reflects true turn state (scope §3.3). P4b adds an
+ * `awaiting` state: a gated tool is paused for approval, so the chip shows
+ * "waiting on you", not "model thinking" (scope §5).
+ */
+function spinnerChip(busy: boolean, awaiting: boolean): string {
+  if (awaiting) return highlight.danger("◐ waiting");
   return busy ? highlight.base("◌ busy") : textToken.muted("○ idle");
 }
 
@@ -93,7 +101,7 @@ export class StatusLine implements Component {
       session,
       tokens,
       `p:${this.state.persistMode}`,
-      spinnerChip(this.state.busy),
+      spinnerChip(this.state.busy, this.state.awaitingApproval),
     ].join(` ${sep} `);
   }
 

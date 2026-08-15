@@ -33,6 +33,7 @@ import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
 import { parseSlashCommand, helpText } from "./commands.js";
+import { PermissionOverlay, type PermissionDecision } from "./permission.js";
 
 /** Run mode resolved at startup (A1). */
 export type RunMode = "local" | "managed";
@@ -269,6 +270,16 @@ export class TuiController {
         this.setBusy(false);
         void this.persistTurn();
         break;
+      case "permission_request":
+        // P4b: a gated tool is awaiting approval. Show the overlay; the
+        // spinner reflects "waiting on you" (scope §5). The overlay's
+        // onDecision calls transport.respond + hides the overlay. The event
+        // pump keeps draining (consume loop is concurrent — scope §9): the
+        // tool's execute() is blocked awaiting the matching respond() promise,
+        // and the operator's input path (a separate event-loop task) resolves
+        // it, so there is no shared turn and no deadlock.
+        this.showPermission(event);
+        break;
       case "session_end":
         this.transcript.applyEvent(event);
         this.setBusy(false);
@@ -303,6 +314,37 @@ export class TuiController {
     this.busy = busy;
     const state = this.status.currentState;
     this.status.update({ ...state, busy });
+  }
+
+  /** Mark the chrome as awaiting operator approval (P4b, scope §5). */
+  private setAwaitingApproval(awaiting: boolean): void {
+    const state = this.status.currentState;
+    this.status.update({ ...state, awaitingApproval: awaiting });
+  }
+
+  /** Show the permission overlay for a `permission_request` event (P4b §5). */
+  private showPermission(event: { requestId: string; toolName: string; rule: string; preview: import("@openkai/core").PermissionPreview }): void {
+    this.setAwaitingApproval(true);
+    const overlay = new PermissionOverlay({
+      toolName: event.toolName,
+      rule: event.rule,
+      preview: event.preview,
+      onDecision: (decision: PermissionDecision) => {
+        // Answer the request (trust boundary: InProcessTransport only, §2),
+        // drop the overlay, and return the spinner to "busy" — the tool resumes
+        // and the turn continues, settling at the next `turn_end`.
+        try {
+          this.transport.respond(event.requestId, decision);
+        } catch {
+          // Transport without a gate — already refused at emit time; ignore.
+        }
+        this.tui.hideOverlay();
+        this.setAwaitingApproval(false);
+        this.setBusy(true);
+        this.tui.requestRender();
+      },
+    });
+    this.tui.showOverlay(overlay, { anchor: "center", width: "60%" });
   }
 
   private updateUsage(usage: UsageSnapshot): void {

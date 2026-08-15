@@ -151,6 +151,10 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       systemPrompt: options.systemPrompt,
       cwd,
       initialMessages: replayMessages,
+      // P4b: enable the permission gate so the TUI exposes write_file /
+      // edit_file / bash behind an approval overlay (scope §4). `openkai chat`
+      // leaves this unset (v1-compat — no approval channel in print mode).
+      enablePermissions: true,
     });
   } catch (error) {
     if (error instanceof MissingApiKeyError) {

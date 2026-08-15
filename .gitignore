@@ -4,4 +4,5 @@ dist/
 .agents/.harness-backups/
 .DS_Store
 .openkai/
+.cortex/dashboards/
 dist-test/

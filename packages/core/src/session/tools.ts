@@ -1,10 +1,15 @@
 /**
- * P2 read-only tool trio (D-P2-5, scope §3).
+ * OpenKai tool set (P2 read trio + P4b gated mutation, scope §3 + §4).
  *
- * `read_file`, `list_files`, `grep` — enough for the loop to exercise
- * tool-calling end-to-end. No write/bash until the permission engine exists
- * (P4); the honest-posture rule (ADR §5.6) applies: execution is not
- * sandboxed, and P2 simply doesn't expose mutation.
+ * Read trio (`read_file`, `list_files`, `grep`) — unchanged since P2; enough for
+ * the loop to exercise tool-calling end-to-end without mutation.
+ *
+ * Gated trio (`write_file`, `edit_file`, `bash`) — added in P4b, each behind the
+ * {@link PermissionGate} + the pure {@link evaluate} policy engine. The P2 block
+ * ("no write/bash until the permission engine exists") is now satisfied. The
+ * honest-posture rule (ADR §5.6) still applies: execution is not sandboxed, and
+ * the gate is **consent, not a sandbox** — approving a `bash` call runs it
+ * unsandboxed. Denial is a refusal result returned to the model, not a throw.
  *
  * Each tool is an {@link AgentTool} backed by a typebox parameter schema. The
  * `execute` callback returns an {@link AgentToolResult} whose `content` is
@@ -12,11 +17,15 @@
  * structured payload for logs/UI.
  */
 
+import { exec } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
+import type { PermissionGate } from "./permission-gate.js";
+import type { PermissionPreview } from "./transport.js";
+import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
 function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
@@ -171,7 +180,179 @@ async function walkGrep(
   }
 }
 
-/** The full P2 read-only tool set, bound to a cwd. */
+/** The P2 read-only tool set, bound to a cwd (v1-compat path for `openkai chat`). */
 export function readOnlyTools(cwd: string): AgentTool<any>[] {
   return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd)];
+}
+
+// ── P4b gated tools: write_file / edit_file / bash (scope §4) ───────────────
+
+const WriteFileParams = Type.Object({
+  path: Type.String({ description: "File path relative to cwd." }),
+  content: Type.String({ description: "Full file content to write." }),
+});
+
+/** write_file: full-file write behind the permission gate; preview is a diff. */
+export function writeFileTool(
+  cwd: string,
+  gate: PermissionGate,
+): AgentTool<typeof WriteFileParams, unknown> {
+  return {
+    name: "write_file",
+    label: "Write File",
+    description:
+      "Write full content to a file (overwriting). Requires operator approval; the preview shows a diff against the current content.",
+    parameters: WriteFileParams,
+    async execute(_id, params): Promise<AgentToolResult<unknown>> {
+      const abs = resolvePreviewPath(cwd, params.path);
+      const outcome = await gate.request("write_file", _id, params, async () => {
+        const before = await readForPreview(abs);
+        return buildDiffPreview(abs, before, params.content);
+      });
+      if (outcome.decision === "reject") {
+        return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
+      }
+      try {
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await fs.writeFile(abs, params.content, "utf-8");
+        return textResult(`Wrote ${params.path} (${params.content.length} bytes)`, {
+          path: params.path,
+          bytes: params.content.length,
+        });
+      } catch (error) {
+        return textResult(`Error writing ${params.path}: ${error instanceof Error ? error.message : String(error)}`, params.path);
+      }
+    },
+  };
+}
+
+const EditFileParams = Type.Object({
+  path: Type.String({ description: "File path relative to cwd." }),
+  oldString: Type.String({ description: "Exact text to replace (must match once)." }),
+  newString: Type.String({ description: "Replacement text." }),
+});
+
+/** edit_file: exact-match single replace behind the gate; preview is the diff. */
+export function editFileTool(
+  cwd: string,
+  gate: PermissionGate,
+): AgentTool<typeof EditFileParams, unknown> {
+  return {
+    name: "edit_file",
+    label: "Edit File",
+    description:
+      "Replace one exact occurrence of oldString with newString in a file. Errors if the match is absent or ambiguous. Requires operator approval.",
+    parameters: EditFileParams,
+    async execute(_id, params): Promise<AgentToolResult<unknown>> {
+      const abs = resolvePreviewPath(cwd, params.path);
+      let before = "";
+      try {
+        before = await fs.readFile(abs, "utf-8");
+      } catch (error) {
+        return textResult(`Error reading ${params.path}: ${error instanceof Error ? error.message : String(error)}`, params.path);
+      }
+      const occurrences = countOccurrences(before, params.oldString);
+      if (occurrences === 0) {
+        return textResult(`Error: oldString not found in ${params.path}`, { path: params.path, matches: 0 });
+      }
+      if (occurrences > 1) {
+        return textResult(`Error: oldString is ambiguous (${occurrences} matches) in ${params.path}`, {
+          path: params.path,
+          matches: occurrences,
+        });
+      }
+      const after = before.replace(params.oldString, params.newString);
+      const outcome = await gate.request("edit_file", _id, params, async () => buildDiffPreview(abs, before, after));
+      if (outcome.decision === "reject") {
+        return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
+      }
+      try {
+        await fs.writeFile(abs, after, "utf-8");
+        return textResult(`Edited ${params.path} (${params.oldString.length} → ${params.newString.length} chars)`, {
+          path: params.path,
+          replaced: 1,
+        });
+      } catch (error) {
+        return textResult(`Error writing ${params.path}: ${error instanceof Error ? error.message : String(error)}`, params.path);
+      }
+    },
+  };
+}
+
+const BashParams = Type.Object({
+  command: Type.String({ description: "Shell command to execute (unsandboxed)." }),
+  cwd: Type.Optional(Type.String({ description: "Working directory (default: session cwd)." })),
+});
+
+/** bash: unsandboxed shell behind the gate (ADR §5.6 honest posture). */
+export function bashTool(
+  cwd: string,
+  gate: PermissionGate,
+): AgentTool<typeof BashParams, unknown> {
+  return {
+    name: "bash",
+    label: "Bash",
+    description:
+      "Run a shell command. Execution is NOT sandboxed (honest posture, ADR §5.6). Requires operator approval; the preview shows the command and resolved cwd.",
+    parameters: BashParams,
+    async execute(_id, params): Promise<AgentToolResult<unknown>> {
+      const runCwd = params.cwd ? resolvePreviewPath(cwd, params.cwd) : cwd;
+      const outcome = await gate.request("bash", _id, params, (): PermissionPreview => ({
+        kind: "command",
+        command: params.command,
+        cwd: runCwd,
+      }));
+      if (outcome.decision === "reject") {
+        return textResult(`Permission denied: ${outcome.reason}`, { command: params.command, denied: true });
+      }
+      try {
+        const { stdout, stderr } = await runShell(params.command, runCwd);
+        const out = (stdout + (stderr ? (stderr.endsWith("\n") ? stderr : stderr + "\n") : "")).trim();
+        return textResult(out.length > 0 ? out : "(no output)", {
+          command: params.command,
+          cwd: runCwd,
+          exitOk: true,
+        });
+      } catch (error) {
+        return textResult(`Error: ${error instanceof Error ? error.message : String(error)}`, {
+          command: params.command,
+          cwd: runCwd,
+          exitOk: false,
+        });
+      }
+    },
+  };
+}
+
+/** Count non-overlapping occurrences of `needle` in `hay`. */
+function countOccurrences(hay: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let i = 0;
+  while (true) {
+    const at = hay.indexOf(needle, i);
+    if (at === -1) break;
+    count += 1;
+    i = at + needle.length;
+  }
+  return count;
+}
+
+/** Promise wrapper around `node:child_process` exec with a byte cap. */
+function runShell(command: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    exec(command, { cwd, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+      if (err) reject(err);
+      else resolve({ stdout, stderr });
+    });
+  });
+}
+
+/**
+ * The full P4b tool set: read trio + gated write/edit/bash, bound to a cwd and
+ * a {@link PermissionGate}. Used by the TUI; `openkai chat` keeps
+ * {@link readOnlyTools} (v1-compat — no approval channel in print mode).
+ */
+export function gatedTools(cwd: string, gate: PermissionGate): AgentTool<any>[] {
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), writeFileTool(cwd, gate), editFileTool(cwd, gate), bashTool(cwd, gate)];
 }
