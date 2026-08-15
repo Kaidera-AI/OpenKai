@@ -1,17 +1,18 @@
 /**
  * .env autoload — dependency-free, CLI-bootstrap only.
  *
- * Reads `<cwd>/.env` if present and exports every KEY=VALUE into
- * process.env WITHOUT overriding variables that are already set (the real
- * environment always wins over the file). Supports comments (#), blank
- * lines, optional `export ` prefix, and single/double-quoted values.
+ * Loads `<cwd>/.env` first, then `~/.openkai/.env` as a user-global
+ * fallback (so provider keys work outside the project checkout). Real
+ * environment variables always win over file values; the cwd file wins
+ * over the global one. Supports comments (#), blank lines, optional
+ * `export ` prefix, and single/double-quoted values.
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
-export function loadDotEnv(cwd: string = process.cwd()): void {
-  const file = path.join(cwd, ".env");
+function loadFile(file: string): void {
   if (!existsSync(file)) return;
 
   let text: string;
@@ -44,4 +45,9 @@ export function loadDotEnv(cwd: string = process.cwd()): void {
       process.env[key] = value;
     }
   }
+}
+
+export function loadDotEnv(cwd: string = process.cwd()): void {
+  loadFile(path.join(homedir(), ".openkai", ".env"));
+  loadFile(path.join(cwd, ".env")); // project-local wins: loaded last, env wins
 }
