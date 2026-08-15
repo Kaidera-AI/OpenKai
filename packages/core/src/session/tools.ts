@@ -187,6 +187,15 @@ export function readOnlyTools(cwd: string): AgentTool<any>[] {
 
 // ── P4b gated tools: write_file / edit_file / bash (scope §4) ───────────────
 
+/**
+ * Hooks fired around gated mutations. `beforeMutation` runs AFTER approval,
+ * BEFORE the mutation — the shadow-git snapshot seam (Inc 05). Hook failures
+ * are swallowed by the caller: undo must never block an approved mutation.
+ */
+export interface MutationHooks {
+  beforeMutation?: (tool: string, summary: string) => Promise<void>;
+}
+
 const WriteFileParams = Type.Object({
   path: Type.String({ description: "File path relative to cwd." }),
   content: Type.String({ description: "Full file content to write." }),
@@ -196,6 +205,7 @@ const WriteFileParams = Type.Object({
 export function writeFileTool(
   cwd: string,
   gate: PermissionGate,
+  hooks?: MutationHooks,
 ): AgentTool<typeof WriteFileParams, unknown> {
   return {
     name: "write_file",
@@ -213,6 +223,9 @@ export function writeFileTool(
         return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
       }
       try {
+        if (hooks?.beforeMutation) {
+          await hooks.beforeMutation("write_file", params.path).catch(() => undefined);
+        }
         await fs.mkdir(path.dirname(abs), { recursive: true });
         await fs.writeFile(abs, params.content, "utf-8");
         return textResult(`Wrote ${params.path} (${params.content.length} bytes)`, {
@@ -236,6 +249,7 @@ const EditFileParams = Type.Object({
 export function editFileTool(
   cwd: string,
   gate: PermissionGate,
+  hooks?: MutationHooks,
 ): AgentTool<typeof EditFileParams, unknown> {
   return {
     name: "edit_file",
@@ -267,6 +281,9 @@ export function editFileTool(
         return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
       }
       try {
+        if (hooks?.beforeMutation) {
+          await hooks.beforeMutation("edit_file", params.path).catch(() => undefined);
+        }
         await fs.writeFile(abs, after, "utf-8");
         return textResult(`Edited ${params.path} (${params.oldString.length} → ${params.newString.length} chars)`, {
           path: params.path,
@@ -288,6 +305,7 @@ const BashParams = Type.Object({
 export function bashTool(
   cwd: string,
   gate: PermissionGate,
+  hooks?: MutationHooks,
 ): AgentTool<typeof BashParams, unknown> {
   return {
     name: "bash",
@@ -306,6 +324,9 @@ export function bashTool(
         return textResult(`Permission denied: ${outcome.reason}`, { command: params.command, denied: true });
       }
       try {
+        if (hooks?.beforeMutation) {
+          await hooks.beforeMutation("bash", params.command).catch(() => undefined);
+        }
         const { stdout, stderr } = await runShell(params.command, runCwd);
         const out = (stdout + (stderr ? (stderr.endsWith("\n") ? stderr : stderr + "\n") : "")).trim();
         return textResult(out.length > 0 ? out : "(no output)", {
@@ -353,6 +374,6 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
  * a {@link PermissionGate}. Used by the TUI; `openkai chat` keeps
  * {@link readOnlyTools} (v1-compat — no approval channel in print mode).
  */
-export function gatedTools(cwd: string, gate: PermissionGate): AgentTool<any>[] {
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), writeFileTool(cwd, gate), editFileTool(cwd, gate), bashTool(cwd, gate)];
+export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks): AgentTool<any>[] {
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }

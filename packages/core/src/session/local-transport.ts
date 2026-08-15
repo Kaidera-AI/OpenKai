@@ -27,6 +27,8 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Models } from "@earendil-works/pi-ai";
 import { mapAgentEvent } from "./events.js";
 import { gatedTools, readOnlyTools } from "./tools.js";
+import type { MutationHooks } from "./tools.js";
+import { ShadowGit } from "../undo/shadow.js";
 import { SessionPermissionGate, type PermissionGate, type PushPermissionEvent } from "./permission-gate.js";
 
 /** The stripped `permission_request` payload the gate pushes onto the queue. */
@@ -131,6 +133,7 @@ export class InProcessTransport implements SessionTransport {
   private closed = false;
   /** P4b permission gate (undefined when permissions are disabled — v1 path). */
   private readonly gate: SessionPermissionGate | undefined;
+  private readonly shadow: ShadowGit | undefined;
 
   /** Stamp + push a permission_request event onto the session queue. */
   private emitPermissionEvent(e: PermissionRequestPayload): void {
@@ -177,7 +180,17 @@ export class InProcessTransport implements SessionTransport {
     this.gate = enablePermissions
       ? new SessionPermissionGate({ cwd: options.cwd, pushEvent: (e) => this.emitPermissionEvent(e) })
       : undefined;
-    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate) : readOnlyTools(options.cwd));
+    // Inc 05: shadow-git undo. Snapshots fire after approval, before every
+    // gated mutation (write/edit/bash), via the MutationHooks seam.
+    this.shadow = this.gate ? new ShadowGit(options.cwd) : undefined;
+    const mutationHooks: MutationHooks | undefined = this.shadow
+      ? {
+          beforeMutation: async (tool, summary) => {
+            await this.shadow?.snapshot(`before ${tool}: ${summary.slice(0, 120)}`);
+          },
+        }
+      : undefined;
+    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, mutationHooks) : readOnlyTools(options.cwd));
     const systemPrompt =
       options.systemPrompt ??
       (this.gate
@@ -264,5 +277,20 @@ export class InProcessTransport implements SessionTransport {
     if (this.closed) return;
     this.closed = true;
     this.queue.close();
+  }
+
+  /**
+   * Undo the most recent gated mutation: restore the work tree to the
+   * previous shadow snapshot. Throws when permissions are disabled (no
+   * shadow repo exists) or there is nothing to undo.
+   */
+  async undoLastMutation(): Promise<string> {
+    if (!this.shadow) {
+      throw new Error(
+        "undo requires the permission gate (shadow-git tracks gated mutations only)",
+      );
+    }
+    const restored = await this.shadow.undo();
+    return restored.sha;
   }
 }
