@@ -25,7 +25,7 @@
 
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { highlight, markdownTheme, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
+import { highlight, markdownTheme, rolePill, text as textToken, toolBorder } from "./theme.js";
 
 /** One rendered line's max length for previews (kept short for cards). */
 const PREVIEW_LEN = 120;
@@ -98,7 +98,7 @@ function extractResultText(result: unknown, isError: boolean): string[] {
 
 /** Block kinds the transcript renders. */
 type Block =
-  | { kind: "user"; text: string; comp: Markdown }
+  | { kind: "user"; text: string; comp: Markdown | Text }
   | { kind: "assistant"; text: string; comp: Markdown }
   | { kind: "thinking"; text: string; revealed: boolean; comp: Text }
   | { kind: "notice"; text: string; comp: Text }
@@ -133,7 +133,9 @@ export class Transcript implements Component {
 
   /** Add a user message block at the top of a turn. */
   addUserMessage(text: string): void {
-    const comp = new Markdown(`**You**\n\n${text}`, 1, 0, markdownTheme);
+    // Dim marker, not a shouty bold label — the operator's own text needs no
+    // emphasis, the model's output does.
+    const comp = new Text(`${textToken.dim("You")}\n\n${text}`, 1, 0);
     this.blocks.push({ kind: "user", text, comp });
   }
 
@@ -349,11 +351,10 @@ export class Transcript implements Component {
     const lines: string[] = [];
     for (const block of this.blocks) {
       const rendered = block.comp.render(width);
-      if (block.kind === "assistant" || block.kind === "btw") {
-        for (const line of rendered) lines.push(surface["2"](line));
-      } else {
-        for (const line of rendered) lines.push(line);
-      }
+      // Assistant/btw blocks render clean — the role pill carries identity;
+      // a full-width background strip per line reads as a selection, not a
+      // message (world-class pass 2026-08-16).
+      for (const line of rendered) lines.push(line);
       lines.push("");
     }
     return lines;
