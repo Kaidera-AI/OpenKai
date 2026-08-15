@@ -27,6 +27,9 @@ function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
 /** Resolve a path against the tool's cwd, refusing traversal escapes. */
 function resolveWithin(cwd: string, input: string): string {
   const resolved = path.resolve(cwd, input);
+  if (resolved !== cwd && !resolved.startsWith(cwd + path.sep)) {
+    throw new Error(`path escapes working directory: ${input}`);
+  }
   return resolved;
 }
 
