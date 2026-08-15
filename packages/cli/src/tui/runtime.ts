@@ -46,6 +46,8 @@ import {
   isFocusOut,
 } from "./attention.js";
 import { FrecencyHistory } from "./stash.js";
+import { playBrandAnimation } from "./brand.js";
+import { CLI_VERSION } from "../version.js";
 import { providerKeyStatus, resolveProvider } from "../providers.js";
 
 /** Options for {@link runTui}. */
@@ -139,6 +141,8 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       return { code: 1, next: { kind: "quit" } };
     }
   }
+  // An empty replay list is not a replay — fresh sessions get the brand mark.
+  const replay = replayMessages.length > 0 ? replayMessages : undefined;
 
   let checkpoint: CortexCheckpoint | undefined;
   if (runMode.mode === "managed" && runMode.cortex) {
@@ -178,6 +182,9 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   }
 
   const terminal = new ProcessTerminal();
+  // First-run brand moment: animated Kaidera mark + OpenKai wordmark, once
+  // ever, before the alt-screen app takes over (droid bar).
+  await playBrandAnimation(CLI_VERSION);
   const tui = new TuiAltScreen(terminal, true);
   const manager = installKeymap();
 
@@ -209,7 +216,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     persistMode: runMode.persistMode,
     store,
     checkpoint,
-    replayMessages,
+    replayMessages: replay,
     sessionsRoot,
     agentName: agent,
     notifier,

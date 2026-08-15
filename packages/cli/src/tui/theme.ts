@@ -98,6 +98,20 @@ export const highlight = {
 /** Muted left border for tool cards (scope §3.1 muted-left-border blocks). */
 export const toolBorder = (t: string): string => fg256(t, C.toolBorder);
 
+/**
+ * Brand ramp (first-run splash animation): a cyan→violet sweep used ONLY by
+ * the boot animation. Kept here so the token rule ("theme is the only colour
+ * source") covers the brand moment too.
+ */
+export const BRAND_RAMP = [
+  51, 45, 39, 75, 111, 147, 183, 182, 176, 171, 165, 129,
+] as const;
+
+/** Tint text with the ramp colour at `step` (wraps). */
+export function brandTint(text: string, step: number): string {
+  return fg256(text, BRAND_RAMP[step % BRAND_RAMP.length]!);
+}
+
 /** Spinner glyph styled with the highlight accent. */
 export const spinner = (t: string): string => highlight.base(t);
 
