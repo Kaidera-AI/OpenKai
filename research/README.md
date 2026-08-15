@@ -54,6 +54,7 @@ Baseline dedupe: this round deliberately excludes anything already mined in `doc
 
 ## 6. Change log
 
+- 2026-08-15 — P2 scoped: `2026-08-15-p2-agent-loop-scope.md` — single-lane agent loop (adopt `@earendil-works/pi-agent-core@0.84.2`, OpenRouter lane), session persistence (pi JSONL v3 tree + idempotent `/sessions/ingest` checkpoints, OK-4), transport abstraction (`SessionTransport` + field-addressed deltas, OK-3). Execution dispatched to bob@openkai via the KOS automatic-handoff lane.
 - 2026-08-14 — Index opened. Round 1: six findings files + ADR (kai, six parallel research agents; all sources fetched live, licences verified MIT).
 - 2026-08-14 — ADR **ratified by CTO** (D1–D5, see ADR §8.1). Round 1.5 opened: Factory droid TUI-design + harness-structure research (R1-5).
 - 2026-08-14 — Round 1.5 **landed**: `2026-08-14-factory-droid-findings.md`. ADR amended: OK-5 rewritten (droid design bar: token discipline, one interaction grammar, clean-by-default transcript, `/btw`, bash-mode glyph, background fork receipts, `tui-test` adopted); OK-3 amended (one documented session contract); OK-8 amended (droid dual-channel auto-upgrade with rollback + kill-switch + witness verification; single `.openkai/` config namespace; Claude-Code/opencode ecosystem import strategy).
