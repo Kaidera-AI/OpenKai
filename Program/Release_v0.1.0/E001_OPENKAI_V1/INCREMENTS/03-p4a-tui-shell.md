@@ -6,3 +6,5 @@
 **Deliverable:** pi-tui alt-screen app (`packages/cli/src/tui/`: app/transcript/composer/status/theme/commands/keymap); `openkai` / `openkai tui` entry; droid token theme as only colour source; one interaction grammar; Ctrl+O density; status chrome; run modes (standalone-local / KOS-managed, ren A1); session resume from the v3 tree.
 **Acceptance:** build/typecheck green; golden-frame + event-mapping tests green (pi-tui headless + pi-ai faux provider — `@factory/tui-test` is unpublished, corrected in scope); mode matrix evidence; chat/events unregressed.
 **Scope:** `research/2026-08-15-p4-tui-scope.md`.
+
+**Security:** E001 gate applies — `scripts/security-audit.sh` green + cole Strix-pattern review of the new surface (SECURITY.md).

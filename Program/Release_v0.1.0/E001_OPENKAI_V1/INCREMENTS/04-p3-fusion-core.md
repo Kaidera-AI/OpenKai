@@ -11,3 +11,5 @@
 - `openkai fuse` CLI (print mode).
 **Acceptance:** offline tests (faux provider): attribution enforcement, RED-baseline enforcement, verbatim feedback, cap-halt; one live fused run artifact when a key is present; build/typecheck green.
 **Scope:** `research/2026-08-15-p3-fusion-scope.md`.
+
+**Security:** E001 gate applies — `scripts/security-audit.sh` green + cole Strix-pattern review of the new surface (SECURITY.md).

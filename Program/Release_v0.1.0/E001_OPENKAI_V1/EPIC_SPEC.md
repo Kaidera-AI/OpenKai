@@ -54,6 +54,7 @@ Per ADR §5: no forks of omp/pi; no ruflo meta-harness posture; no Cortex storag
 ## 6. Review gates
 
 - **Increment close:** owner returns handoff with evidence → kai verifies against acceptance → merge → work-product receipt.
+- **Security gate (every increment, no exceptions):** `scripts/security-audit.sh` green + cole's Strix-pattern white-box review of the increment's new attack surface (`SECURITY.md`). Critical/high findings close before acceptance.
 - **Protocol changes:** ren (CPO) review before implementation (A2).
 - **Sprint close:** beat updates `Program/PROGRESS.md`, re-baselines dates, posts the burndown.
-- **v1 release gate:** kai + ren joint sign-off; quill docs walkthrough passes on a clean machine.
+- **v1 release gate:** kai + ren joint sign-off; quill docs walkthrough passes on a clean machine; full deep-scan per SECURITY.md §3.
