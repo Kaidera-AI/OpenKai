@@ -9,7 +9,7 @@
 
  ⤷ thinking…                                                                    
 
- Assistant                                                                      
+ [OPENKAI]                                                                      
                                                                                 
  Hello, OpenKai!                                                                
 
@@ -20,11 +20,11 @@
 
  ⤷ thinking…                                                                    
 
- Assistant                                                                      
+ [OPENKAI]                                                                      
                                                                                 
  Done.                                                                          
 
 ────────────────────────────────────────────────────────────────────────────────
                                                                                 
 ────────────────────────────────────────────────────────────────────────────────
- m:chat · faux-1 · 01TESTGO · 168t · p:local · ○ idle                           
+ [OPENKAI] · faux-1 · 01TESTGO · 168t · p:local · ○ idle                        

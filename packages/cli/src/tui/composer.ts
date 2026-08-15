@@ -2,9 +2,11 @@
  * Composer (scope §4 `composer.ts`) — Editor wiring.
  *
  * Wraps a pi-tui {@link Editor}: Enter submits (via the Editor's built-in
- * `tui.input.submit`), `onSubmit` fires the controller; double-Esc clears the
- * draft (scope §3.5; single Esc is the first press of the pair, third-Esc
- * rewind menu is P4b). Prompt history is appended on submit (frecency is P4b).
+ * `tui.input.submit`), `onSubmit` fires the controller. Prompt history is
+ * appended on submit; frecency-ranked recall seeding is owned by the
+ * controller (scope §1.4) which calls {@link Editor.addToHistory} in ranked
+ * order at startup. {@link Composer.prefill} inserts a slash command prefix
+ * (used by the palette's `/btw` / `/resume` actions, scope §1.3).
  */
 
 import { Editor } from "@earendil-works/pi-tui";
@@ -53,6 +55,15 @@ export class Composer {
   /** Insert text at the cursor (used by `/resume <id>` command expansion). */
   insert(text: string): void {
     this.editor.insertTextAtCursor(text);
+  }
+
+  /**
+   * Replace the draft with a prefix (e.g. `/btw ` from the palette, scope §1.3)
+   * so the operator types the argument and submits. Clears first so the prefix
+   * is the only content.
+   */
+  prefill(prefix: string): void {
+    this.editor.setText(prefix);
   }
 
   /** Submitted-prompt history (frecency ordering is P4b; here: append order). */

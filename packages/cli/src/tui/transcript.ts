@@ -2,11 +2,20 @@
  * Transcript renderer (scope §4 `transcript.ts`).
  *
  * Holds an ordered list of blocks — user messages, assistant messages,
- * thinking sections, and tool cards — and renders them to lines. Text deltas
- * append to the current assistant message's Markdown block (re-render block,
- * not screen); thinking deltas buffer into a collapsed-by-default section
- * revealed by the density toggle (Ctrl+O); `tool_call` opens a card,
- * `tool_result` settles it (args summary + result preview, truncated).
+ * thinking sections, tool cards, btw side-channel blocks, and notices — and
+ * renders them to lines. Text deltas append to the current assistant message's
+ * Markdown block (re-render block, not screen); thinking deltas buffer into a
+ * collapsed-by-default section revealed by the density toggle (Ctrl+O);
+ * `tool_call` opens a card, `tool_result` settles it (args summary + result
+ * preview, truncated).
+ *
+ * P4b (scope §1.2 + §1.5) adds:
+ *  - **per-agent identity**: the assistant header is a coloured `[AGENT]` pill
+ *    ({@link rolePill}) instead of `**Assistant**`, so each persona reads as a
+ *    distinct block. The operator stays `**You**`.
+ *  - **`/btw` side channel**: a `btw` block renders the side question header +
+ *    streams the answer as a **system-marked block** (not a user turn, scope
+ *    §1.5). The block kind is `btw`, never `assistant`/`user`.
  *
  * Block model is addressed by {@link SessionEvent} fields: a `delta` carries
  * `field` (`text`|`thinking`) + `partId`; the renderer routes it to the
@@ -16,7 +25,7 @@
 
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import { markdownTheme, surface, text as textToken, toolBorder, highlight } from "./theme.js";
+import { highlight, markdownTheme, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
 
 /** One rendered line's max length for previews (kept short for cards). */
 const PREVIEW_LEN = 120;
@@ -43,6 +52,7 @@ type Block =
   | { kind: "assistant"; text: string; comp: Markdown }
   | { kind: "thinking"; text: string; revealed: boolean; comp: Text }
   | { kind: "notice"; text: string; comp: Text }
+  | { kind: "btw"; question: string; text: string; comp: Markdown }
   | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result: unknown | null; isError: boolean; settled: boolean; comp: Text };
 
 /** A muted left-border prefix for tool cards (scope §3.1). */
@@ -58,14 +68,18 @@ function toolPrefix(): string {
  */
 export class Transcript implements Component {
   private blocks: Block[] = [];
-  /** Index of the live assistant block (the one receiving deltas). */
   private liveAssistant: number | null = null;
-  /** Index of the live thinking block (paired with the live assistant). */
   private liveThinking: number | null = null;
-  /** Open tool cards by toolCallId → block index. */
+  /** Index of the live btw block (the `/btw` side channel, scope §1.5). */
+  private liveBtw: number | null = null;
   private openTools = new Map<string, number>();
-  /** Thinking density: false = collapsed (default, scope §3.3), true = shown. */
   private thinkingRevealed = false;
+  /** Agent name for the assistant identity pill (scope §1.2). */
+  private readonly agentName: string;
+
+  constructor(agentName = "openkai") {
+    this.agentName = agentName;
+  }
 
   /** Add a user message block at the top of a turn. */
   addUserMessage(text: string): void {
@@ -80,19 +94,34 @@ export class Transcript implements Component {
   addNotice(lines: string | string[]): void {
     const body = Array.isArray(lines) ? lines.join("\n") : lines;
     const comp = new Text(
-      body
-        .split("\n")
-        .map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`)
-        .join("\n"),
+      body.split("\n").map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`).join("\n"),
       1,
       0,
     );
     this.blocks.push({ kind: "notice", text: body, comp });
   }
 
+  /**
+   * Open a `/btw` side-channel block (scope §1.5): the question header
+   * (amber `⤷ btw:` + muted question) + a streaming answer region. The answer
+   * streams here — no `user`/`assistant` block is created, so it never reads
+   * as a user turn. Returns immediately; the controller then prompts the model.
+   */
+  beginBtwTurn(question: string): void {
+    const comp = new Markdown(this.btwBody(question, ""), 1, 0, markdownTheme);
+    this.blocks.push({ kind: "btw", question, text: "", comp });
+    this.liveBtw = this.blocks.length - 1;
+  }
+
+  /** Render a btw block's markdown (header + streaming answer). */
+  private btwBody(question: string, text: string): string {
+    const header = `${highlight.attention("⤷ btw:")} ${textToken.muted(question)}`;
+    return text.length > 0 ? `${header}\n\n${text}` : header;
+  }
+
   /** Replay a settled assistant message (session resume — no live streaming). */
   replayAssistant(text: string): void {
-    const comp = new Markdown(`**Assistant**\n\n${text}`, 1, 0, markdownTheme);
+    const comp = new Markdown(`${rolePill(this.agentName)}\n\n${text}`, 1, 0, markdownTheme);
     this.blocks.push({ kind: "assistant", text, comp });
   }
 
@@ -132,8 +161,9 @@ export class Transcript implements Component {
   }): void {
     switch (event.kind) {
       case "connected":
-        // A new turn is starting — ensure a live assistant block exists.
-        this.beginAssistantTurn();
+        // A new turn is starting — but in btw mode the btw block already
+        // exists and is the streaming target, so do not open an assistant turn.
+        if (this.liveBtw === null) this.beginAssistantTurn();
         break;
       case "delta": {
         if (event.field === "text") this.appendText(event.delta ?? "");
@@ -149,46 +179,49 @@ export class Transcript implements Component {
       case "turn_end":
         this.liveAssistant = null;
         this.liveThinking = null;
+        this.liveBtw = null;
         break;
       case "session_end":
         this.liveAssistant = null;
         this.liveThinking = null;
+        this.liveBtw = null;
         break;
       default:
         break;
     }
   }
 
-  /** Begin a new assistant turn block (called on `connected`). */
+  /** Begin a new assistant turn block (called on `connected`, unless btw). */
   private beginAssistantTurn(): void {
-    // A paired thinking block, collapsed by default.
     const thinkComp = new Text(this.thinkingLine(""), 1, 0);
-    const thinkBlock: Block = {
-      kind: "thinking",
-      text: "",
-      revealed: this.thinkingRevealed,
-      comp: thinkComp,
-    };
+    const thinkBlock: Block = { kind: "thinking", text: "", revealed: this.thinkingRevealed, comp: thinkComp };
     this.blocks.push(thinkBlock);
     this.liveThinking = this.blocks.length - 1;
-    // The assistant markdown block.
     const comp = new Markdown("", 1, 0, markdownTheme);
     const block: Block = { kind: "assistant", text: "", comp };
     this.blocks.push(block);
     this.liveAssistant = this.blocks.length - 1;
   }
 
-  /** Append a text delta to the live assistant block (re-render block only). */
+  /** Append a text delta to the live block (btw side channel or assistant). */
   private appendText(delta: string): void {
+    if (this.liveBtw !== null) {
+      const block = this.blocks[this.liveBtw]!;
+      if (block.kind !== "btw") return;
+      block.text += delta;
+      block.comp.setText(this.btwBody(block.question, block.text));
+      return;
+    }
     if (this.liveAssistant === null) this.beginAssistantTurn();
     const block = this.blocks[this.liveAssistant!]!;
     if (block.kind !== "assistant") return;
     block.text += delta;
-    block.comp.setText(block.text.length > 0 ? `**Assistant**\n\n${block.text}` : "");
+    block.comp.setText(block.text.length > 0 ? `${rolePill(this.agentName)}\n\n${block.text}` : "");
   }
 
-  /** Append a thinking delta to the live thinking block. */
+  /** Append a thinking delta to the live thinking block (suppressed in btw mode). */
   private appendThinking(delta: string): void {
+    if (this.liveBtw !== null) return; // keep the btw block clean (no thinking)
     if (this.liveThinking === null) this.beginAssistantTurn();
     const block = this.blocks[this.liveThinking!]!;
     if (block.kind !== "thinking") return;
@@ -214,16 +247,7 @@ export class Transcript implements Component {
   /** Open a tool card (muted left-border). */
   private openTool(toolCallId: string, toolName: string, args: unknown): void {
     const comp = new Text(this.renderToolCard(toolName, args, null, false), 1, 0);
-    const block: Block = {
-      kind: "tool",
-      toolCallId,
-      toolName,
-      args,
-      result: null,
-      isError: false,
-      settled: false,
-      comp,
-    };
+    const block: Block = { kind: "tool", toolCallId, toolName, args, result: null, isError: false, settled: false, comp };
     this.blocks.push(block);
     this.openTools.set(toolCallId, this.blocks.length - 1);
   }
@@ -258,15 +282,12 @@ export class Transcript implements Component {
     const lines: string[] = [];
     for (const block of this.blocks) {
       const rendered = block.comp.render(width);
-      // Assistant blocks get a surface-2 background so they read as raised
-      // blocks; tool cards are borderless (the left border is the visual
-      // signal). User + thinking blocks are unadorned.
-      if (block.kind === "assistant") {
+      if (block.kind === "assistant" || block.kind === "btw") {
         for (const line of rendered) lines.push(surface["2"](line));
       } else {
         for (const line of rendered) lines.push(line);
       }
-      lines.push(""); // blank line between blocks
+      lines.push("");
     }
     return lines;
   }
