@@ -136,6 +136,11 @@ export class CortexClient {
     return this.getJson<CortexProject>(`/projects/${encodeURIComponent(key)}`);
   }
 
+  /** `GET /sessions/ingested-ids` — ingested session ids for this project (mode-matrix evidence). */
+  getIngestedIds(): Promise<{ project: string; ids: string[] }> {
+    return this.getJson<{ project: string; ids: string[] }>("/sessions/ingested-ids");
+  }
+
   /**
    * `GET /events` — live SSE bridge over the project's `team_events`.
    *

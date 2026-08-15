@@ -9,6 +9,8 @@ export {
   type SessionStoreOptions,
   SessionStore,
   defaultRoot,
+  listSessions,
+  readSessionMessages,
 } from "./session-store.js";
 export {
   type CortexCheckpointOptions,

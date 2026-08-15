@@ -4,3 +4,4 @@ dist/
 .agents/.harness-backups/
 .DS_Store
 .openkai/
+dist-test/

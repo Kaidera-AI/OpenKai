@@ -11,12 +11,20 @@
  * reads `OPENROUTER_API_KEY` from the environment; the transport fails fast
  * with a named error ({@link MissingApiKeyError}) if that key is missing
  * before any network call.
+ *
+ * P4: the transport accepts an injected {@link Models} collection + provider
+ * id so the TUI (and the faux-provider golden-frame tests) can drive the same
+ * loop without forking it. When `models` is supplied the OpenRouter key
+ * requirement is skipped — the caller owns provider auth (faux needs none).
+ * The default path (no `models`) is unchanged so `openkai chat` is
+ * byte-for-byte identical.
  */
 
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentMessage, AgentTool, AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Message, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import type { Models } from "@earendil-works/pi-ai";
 import { mapAgentEvent } from "./events.js";
 import { readOnlyTools } from "./tools.js";
 import type { SessionEvent, SessionTransport, SessionTransportOptions } from "./transport.js";
@@ -36,6 +44,25 @@ export class MissingApiKeyError extends Error {
 export interface InProcessTransportOptions extends SessionTransportOptions {
   /** Override the read-only tool set (default: the P2 trio bound to cwd). */
   tools?: AgentTool<any>[];
+  /**
+   * Injected {@link Models} collection (P4). When supplied the transport
+   * resolves the model from it via `getModel(provider, modelId)` and skips
+   * the OpenRouter API-key requirement — the caller owns provider auth. Used
+   * by the faux-provider golden-frame tests; production paths leave this
+   * unset and use the built-in OpenRouter catalogue.
+   */
+  models?: Models;
+  /**
+   * Provider id to resolve the model under (default: `openrouter`). Ignored
+   * when `models` is unset. Pairs with {@link models} for injection.
+   */
+  provider?: string;
+  /**
+   * Prior message entries to seed the agent transcript (P4 session resume).
+   * Passed to the Agent as `initialState.messages` so a resumed session has
+   * model context. Empty by default (fresh session).
+   */
+  initialMessages?: AgentMessage[];
 }
 
 /** A bounded async queue for bridging agent events to the consumer stream. */
@@ -95,17 +122,23 @@ export class InProcessTransport implements SessionTransport {
     this.sessionId = options.sessionId;
     this.modelId = options.modelId;
 
-    if (!process.env.OPENROUTER_API_KEY) {
+    const provider = options.provider ?? "openrouter";
+    const injected = options.models !== undefined;
+
+    // Register every built-in provider (incl. OpenRouter) and resolve the
+    // requested model from the OpenRouter catalogue at runtime. When an
+    // injected `models` collection is supplied (P4), use it as-is and skip the
+    // OpenRouter key requirement — the caller owns provider auth.
+    const models = options.models ?? builtinModels();
+
+    if (!injected && provider === "openrouter" && !process.env.OPENROUTER_API_KEY) {
       throw new MissingApiKeyError("OpenRouter", "OPENROUTER_API_KEY");
     }
 
-    // Register every built-in provider (incl. OpenRouter) and resolve the
-    // requested model from the OpenRouter catalogue at runtime.
-    const models = builtinModels();
-    const model = models.getModel("openrouter", options.modelId);
+    const model = models.getModel(provider, options.modelId);
     if (!model) {
       throw new Error(
-        `Model "${options.modelId}" not found in the OpenRouter catalogue. ` +
+        `Model "${options.modelId}" not found under provider "${provider}". ` +
           `Check the id (e.g. "${DEFAULT_MODEL_ID}") or the OPENKAI_MODEL / --model flag.`,
       );
     }
@@ -123,6 +156,7 @@ export class InProcessTransport implements SessionTransport {
       initialState: {
         systemPrompt,
         model: model as Model<"openai-completions">,
+        messages: options.initialMessages ?? [],
         thinkingLevel: "off",
         tools,
       },
