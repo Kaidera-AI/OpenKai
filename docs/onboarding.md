@@ -32,7 +32,7 @@ openrouter key: MISSING (chat/fuse need it)
 local state (/Users/you/project):
   sessions: 0
   fusion runs: 0
-  shadow-git: present
+  shadow-git: none
 
 upgrade:
   channel: npm (pinned at build time, never self-mutates)
