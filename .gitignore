@@ -8,3 +8,5 @@ dist/
 packages/cli/bin/
 dist-test/
 .env
+.env.*
+!.env.example
