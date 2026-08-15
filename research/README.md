@@ -54,6 +54,7 @@ Baseline dedupe: this round deliberately excludes anything already mined in `doc
 
 ## 6. Change log
 
+- 2026-08-15 — P4 slice A scoped: `2026-08-15-p4-tui-scope.md` — the pi-tui TUI shell (alt-screen, transcript, composer, status chrome) on the P2 SessionTransport; droid design tokens from day one; ren's four CPO amendments folded in (run modes, session protocol v1, retention boundary, TUI sequencing repair). Correction: `@factory/tui-test` is unpublished (npm 404) — frame tests use pi-tui headless rendering + pi-ai `faux` provider. Execution dispatched to bob@openkai.
 - 2026-08-15 — P2 scoped: `2026-08-15-p2-agent-loop-scope.md` — single-lane agent loop (adopt `@earendil-works/pi-agent-core@0.84.2`, OpenRouter lane), session persistence (pi JSONL v3 tree + idempotent `/sessions/ingest` checkpoints, OK-4), transport abstraction (`SessionTransport` + field-addressed deltas, OK-3). Execution dispatched to bob@openkai via the KOS automatic-handoff lane.
 - 2026-08-14 — Index opened. Round 1: six findings files + ADR (kai, six parallel research agents; all sources fetched live, licences verified MIT).
 - 2026-08-14 — ADR **ratified by CTO** (D1–D5, see ADR §8.1). Round 1.5 opened: Factory droid TUI-design + harness-structure research (R1-5).
