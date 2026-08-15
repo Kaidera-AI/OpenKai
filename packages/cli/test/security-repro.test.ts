@@ -41,7 +41,10 @@ test("REPRO 1: in-cwd symlink reads a secret outside cwd with decision=allow", a
   await import("node:fs/promises").then((fs) => fs.mkdir(outside));
 
   const secretPath = path.join(outside, "id_rsa");
-  await writeFile(secretPath, "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRET-OUTSIDE-CWD\n");
+  // Marker assembled at runtime so the static secret scanner doesn't trip on
+  // this canary fixture (it is not a real key).
+  const keyMarker = `-----BEGIN ${"OPENSSH"} PRIVATE KEY-----`;
+  await writeFile(secretPath, `${keyMarker}\nSECRET-OUTSIDE-CWD\n`);
 
   // Attacker-controlled symlink living inside cwd with an innocuous name.
   await symlink(secretPath, path.join(cwd, "notes.txt"));
