@@ -8,11 +8,12 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build -w @openkai/core && npm run build -w @openkai/cli",
+    "typecheck": "npm run typecheck -w @openkai/core && npm run typecheck -w @openkai/cli",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
   },
   "devDependencies": {
+    "@types/node": "^24.3.0",
     "typescript": "~5.9.2"
   },
   "engines": {
