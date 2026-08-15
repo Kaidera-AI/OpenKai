@@ -27,6 +27,7 @@ import {
 
 import {
   AttributionError,
+  FusionBandit,
   GateHaltError,
   WeakGateError,
   fuse,
@@ -287,6 +288,7 @@ test("policy: bare invocation takes the cheap single-model default", () => {
 });
 
 test("report: summariseFusionRuns aggregates per pair with gate rate and tokens", async () => {
+
   const role = (r: "architect" | "builder", modelId: string, totalTokens: number) => ({
     role: r,
     modelId,
@@ -319,4 +321,78 @@ test("report: summariseFusionRuns aggregates per pair with gate rate and tokens"
   assert.equal(s?.totalTokens, 60);
   assert.equal(s?.avgWallMs, 1000);
   assert.match(s?.pair ?? "", /architect:m-a/);
+});
+
+// ── Inc 07 partial: Beta-bandit routing (per-complexity priors) ────────────
+
+const banditRun = (
+  runId: string,
+  modelId: string,
+  outcome: "pass" | "halt",
+): FusionRunRecord => ({
+  runId,
+  ts: new Date().toISOString(),
+  task: "t",
+  gated: true,
+  roles: [
+    { role: "architect", modelId, text: "", usage: undefined, latencyMs: 1 },
+  ],
+  synthesis: undefined,
+  gate: { rounds: 1, outcome },
+  wallMs: 1,
+});
+
+test("bandit: per-bucket evidence beats a globally-better model in its weak bucket", () => {
+  // model-strong wins high-complexity 8/8; model-weak loses high 1/7 but
+  // dominates low 8/8. In the high bucket the bandit must route strong.
+  const records: FusionRunRecord[] = [
+    ...Array.from({ length: 8 }, (_, i) => banditRun(`s-high-${i}`, "model-strong", "pass")),
+    ...Array.from({ length: 7 }, (_, i) => banditRun(`w-high-${i}`, "model-weak", "halt")),
+    banditRun("w-high-p", "model-weak", "pass"),
+    ...Array.from({ length: 8 }, (_, i) => banditRun(`w-low-${i}`, "model-weak", "pass")),
+  ];
+  const bandit = new FusionBandit(42);
+  bandit.update(records, (r) => (r.runId.includes("high") ? "high" : "low"));
+  const high = bandit.recommend("high", ["model-strong", "model-weak"]);
+  assert.equal(high?.modelId, "model-strong");
+  assert.match(high?.reason ?? "", /bucket evidence 8 pass/);
+});
+
+test("bandit: failures in one bucket do not suppress a model globally", () => {
+  // model-x fails low constantly but is undefeated in high.
+  const records: FusionRunRecord[] = [
+    ...Array.from({ length: 6 }, (_, i) => banditRun(`x-low-${i}`, "model-x", "halt")),
+    ...Array.from({ length: 6 }, (_, i) => banditRun(`x-high-${i}`, "model-x", "pass")),
+  ];
+  const bandit = new FusionBandit(7);
+  bandit.update(records, (r) => (r.runId.includes("high") ? "high" : "low"));
+  const high = bandit.recommend("high", ["model-x"]);
+  assert.match(high?.reason ?? "", /bucket evidence 6 pass \/ 0 fail/);
+});
+
+test("bandit: unseen bucket starts from the global posterior, not zero", () => {
+  const records = Array.from({ length: 5 }, (_, i) =>
+    banditRun(`m-${i}`, "model-y", "pass"),
+  );
+  const bandit = new FusionBandit(3);
+  bandit.update(records, () => "low");
+  const rec = bandit.recommend("medium", ["model-y"]);
+  assert.match(rec?.reason ?? "", /global evidence 5 pass.*bucket unseen/);
+});
+
+test("bandit: ungated runs carry no verdict and are ignored", () => {
+  const ungated: FusionRunRecord = {
+    runId: "u1",
+    ts: new Date().toISOString(),
+    task: "t",
+    gated: false,
+    roles: [{ role: "builder", modelId: "model-z", text: "", usage: undefined, latencyMs: 1 }],
+    synthesis: undefined,
+    gate: { rounds: 0, outcome: "not-run" },
+    wallMs: 1,
+  };
+  const bandit = new FusionBandit(1);
+  bandit.update([ungated], () => "low");
+  const rec = bandit.recommend("low", ["model-z"]);
+  assert.match(rec?.reason ?? "", /no evidence/);
 });

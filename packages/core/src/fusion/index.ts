@@ -13,6 +13,12 @@ export {
 export type { GatedFusionOptions, RunGateOptions } from "./gate.js";
 export { runPanel } from "./panel.js";
 export type { PanelOptions } from "./panel.js";
+export { FusionBandit, loadBandit, xorshift32 } from "./bandit.js";
+export type {
+  BanditArm,
+  BanditRecommendation,
+  ComplexityBucket,
+} from "./bandit.js";
 export {
   DEFAULT_FUSION_POLICY,
   shouldFuse,
