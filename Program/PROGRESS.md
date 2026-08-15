@@ -30,7 +30,7 @@
 | 05 | P4b TUI ergonomics wave | bob (permission engine), kai (undo) | partial | permission engine + protocol v2 (`eed8574`, accepted `d812fd3d`); shadow-git undo (`9107416`); remainder: attention, identity, palette, stash |
 | 06 | P3b fusion telemetry + invocation policy | kai | done | `ae1f71d`; 34/34 tests; CLI smoke green |
 | 07 | P5 learning loops (decay, mining, bandit) | kai | partial | bandit routing (`382c430`); remainder KOS-side (decay SQL, mining jobs) + tool cache — needs cross-project scope |
-| 08 | P6 v1 packaging + release | unassigned | planned | depends 03+05 |
+| 08 | P6 v1 packaging + release | kai | partial | LICENSE + publish metadata + proven bun binaries + `openkai info` (`d391ac4`, `62fde5f`); remainder: auto-upgrade channel, install runbook, KOS lane driver (cole), docs walkthrough (quill) |
 
 Increment files: `Release_v0.1.0/E001_OPENKAI_V1/INCREMENTS/`.
 
