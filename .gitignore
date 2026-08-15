@@ -3,3 +3,4 @@ dist/
 *.tsbuildinfo
 .agents/.harness-backups/
 .DS_Store
+.openkai/
