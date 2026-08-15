@@ -14,6 +14,7 @@ import type { TeamEventEntry } from "@openkai/core";
 import { runChat, type ChatOptions } from "./chat.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";
 import { runFusionAdvise, runFusionReport } from "./fusion.js";
+import { runInfo } from "./info.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runUndo } from "./undo.js";
@@ -54,6 +55,10 @@ Commands:
   undo [--history]       Restore the work tree to the previous shadow-git
                          snapshot (taken before every gated mutation);
                          --history lists snapshots newest-first.
+
+  info                   Self-check: version, run mode (standalone-local /
+                         KOS-managed), Cortex reachability, model catalogue,
+                         local state counts. Always exits 0.
 
   events --print         Stream live Cortex team events (GET /events SSE) to
                          stdout, one TSV row per event:
@@ -334,6 +339,14 @@ async function main(argv: string[]): Promise<number> {
   // ── undo (Inc 05) ────────────────────────────────────────────────────────
   if (command === "undo") {
     return runUndo({ history: getBool("--history") });
+  }
+
+  // ── info (Inc 08) ────────────────────────────────────────────────────────
+  if (command === "info") {
+    return runInfo({
+      project: getString("--project"),
+      api: getString("--api"),
+    });
   }
 
   // ── events (P1, unchanged) ─────────────────────────────────────────────────
