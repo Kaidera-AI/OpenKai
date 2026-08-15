@@ -26,7 +26,7 @@
 | 01 | P1 scaffold + Cortex client | kai | done | `79a1a99`; handoff `6d70f337` accepted; e2e markers 202370/202374 |
 | 02 | P2 agent loop + session persistence | bob | done | `2bbdd45` + `8700a41`; handoff `1d3e0f0c` accepted; ingest proof |
 | 03 | P4a TUI shell | bob | done | merge `20fbf5c` (+ review fix `dba681d`); 20/20 tests; handoff `071ef6c5` completed |
-| 04 | P3 fusion core (FU-3/FU-1/FU-2) | kai | in development | scope `research/2026-08-15-p3-fusion-scope.md` |
+| 04 | P3 fusion core (FU-3/FU-1/FU-2) | kai | done | `c832e1c`; 28/28 tests offline-green; decision logged |
 | 05 | P4b TUI ergonomics wave | bob (permission engine) | partial | permission engine + protocol v2 landed early (`eed8574` scope, accepted `d812fd3d`); remainder: undo, attention, identity, palette |
 | 06 | P3b fusion telemetry + invocation policy | unassigned | planned | depends 04 |
 | 07 | P5 learning loops (decay, mining, bandit) | unassigned | planned | depends 06 |
