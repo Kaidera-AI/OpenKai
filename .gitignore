@@ -5,4 +5,5 @@ dist/
 .DS_Store
 .openkai/
 .cortex/dashboards/
+packages/cli/bin/
 dist-test/

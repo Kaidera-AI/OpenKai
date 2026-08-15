@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { CortexClient, defaultFusionLogPath, readFusionRuns } from "@openkai/core";
+import { CLI_VERSION } from "./version.js";
 
 export interface InfoOptions {
   project?: string;
@@ -25,15 +26,25 @@ const countDirs = async (dir: string): Promise<number> => {
   }
 };
 
+const readVersion = async (): Promise<string> => {
+  try {
+    const pkg = JSON.parse(
+      await fs.readFile(new URL("../package.json", import.meta.url), "utf-8"),
+    ) as { version?: string };
+    return pkg.version ?? CLI_VERSION;
+  } catch {
+    // Standalone binary: package.json is not inside bun's virtual fs.
+    return CLI_VERSION;
+  }
+};
+
 export async function runInfo(options: InfoOptions): Promise<number> {
-  const pkg = JSON.parse(
-    await fs.readFile(new URL("../package.json", import.meta.url), "utf-8"),
-  ) as { version?: string };
+  const version = await readVersion();
 
   const project = options.project ?? process.env.CORTEX_PROJECT;
   const lines: string[] = [];
 
-  lines.push(`openkai ${pkg.version ?? "unknown"}`);
+  lines.push(`openkai ${version}`);
   lines.push(`node ${process.version} · ${process.platform}/${process.arch}`);
   lines.push("");
 
