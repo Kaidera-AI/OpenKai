@@ -1,0 +1,26 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+**Do not open a public issue for security vulnerabilities.** Use GitHub's private vulnerability reporting (Security tab → "Report a vulnerability") on this repository. Include a reproducer — a script, command sequence, or failing test that demonstrates the issue.
+
+You will get an acknowledgement within 72 hours and a triage verdict (severity + fix plan or reasoned dismissal) within 7 days.
+
+## Scope
+
+OpenKai is an agent harness: it runs shell commands, writes files, and talks to model providers **with the operator's own privileges, by design and with explicit operator consent**. Our permission engine is *consent, not a sandbox* — we say so plainly in the docs, and reports should treat that as the documented posture, not a finding.
+
+In scope as vulnerabilities:
+
+- **Permission bypass**: reaching `write_file`/`edit_file`/`bash` effects without an operator approval (path traversal past the cwd guard, deny-floor escape, rule-ordering tricks, approval-cache poisoning).
+- **Remote approval injection**: driving the approval channel from outside the local, in-process operator path.
+- **Secret exfiltration**: API keys or `.env` content landing in sessions, artifacts, logs, transcripts, or outbound payloads.
+- **Supply chain**: tampered upgrade manifests, downgrade/rollback-to-vulnerable paths, unsigned release channels.
+- **Terminal injection**: model- or server-supplied content escaping ANSI/OSC sanitisation into terminal control sequences.
+- **Cross-project leakage** in Cortex-managed mode: one project's memory readable from another.
+
+Out of scope (documented posture): the raw power of an *approved* `bash` call; social-engineering the operator into approving; issues in upstream pi-* packages (report those to `earendil-works/pi` — we pin and track).
+
+## Supported versions
+
+Pre-1.0: only the latest `main` and the most recent release receive fixes.
