@@ -20,7 +20,7 @@ When running within Kaidera OS, OpenKai is integrated into the project's infrast
 |---|---|---|
 | `CORTEX_PROJECT` | Defines the memory scope | `openkai` |
 | `CORTEX_API_URL` | The endpoint for Cortex memory | `http://localhost:8501` |
-| `OPENKAI_MODEL` | The default LLM for chat/TUI | `google/gemini-2.5-flash-lite` |
+| `OPENKAI_MODEL` | The default LLM for chat/TUI | `nvidia/nemotron-3-nano-30b-a3b:free` |
 
 To switch projects or API endpoints on the fly, use the CLI flags:
 ```bash

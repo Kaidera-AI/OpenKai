@@ -30,7 +30,7 @@ Runs a single-prompt agent turn over OpenRouter and streams the reply to stdout.
 - `--prompt <text>`: The user prompt for the turn.
 
 **Options:**
-- `--model <id>`: OpenRouter model id (default: `$OPENKAI_MODEL` or `google/gemini-2.5-flash-lite`).
+- `--model <id>`: OpenRouter model id (default: `$OPENKAI_MODEL` or `nvidia/nemotron-3-nano-30b-a3b:free`).
 - `--system-prompt <text>`: Override the system prompt.
 - `--quiet`: Suppress stderr diagnostics.
 

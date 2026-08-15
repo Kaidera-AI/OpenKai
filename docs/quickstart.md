@@ -19,7 +19,7 @@ OpenKai requires an LLM provider via OpenRouter.
 - `OPENROUTER_API_KEY`: Your OpenRouter API key.
 
 ### Optional Environment Variables
-- `OPENKAI_MODEL`: The default model to use (e.g., `google/gemini-2.5-flash-lite`).
+- `OPENKAI_MODEL`: Override the built-in default model (`nvidia/nemotron-3-nano-30b-a3b:free`).
 - `CORTEX_PROJECT`: The Cortex project scope (default: `openkai`).
 - `CORTEX_API_URL`: The Cortex API base URL (default: `http://localhost:8501`).
 

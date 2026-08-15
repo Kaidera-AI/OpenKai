@@ -18,10 +18,12 @@ After the Architect and Builder complete their tasks, OpenKai performs a **Synth
 By passing the `--gate` flag, you enable the gate-first validation loop. 
 
 In this mode:
-- The synthesis is passed through a **Judge** model.
-- The Judge validates the result against the original prompt and a set of baseline requirements.
-- If the Judge finds a failure (RED baseline), the synthesis is sent back for repair.
-- This loop repeats until the Judge approves or the `--max-rounds` cap (default 3) is reached.
+- The gate runs **before** the work, to prove it can fail. A baseline that is already
+  green proves nothing, so the run stops as a **WEAK GATE** rather than claiming success.
+- With a RED baseline established, the synthesis is passed through a **Judge** model.
+- On failure the Judge's verbatim feedback is fed back for repair.
+- This repeats until the gate passes or the `--max-rounds` cap (default 3) is reached,
+  which halts loudly as a **HALT** for triage.
 
 ## Usage Example
 
@@ -30,4 +32,12 @@ openkai fuse --prompt "Implement a secure auth middleware" --gate --max-rounds 5
 ```
 
 ## Exit Codes
-Fusion runs halt loudly. If the gate cap is reached without a validated synthesis, the command will exit with an error, signaling that the autonomous loop failed to converge on a valid solution.
+
+| Code | Meaning |
+|---|---|
+| `0` | Synthesis produced. With `--gate`, the gate also passed. |
+| `1` | `OPENROUTER_API_KEY` unset, a run error, or `--gate` ended in `weak-gate`/`halt`. |
+| `2` | A named model (`--architect-model`/`--builder-model`/`--judge-model`) is not in the OpenRouter catalogue. |
+
+Without `--gate` the gate outcome is `not-run` and a completed synthesis exits `0`.
+The gate verdict is printed to stdout as `══ GATE: … ══`.
