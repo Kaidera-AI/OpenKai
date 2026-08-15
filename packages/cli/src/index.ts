@@ -9,7 +9,7 @@
  *      `openkai sessions` lists the local session tree.
  */
 
-import { CortexClient } from "@openkai/core";
+import { CortexClient, DEFAULT_MODEL_ID } from "@openkai/core";
 import type { TeamEventEntry } from "@openkai/core";
 import { runChat, type ChatOptions } from "./chat.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";
@@ -48,7 +48,7 @@ Commands:
 Options:
   --prompt <text>        (chat) The user prompt for the turn.
   --model <id>           (chat) OpenRouter model id
-                         (default: $OPENKAI_MODEL or google/gemini-2.5-flash-lite).
+                         (default: $OPENKAI_MODEL or ${DEFAULT_MODEL_ID}).
   --system-prompt <text> (chat) Override the system prompt.
   --show <id>            (sessions) Show full entries for one session id.
   --session <id>        (tui) Resume a session by id.
