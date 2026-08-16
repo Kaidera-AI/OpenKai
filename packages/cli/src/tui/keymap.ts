@@ -38,6 +38,8 @@ declare module "@earendil-works/pi-tui" {
     "openkai.openPalette": true;
     /** Stash/pop the prompt draft (Ctrl+S), scope §1.4. */
     "openkai.stash": true;
+    /** In-product changelog (Ctrl+J). */
+    "openkai.changelog": true;
   }
 }
 
@@ -48,6 +50,7 @@ export const OPENKAI_KEYBINDINGS: KeybindingDefinitions = {
   "openkai.quit": { defaultKeys: "ctrl+c", description: "Quit the TUI (with confirm)" },
   "openkai.openPalette": { defaultKeys: "ctrl+k", description: "Open the command palette" },
   "openkai.stash": { defaultKeys: "ctrl+s", description: "Stash / pop the prompt draft" },
+  "openkai.changelog": { defaultKeys: "ctrl+j", description: "What changed (in-product changelog)" },
 };
 
 /**
@@ -90,6 +93,11 @@ export function isOpenPalette(data: string, manager: KeybindingsManager): boolea
 /** True if `data` is the Ctrl+S stash/pop (matches the installed keybinding). */
 export function isStash(data: string, manager: KeybindingsManager): boolean {
   return manager.matches(data, "openkai.stash");
+}
+
+/** True if `data` is the Ctrl+J changelog key. */
+export function isChangelog(data: string, manager: KeybindingsManager): boolean {
+  return manager.matches(data, "openkai.changelog");
 }
 
 /** True if `data` is a lone Escape key. */

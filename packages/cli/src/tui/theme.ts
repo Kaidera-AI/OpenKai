@@ -18,7 +18,7 @@
  */
 
 // ── 256-colour palette (stable, no truecolour dependency) ──────────────────
-const C = {
+const DARK = {
   surface1: 234, // near-black panel background
   surface2: 237, // raised block background
   surface3: 240, // card / chrome background
@@ -29,6 +29,29 @@ const C = {
   toolBorder: 241, // muted left border for tool cards
   attention: 220, // amber accent (focus-aware attention state)
 } as const;
+
+const LIGHT: Record<keyof typeof DARK, number> = {
+  surface1: 255,
+  surface2: 254,
+  surface3: 250,
+  text: 238,
+  textMuted: 242,
+  highlight: 32,
+  highlightDanger: 160,
+  toolBorder: 245,
+  attention: 166,
+};
+
+let C: Record<keyof typeof DARK, number> = { ...DARK };
+
+/** The active theme name. */
+export let themeName: "dark" | "light" = "dark";
+
+/** Switch the theme (dark | light). Every renderer reads C at call time. */
+export function setTheme(name: "dark" | "light"): void {
+  C = { ...(name === "light" ? LIGHT : DARK) };
+  themeName = name;
+}
 
 /**
  * Curated, distinct 256-colour hues for per-agent visual identity (scope §1.2).

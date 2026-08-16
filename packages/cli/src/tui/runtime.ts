@@ -38,6 +38,7 @@ import {
   isQuit,
   isOpenPalette,
   isStash,
+  isChangelog,
   DoubleEscDetector,
   RewindEscDetector,
 } from "./keymap.js";
@@ -323,6 +324,10 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     if (isToggleThinking(data, manager)) {
       const revealed = controller.toggleThinking();
       tui.flash(revealed ? "thinking: shown" : "thinking: hidden");
+      return { consume: true };
+    }
+    if (isChangelog(data, manager)) {
+      controller.openChangelog();
       return { consume: true };
     }
     if (escDetector.feed(data)) {

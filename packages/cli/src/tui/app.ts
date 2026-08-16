@@ -40,6 +40,8 @@ import { ModelPicker } from "./model-picker.js";
 import { runWelcome } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
+import { setTheme, themeName } from "./theme.js";
+import { changelogHead } from "./changelog.js";
 import { tipOfTheDay } from "./tips.js";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
@@ -332,6 +334,13 @@ export class TuiController {
       case "autonomy":
         this.cycleAutonomy(argument);
         break;
+      case "theme": {
+        const next = themeName === "dark" ? "light" : "dark";
+        setTheme(next);
+        this.transcript.addNotice(`theme: ${next} (restart paints every surface)`);
+        this.tui.requestRender();
+        break;
+      }
       case "welcome":
         this.transcript.addNotice("welcome: exiting to re-run setup — relaunch with `openkai`");
         this.tui.requestRender();
@@ -573,6 +582,27 @@ export class TuiController {
     this.effortSwitch.set(this.fast ? "off" : "medium");
     this.transcript.addNotice(this.fast ? "fast mode: on (effort off)" : "fast mode: off (effort medium)");
     this.tui.requestRender();
+  }
+
+  /** Ctrl+J — in-product changelog (droid's "what just changed"). */
+  openChangelog(): void {
+    const lines = changelogHead();
+    const palette = new CommandPalette({
+      items: lines.map((line, i) => ({
+        value: String(i),
+        label: line.replace(/^#+\s*/, ""),
+        description: "",
+      })),
+      onSelect: () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+      onCancel: () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    });
+    this.tui.showOverlay(palette, { anchor: "center", width: "64%", maxHeight: "70%" });
   }
 
   /** Third-Esc rewind menu (droid panic-key grammar): undo discoverable from Esc. */

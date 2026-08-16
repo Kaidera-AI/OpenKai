@@ -43,6 +43,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "fork", description: "Fork this session into a new branch; prints a paste-able resume receipt." },
   { name: "tree", description: "Show the session tree (branches by fork links)." },
   { name: "autonomy", description: "Cycle the autonomy axis: off/low/med/high.", argumentHint: "[level]" },
+  { name: "theme", description: "Toggle dark/light theme." },
   { name: "welcome", description: "Re-run the first-run setup (providers, model, memory)." },
   { name: "features", description: "List or toggle optional features (all on by default).", argumentHint: "[feature-key]" },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },
