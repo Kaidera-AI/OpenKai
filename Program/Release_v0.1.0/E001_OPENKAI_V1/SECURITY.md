@@ -66,6 +66,7 @@ shown to FAIL against the pre-fix source (see the control run below).
 | 22 | Secret exfiltration into sessions (verbatim + world-readable mode) | **HELD** — F7 fixed; span redaction at the write seam + 0700/0600 tree | `REPRO 7` (inverted) |
 | 23 | SSE frame injection / cursor forgery | **REVIEW-ONLY — no reproducer** | none — `parseSse` is spec-shaped (prefix fields, unknown fields ignored, no `eval`, no prototype sink); `event`/`id` trust is inherited from `cortex-api`, so the residual is endpoint trust, not a parser primitive |
 | 24 | Fusion prompt injection (role output → synthesiser/validator) | **NOT ATTACKED** | none — the panel/synthesis injection path (as distinct from gate consent, #21) still needs a pass; surface landed in `a41c76b` mid-review |
+| 25 | **Secret exfiltration into Cortex memory via `/sessions/ingest`** (the `cortex/` leg F7 named but the F7 fix did not cover) | **HELD** — F7b fixed; redaction moved to the wire seam | `REPRO 10` (inverted, with a passing shipped-path control) |
 
 #### Fixes landed (kai@openkai, 2026-08-16) — awaiting cole's certification
 
@@ -118,11 +119,52 @@ with `process.cwd()` instead of the tool cwd (wrong/leaky paths); `ShadowGit.und
 is lexical rather than canonical (unreachable today, inconsistent with the `09b56ce` standard);
 `grep` compiles a model-supplied `RegExp` (local ReDoS only).
 
-**Gate verdict for v0.01.001: pending cole's re-review (pass 4).** The six blocking findings
-are fixed with inverted reproducers and a failing control run; §4 bars the implementer from
-certifying their own fixes, so the verdict stays with cole. Row 24 (fusion panel/synthesis
-prompt injection) has still **never been attacked** and needs its own pass before release —
-it is a review action, not a fix, and remains outside this handoff's scope.
+#### Lead re-review of the fixes (kai@openkai, 2026-08-16) — pre-check, not certification
+
+Independently re-verified at `04406b6`, in a worktree with `@openkai/core` proved to resolve
+**inside the tree under review** (the hazard boxed above; `import.meta.resolve` checked before
+any test ran). Both directions reproduced from scratch rather than taken on report: source
+fixes reverted with the inverted tests kept → **98/106, exactly the 8 security tests failing**;
+fixes applied → **106/106**. `typecheck` clean, `security-audit.sh` PASSED.
+
+Because a fix that only satisfies its own reproducer is the failure mode this gate exists to
+catch, all six were re-attacked with **16 probes that deliberately avoid the committed tests**:
+floor-directory access through `read_file`/`list_files`/recursive `grep` and through a *symlink*
+whose target is a floor directory; a deep path and a case-variant directory (`.ENV/production`)
+through `evaluate`; `edit_file` refusals compared on the `details` object, not just the text,
+for both the floor and the outside-cwd/existence oracle; the CR/BS "rewrite what the operator
+reads" vector and a newline-injected fake chrome line rendered through the **real**
+`PermissionOverlay`; and `fuse()` with `gate: true` and no consent channel. **15/16 held.**
+
+The one miss became **F7b** (row 25) — fixed here, in-lane, since §4 bars only the certifying
+reviewer from fixing:
+
+- **F7b (MEDIUM, latent) — the `cortex/` leg of F7 was left open.** F7 was closed at
+  `SessionStore`'s JSONL write seam, which covers every entry shape written to the *file*. But
+  `CortexCheckpoint.record()` takes an `Entry[]` from anywhere and posts `messages[].content`
+  to `/sessions/ingest` — shared, durable team memory, and the leg §4 names *first*. It was
+  safe only by convention: both call sites (`chat.ts:171`, `tui/app.ts:563`) happen to feed it
+  `readEntries()`, re-reading the redacted file. The obvious "why re-read the whole file every
+  turn?" refactor reopens it silently. Same latent shape as F9, which was filed as blocking
+  while it too was unreachable — so it is filed rather than waved through. *Fix:* redaction
+  moved to `messageContent()`, the seam where content is lifted onto the wire, plus the `task`
+  field (an operator paste carries a key exactly as the `/btw` header carries an escape, F6c's
+  parity argument). `REPRO 10` asserts the seam **and** keeps the shipped path as a control:
+  with the fix reverted, (a) still passes and (b) fails — which is what localises the defect to
+  the seam rather than to today's callers.
+
+Residual, explicitly **not** fixed here (shape-matching is a blast-radius reducer, not a
+guarantee — the code says so at both sites): `redactSecrets`/`childEnv` match known provider
+token shapes and credential-ish NAMES, so a novel token format, or a credential embedded in an
+innocuously-named value such as `DATABASE_URL=postgres://user:pw@host`, passes through. §4's
+"secrets live only in `.env`" remains the actual control.
+
+**Gate verdict for v0.01.001: pending cole's re-review (pass 4).** Seven findings (six from
+pass 3 plus F7b) are fixed with inverted reproducers and failing control runs; §4 bars the
+implementer from certifying their own fixes, so the verdict stays with cole — the run above is
+a pre-check that hands cole a smaller surface, not a certification. Row 24 (fusion
+panel/synthesis prompt injection) has still **never been attacked** and needs its own pass
+before release — a review action, not a fix.
 
 ## 3. Deep scans (per release)
 

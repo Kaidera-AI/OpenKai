@@ -19,6 +19,8 @@ import {
   evaluateWithReason,
   readOnlyTools,
   gatedTools,
+  CortexCheckpoint,
+  CortexClient,
   SessionPermissionGate,
   SessionStore,
   ShadowGit,
@@ -790,4 +792,108 @@ test("REPRO 9: tool_call name/args and the btw header are sanitised", () => {
     !viaBtw.render(80).join("\n").includes("\x1b]52;"),
     "the btw question header is sanitised",
   );
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FINDING 7b (MEDIUM, latent) — kai's re-review of the F7 fix, 2026-08-16.
+//
+// F7 was closed by redacting at `SessionStore`'s single JSONL write seam. That
+// covers every entry shape written to the FILE — but `CortexCheckpoint` is a
+// second, independent consumer: `record()` accepts an `Entry[]` from anywhere
+// and ships `messages[].content` over the network to shared team memory.
+//
+// It is safe TODAY only by convention: both call sites (`chat.ts:171`,
+// `tui/app.ts:563`) feed it `await store.readEntries()`, re-reading the already
+// redacted file. Nothing in the type or the code says they must — the obvious
+// "why re-read the whole file every turn?" refactor reopens it silently, and
+// SECURITY.md §4 names Cortex memory FIRST. Same latent shape as F9, which was
+// filed as blocking while it too was unreachable.
+//
+// FIXED: redaction moved to `messageContent()`, the seam where content is
+// lifted onto the wire, so it holds regardless of where the entries came from.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** A checkpoint whose outbound request body the test can inspect. */
+function capturingCheckpoint(task = "probe") {
+  const box: { body?: string } = {};
+  const client = new CortexClient({
+    project: "openkai",
+    baseUrl: "http://127.0.0.1:1/api",
+    fetch: (async (_url: unknown, init: { body?: unknown }) => {
+      box.body = String(init?.body ?? "");
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch,
+  });
+  const checkpoint = new CortexCheckpoint({
+    client,
+    agent: "kai",
+    sessionId: "22222222-2222-7222-8222-222222222222",
+    sourcePath: "/tmp/session.jsonl",
+    provider: "openrouter",
+    modelId: "m",
+    cwd: process.cwd(),
+    task,
+  });
+  return { checkpoint, box };
+}
+
+test("REPRO 10: Cortex ingest redacts secrets at the wire seam, not by caller convention", async () => {
+  const SECRET = "sk-live-CORTEXINGEST-9f31c7";
+
+  // (a) The SHIPPED path — entries re-read from the redacted file. This passed
+  // before the fix too; it is the control that localises the defect to the seam.
+  const root = await mkdtemp(path.join(tmpdir(), "okrepro-ingest-"));
+  try {
+    const store = new SessionStore({ root, sessionId: "44444444-4444-7444-8444-444444444444" });
+    await store.ensure();
+    await store.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: `OPENROUTER_API_KEY=${SECRET}` }],
+      timestamp: 1,
+    } as never);
+    const shipped = capturingCheckpoint();
+    shipped.checkpoint.record(await store.readEntries());
+    await shipped.checkpoint.flushNow();
+    assert.ok(shipped.box.body, "the shipped path posts a payload");
+    assert.doesNotMatch(shipped.box.body!, /sk-live-CORTEXINGEST/, "shipped path: no secret on the wire");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+
+  // (b) The SEAM — in-memory entries, the refactor that bypasses the file.
+  // INVERTED: before the fix this shipped `sk-live-…` verbatim to Cortex.
+  const seam = capturingCheckpoint();
+  seam.checkpoint.record([
+    {
+      type: "message",
+      id: "e1",
+      seq: 1,
+      parentId: null,
+      timestamp: Date.now(),
+      message: {
+        role: "toolResult",
+        content: [{ type: "text", text: `OPENROUTER_API_KEY=${SECRET}` }],
+      },
+    } as never,
+  ]);
+  await seam.checkpoint.flushNow();
+  assert.ok(seam.box.body, "the seam posts a payload");
+  assert.doesNotMatch(seam.box.body!, /sk-live-CORTEXINGEST/, "seam: no secret on the wire");
+  assert.match(seam.box.body!, /\[redacted-secret\]/, "the span is replaced, not dropped");
+  assert.match(seam.box.body!, /OPENROUTER_API_KEY=/, "the rest of the turn survives");
+
+  // (c) The task field is the operator's prompt and crosses the same wire.
+  const viaTask = capturingCheckpoint(`debug this: OPENAI_API_KEY=${SECRET}`);
+  viaTask.checkpoint.record([
+    {
+      type: "message",
+      id: "e2",
+      seq: 1,
+      parentId: null,
+      timestamp: Date.now(),
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    } as never,
+  ]);
+  await viaTask.checkpoint.flushNow();
+  assert.doesNotMatch(viaTask.box.body!, /sk-live-CORTEXINGEST/, "task field: no secret on the wire");
 });
