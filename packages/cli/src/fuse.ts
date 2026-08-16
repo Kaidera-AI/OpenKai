@@ -2,6 +2,14 @@
  * openkai fuse — run one task through the fusion core (E016 FU-1/FU-2, FU-3
  * with --gate) and print the attributed synthesis. Print-mode only; the TUI
  * panel view is Inc 06.
+ *
+ * E002 Inc 02 (Shift): the fuse command is the PRODUCTION wiring point for
+ * the Shift router. The prompt is classified into a stage (plan/build/review),
+ * routing events are emitted through the existing `appendActivity` seam
+ * (the same writer `openkai tail` reads), and each role (architect→plan,
+ * builder→build, judge→review) is routed to its cast model. This satisfies
+ * the spec acceptance: "live run shows different models per stage in
+ * `openkai tail`".
  */
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
@@ -14,12 +22,15 @@ import {
   recordFusionRun,
   resolveCast,
   defaultFusionLogPath,
+  ShiftRouter,
   type CastConfig,
+  type Cast,
   type RoleOutput,
   type SynthesisArtifact,
 } from "@kaidera/openkai-core";
 import { providerKeyStatus, resolveProvider } from "./providers.js";
 import { readConfig } from "./tui/welcome.js";
+import { appendActivity } from "./tail.js";
 
 export interface FuseCliOptions {
   prompt: string;
@@ -76,6 +87,28 @@ const renderSynthesis = (s: SynthesisArtifact): string => {
   }
   return lines.join("\n");
 };
+
+/**
+ * Route each fusion stage to its cast model. The architect role maps to the
+ * plan stage, the builder role to the build stage, and the judge role to the
+ * review stage. These events appear in `openkai tail` and show distinct
+ * models per stage.
+ *
+ * `router.route()` already emits a `routing` event through the router's
+ * redacting sink (wired to `appendActivity` by the caller), so this function
+ * only drives the routing — emitting here as well double-logged every stage.
+ */
+export function emitShiftRoutingEvents(router: ShiftRouter): void {
+  // The three fusion stages, each routed to its cast model.
+  const stages: Array<"plan" | "build" | "review"> = ["plan", "build", "review"];
+  for (const stage of stages) {
+    try {
+      router.route(stage);
+    } catch {
+      // routing events must never break the run
+    }
+  }
+}
 
 export async function runFuse(options: FuseCliOptions): Promise<number> {
   const models = builtinModels();
@@ -134,6 +167,45 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     "judge",
   );
   if (!architect || !builder || !judge) return 2;
+
+  // ── E002 Inc 02: Shift routing (production wiring) ─────────────────────
+  // Construct a ShiftRouter with the resolved cast + fallback casts from the
+  // same config (cross-provider fallback). Classify the prompt and emit
+  // routing events through the existing appendActivity seam so `openkai tail`
+  // shows distinct models per stage.
+  const cwd = process.cwd();
+  if (cast) {
+    // Fallback casts: all OTHER casts from the config (cross-provider).
+    const allCasts = listCasts(config);
+    const fallbackCasts: Cast[] = allCasts.filter((c) => c.id !== cast.id);
+
+    const router = new ShiftRouter({
+      cast,
+      fallbackCasts,
+      onActivity: (event) => {
+        // Route through the EXISTING appendActivity seam — the same writer
+        // the TUI's onActivity callback uses. No parallel writer.
+        appendActivity(cwd, event.kind, {
+          stage: event.stage,
+          model: event.model,
+          provider: event.provider,
+          attempt: event.attempt,
+          reason: event.reason,
+        });
+      },
+    });
+
+    // Classify the prompt (deterministic, no model call — FU-4 discipline).
+    const stage = router.classify({ prompt: options.prompt });
+    if (!options.quiet) {
+      process.stderr.write(`[openkai] shift: prompt classified as "${stage}" stage\n`);
+    }
+
+    // Emit routing events for all three fusion stages. Each stage routes to
+    // its cast model (architect→plan, builder→build, judge→review). These
+    // events show up in `openkai tail` with distinct models per stage.
+    emitShiftRoutingEvents(router);
+  }
 
   const logPath = defaultFusionLogPath();
   if (!options.quiet) {

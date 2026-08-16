@@ -21,6 +21,27 @@ In scope as vulnerabilities:
 
 Out of scope (documented posture): the raw power of an *approved* `bash` call; social-engineering the operator into approving; issues in upstream pi-* packages (report those to `earendil-works/pi` — we pin and track).
 
+## Activity feed redaction (F7/F6c class)
+
+`.openkai/activity.jsonl` receives every session event and every Shift routing
+event (stage classification, model selection, provider fallback). All string
+fields are passed through `redactSecrets` at TWO layers before the row is
+serialised to disk:
+
+1. **Core-side** (`packages/core/src/shift/activity.ts`): the
+   `createRedactingSink` wrapper applies `redactRoutingEvent` to every
+   routing event before it reaches the caller's sink.
+2. **CLI-side** (`packages/cli/src/tail.ts`): `appendActivity` applies
+   `redactStrings` (a recursive `redactSecrets` over all string fields) to
+   every row — session events AND routing events — before `JSON.stringify`.
+
+This closes a pre-existing gap where `appendActivity` wrote activity rows
+unredacted: a provider error that echoes an API key back in a 401/429 body
+(`sk-…`, `nvapi-…`, etc.) is replaced with `[redacted-secret]` at both layers.
+The reproducer in `packages/cli/test/shift.test.ts` proves the redaction fires
+on the exact production path — the jsonl file and `openkai tail` output are
+both clean.
+
 ## Supported versions
 
 Pre-1.0: only the latest `main` and the most recent release receive fixes.
