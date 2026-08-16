@@ -216,9 +216,12 @@ export class InProcessTransport implements SessionTransport {
         ),
     });
 
-    // Bridge agent events onto the SessionEvent queue. When the agent emits
-    // `agent_end` we push the `session_end` event and then close the queue so
-    // the `events()` generator terminates naturally without an external close().
+    // Bridge agent events onto the SessionEvent queue. `agent_end` emits
+    // `session_end` — but the queue stays OPEN: the event stream is the
+    // SESSION's stream, not one turn's. Closing on agent_end ended the
+    // stream after the first turn, and the TUI (whose consume-loop ending
+    // means quit) exited on first submit. The queue closes only on
+    // close()/abort; print-mode consumers break on `session_end`.
     this.agent.subscribe((event: AgentEvent) => {
       for (const mapped of mapAgentEvent(event)) {
         this.seq += 1;
@@ -227,10 +230,6 @@ export class InProcessTransport implements SessionTransport {
           sessionId: this.sessionId,
           seq: this.seq,
         } as SessionEvent);
-      }
-      // After agent_end, close the queue so the consumer's for-await ends.
-      if (event.type === "agent_end") {
-        this.queue.close();
       }
       return Promise.resolve();
     });

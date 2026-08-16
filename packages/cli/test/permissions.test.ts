@@ -117,6 +117,9 @@ async function drainEvents(
       permissionCount += 1;
       onPermissionRequest(value.requestId, { toolName: value.toolName, rule: value.rule });
     }
+    // The session stream stays open across turns (no auto-close); the turn
+    // is complete at session_end, so stop draining there.
+    if (value.kind === "session_end") break;
   }
   await iter.return?.();
   return { events, permissionCount };

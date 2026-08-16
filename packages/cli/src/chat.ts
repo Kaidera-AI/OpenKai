@@ -173,6 +173,9 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
           break;
         }
         case "session_end":
+          // The transport stream stays open across turns now — print mode
+          // exits explicitly at the end of its single turn.
+          await transport.close();
           break;
         case "error":
           log(`error: ${event.message}`);

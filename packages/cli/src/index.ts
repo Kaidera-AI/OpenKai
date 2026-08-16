@@ -212,10 +212,6 @@ async function runEvents(options: EventsOptions): Promise<number> {
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
 
-  // Bare `openkai` (no command) launches the TUI (scope §4.1).
-  if (command === undefined) {
-    return runTui(buildTuiOptions(rest));
-  }
   if (
     command === "--help" ||
     command === "-h" ||
@@ -228,6 +224,12 @@ async function main(argv: string[]): Promise<number> {
   if (command === "--version" || command === "-v" || command === "version") {
     process.stdout.write(`openkai ${CLI_VERSION}\n`);
     return 0;
+  }
+
+  // Bare `openkai` launches the TUI — with or without flags (scope §4.1).
+  // `openkai --provider nvidia` is a launch, not a command.
+  if (command === undefined || command.startsWith("--")) {
+    return runTui(buildTuiOptions(command === undefined ? rest : argv));
   }
 
   // ── Shared flag parser helpers ─────────────────────────────────────────
