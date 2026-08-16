@@ -40,3 +40,8 @@ Increment files: `Release_v0.1.0/E001_OPENKAI_V1/INCREMENTS/`.
 2. Scope flood (more patterns than v1 holds) — mitigated: ADR do-NOT list + P4b backlog discipline.
 3. ren A2: any v2 protocol change (approval channel) goes through CPO review BEFORE implementation.
 4. Worker return-report discipline (tests/artifacts/followups mandatory) — enforced at review.
+5. **Fabrication risk (learned 2026-08-16):** quill (docs) and cole (first security review) both fabricated returns; the amended admissibility rule (new + relevant + executing reproducers) is what changed lane behaviour. Treat any evidence-free claim as rework on sight.
+
+## Security gate status
+
+**CLEARED 2026-08-16.** Findings eba8cb9 (3 exploited classes) fixed at `09b56ce`/`3f89a45`; cole's re-review findings (ANSI/OSC injection; gate consent) fixed at `1d46b35`; review accepted `d05ce2c8`. Suite 102/102, `scripts/security-audit.sh` PASSED.
