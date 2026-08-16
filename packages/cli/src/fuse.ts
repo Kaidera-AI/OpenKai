@@ -10,12 +10,16 @@ import {
   DEFAULT_MODEL_ID,
   exportFusionRunArtifact,
   fuse,
+  listCasts,
   recordFusionRun,
+  resolveCast,
   defaultFusionLogPath,
+  type CastConfig,
   type RoleOutput,
   type SynthesisArtifact,
 } from "@kaidera/openkai-core";
 import { providerKeyStatus, resolveProvider } from "./providers.js";
+import { readConfig } from "./tui/welcome.js";
 
 export interface FuseCliOptions {
   prompt: string;
@@ -23,6 +27,8 @@ export interface FuseCliOptions {
   builderModel?: string;
   judgeModel?: string;
   provider?: string;
+  /** Named cast (curated role set) — the fusion-first default path. */
+  cast?: string;
   gate: boolean;
   yes: boolean;
   maxRounds?: number;
@@ -72,7 +78,28 @@ const renderSynthesis = (s: SynthesisArtifact): string => {
 };
 
 export async function runFuse(options: FuseCliOptions): Promise<number> {
-  const provider = resolveProvider(options.provider);
+  const models = builtinModels();
+  const rawConfig = readConfig();
+  const config: CastConfig = {
+    casts: Array.isArray(rawConfig["casts"])
+      ? (rawConfig["casts"] as CastConfig["casts"])
+      : undefined,
+    defaultCast:
+      typeof rawConfig["defaultCast"] === "string"
+        ? (rawConfig["defaultCast"] as string)
+        : undefined,
+  };
+  const cast = options.cast
+    ? resolveCast(options.cast, config)
+    : undefined;
+  if (options.cast && !cast) {
+    process.stderr.write(
+      `ERROR: cast "${options.cast}" not found. Available: ${listCasts(config).map((c) => c.id).join(", ")}\n`,
+    );
+    return 2;
+  }
+  const castProvider = cast?.provider;
+  const provider = resolveProvider(options.provider ?? castProvider);
   const keyStatus = providerKeyStatus(provider);
   if (!keyStatus.configured) {
     process.stderr.write(
@@ -81,8 +108,8 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     return 1;
   }
 
-  const models = builtinModels();
-  const defaultId = process.env.OPENKAI_MODEL ?? (provider === "openrouter" ? DEFAULT_MODEL_ID : undefined);
+  const defaultId =
+    process.env.OPENKAI_MODEL ?? (provider === "openrouter" ? DEFAULT_MODEL_ID : undefined);
   const resolve = (id: string | undefined, label: string) => {
     if (!id) {
       process.stderr.write(
@@ -100,9 +127,12 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     return model;
   };
 
-  const architect = resolve(options.architectModel ?? defaultId, "architect");
-  const builder = resolve(options.builderModel ?? defaultId, "builder");
-  const judge = resolve(options.judgeModel ?? options.architectModel ?? defaultId, "judge");
+  const architect = resolve(options.architectModel ?? cast?.architectModel ?? defaultId, "architect");
+  const builder = resolve(options.builderModel ?? cast?.builderModel ?? defaultId, "builder");
+  const judge = resolve(
+    options.judgeModel ?? cast?.judgeModel ?? options.architectModel ?? cast?.architectModel ?? defaultId,
+    "judge",
+  );
   if (!architect || !builder || !judge) return 2;
 
   const logPath = defaultFusionLogPath();

@@ -329,6 +329,7 @@ async function main(argv: string[]): Promise<number> {
       builderModel: getString("--builder-model"),
       judgeModel: getString("--judge-model"),
       provider: getString("--provider"),
+      cast: getString("--cast"),
       gate: getBool("--gate"),
       yes: getBool("--yes"),
       project: getString("--project") ?? process.env.CORTEX_PROJECT,

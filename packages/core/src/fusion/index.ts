@@ -19,6 +19,8 @@ export type {
   BanditRecommendation,
   ComplexityBucket,
 } from "./bandit.js";
+export { BUILTIN_CASTS, listCasts, resolveCast } from "./casts.js";
+export type { Cast, CastConfig, CastTier } from "./casts.js";
 export {
   DEFAULT_FUSION_POLICY,
   shouldFuse,
