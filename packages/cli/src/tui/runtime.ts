@@ -49,6 +49,7 @@ import {
 } from "./attention.js";
 import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
+import { needsWelcome, readConfig, runWelcome } from "./welcome.js";
 import { appendActivity } from "../tail.js";
 import { CLI_VERSION } from "../version.js";
 import { providerKeyStatus, resolveProvider } from "../providers.js";
@@ -101,6 +102,12 @@ export async function resolveRunMode(options: RunTuiOptions): Promise<ResolvedRu
  * `/new` and `/resume <id>` rebuild against a different session id.
  */
 export async function runTui(options: RunTuiOptions): Promise<number> {
+  // First-run setup (E002 Inc 03): BEFORE provider/model resolution so the
+  // operator's answers become this session's defaults. Skipped when explicit
+  // flags are passed or when there's no TTY (e2e/pipes).
+  if (needsWelcome() && !options.model && !options.provider && process.stdout.isTTY) {
+    await runWelcome();
+  }
   let session = options.session;
   for (;;) {
     const { code, next } = await runSession({ ...options, session });
@@ -111,8 +118,9 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 
 /** Run one session to its exit request. */
 async function runSession(options: RunTuiOptions): Promise<{ code: number; next: ExitRequest }> {
-  const provider = resolveProvider(options.provider);
-  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? (provider === "openrouter" ? "nvidia/nemotron-3-nano-30b-a3b:free" : undefined);
+  const config = readConfig();
+  const provider = resolveProvider(options.provider ?? (config.provider as string | undefined));
+  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? (config.model as string | undefined) ?? (provider === "openrouter" ? "nvidia/nemotron-3-nano-30b-a3b:free" : undefined);
   if (!modelId) {
     process.stderr.write(
       `ERROR: no default model for provider "${provider}" — pass --model <id> (or set OPENKAI_MODEL).\n`,

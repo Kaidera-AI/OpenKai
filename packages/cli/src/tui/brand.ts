@@ -96,6 +96,12 @@ const sleep = (ms: number): Promise<void> =>
  * first run; every later run goes straight to the compact transcript mark.
  * Returns true when it played (so the transcript stays compact).
  */
+/**
+ * The first-run brand moment (droid bar: animated logo exactly once): the
+ * Kaidera hex mark + OpenKai wordmark with a colour SHIMMER sweeping
+ * diagonally across the frame (per-column hue offset per step), ~1s, then
+ * cleared for the app. TTY + first run only. Returns true when it played.
+ */
 export async function playBrandAnimation(
   version: string,
   write: (text: string) => void = (t) => process.stdout.write(t),
@@ -104,12 +110,21 @@ export async function playBrandAnimation(
 
   const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`];
   const frames = BRAND_RAMP.length;
-  const frameMs = 60;
+  const frameMs = 75;
   try {
     write("\x1b[?25l"); // hide cursor
-    for (let step = 0; step < frames; step += 1) {
+    for (let step = 0; step < frames + 4; step += 1) {
       write("\x1b[2J\x1b[H"); // clear + home
-      write(frame.map((line) => brandTint(line, step)).join("\n"));
+      const lines = frame.map((line, row) => {
+        // Diagonal shimmer: hue offset slides across columns each frame.
+        let out = "";
+        for (let col = 0; col < line.length; col += 4) {
+          const chunk = line.slice(col, col + 4);
+          out += brandTint(chunk, step + Math.floor((col + row * 2) / 4));
+        }
+        return out;
+      });
+      write(lines.join("\n"));
       await sleep(frameMs);
     }
     write("\x1b[2J\x1b[H\x1b[?25h"); // clear + restore cursor

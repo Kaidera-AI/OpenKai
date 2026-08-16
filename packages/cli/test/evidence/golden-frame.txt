@@ -3,7 +3,15 @@
 # Block kinds: notice -> user -> thinking -> assistant -> tool -> thinking -> assistant
 # Chrome usage: {"input":64,"output":2,"cacheRead":37,"cacheWrite":65,"totalTokens":168,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
 
- ▎ OpenKai 0.1.4 · by Kaidera — /help for commands, Ctrl+K palette              
+ ▎  ██████╗ ██████╗ ███████╗███╗   ██╗██╗  ██╗ █████╗ ██╗                       
+ ▎ ██╔═══██╗██╔══██╗██╔════╝████╗  ██║██║ ██╔╝██╔══██╗██║                       
+ ▎ ██║   ██║██████╔╝█████╗  ██╔██╗ ██║█████╔╝ ███████║██║                       
+ ▎ ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔═██╗ ██╔══██║██║                       
+ ▎ ╚██████╔╝██║     ███████╗██║ ╚████║██║  ██╗██║  ██║██║                       
+ ▎  ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝                       
+ ▎                                                                              
+ ▎ the open agent harness · by Kaidera · 0.1.4                                  
+ ▎                                                                              
 
  You                                                                            
                                                                                 

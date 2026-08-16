@@ -34,6 +34,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { ModelPicker } from "./model-picker.js";
+import { runWelcome } from "./welcome.js";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
@@ -258,6 +259,13 @@ export class TuiController {
         }
         await this.fuse(argument);
         break;
+      case "welcome":
+        this.transcript.addNotice("welcome: exiting to re-run setup — relaunch with `openkai`");
+        this.tui.requestRender();
+        this.onExit?.({ kind: "quit" });
+        await runWelcome();
+        process.stdout.write("  Setup saved. Relaunch with: openkai\n");
+        return;
       case "undo":
         await this.undo();
         break;

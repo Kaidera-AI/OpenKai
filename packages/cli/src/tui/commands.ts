@@ -39,6 +39,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "new", description: "Start a fresh session (local branch root)." },
   { name: "btw", description: "Ask a clarifying side question (answer as a system block, not a user turn).", argumentHint: "<text>" },
   { name: "fuse", description: "Run the task through the fusion panel (architect + builder → attributed synthesis).", argumentHint: "<task>" },
+  { name: "welcome", description: "Re-run the first-run setup (providers, model, memory)." },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },
   { name: "quit", description: "Exit the TUI (also Ctrl+C)." },
 ];
