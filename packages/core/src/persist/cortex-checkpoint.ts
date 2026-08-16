@@ -15,6 +15,7 @@
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { CortexClient, CortexApiError } from "../cortex/client.js";
+import { redactSecrets } from "../secrets.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Entry, MessageEntry } from "./session-store.js";
 
@@ -70,19 +71,30 @@ export interface CortexCheckpointOptions {
   debounceMs?: number;
 }
 
-/** Extract text content from an AgentMessage for the ingest payload. */
+/**
+ * Extract text content from an AgentMessage for the ingest payload.
+ *
+ * Redacted here, at the seam where content is lifted onto the wire (E001
+ * finding F7b). The file seam in `SessionStore` does NOT cover this path:
+ * `record()` takes an `Entry[]` from any source, and both call sites feed it
+ * `readEntries()` only by convention — the obvious "why re-read the file every
+ * turn?" refactor would silently ship `.env` material into shared team memory,
+ * which SECURITY.md §4 names first ("never in Cortex memory").
+ */
 function messageContent(message: AgentMessage): string {
   if (!("content" in message)) return "";
   const content = message.content;
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return redactSecrets(content);
   if (Array.isArray(content)) {
-    return content
-      .filter(
-        (part): part is { type: "text"; text: string } =>
-          typeof part === "object" && part !== null && "type" in part && part.type === "text",
-      )
-      .map((part) => part.text)
-      .join("");
+    return redactSecrets(
+      content
+        .filter(
+          (part): part is { type: "text"; text: string } =>
+            typeof part === "object" && part !== null && "type" in part && part.type === "text",
+        )
+        .map((part) => part.text)
+        .join(""),
+    );
   }
   return "";
 }
@@ -184,7 +196,9 @@ export class CortexCheckpoint {
     const payload: SessionIngestPayload = {
       session_uuid: this.options.sessionId,
       agent: this.options.agent,
-      task: this.options.task,
+      // The task is the operator's prompt — a paste carries a key just like
+      // model text does, same parity argument as the `/btw` header (F6c).
+      task: redactSecrets(this.options.task),
       source_path: this.options.sourcePath,
       provider: this.options.provider,
       cwd: this.options.cwd,

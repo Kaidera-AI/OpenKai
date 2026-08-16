@@ -26,51 +26,10 @@
 import { spawnSync } from "node:child_process";
 
 import type { Api, Model, StreamFunction } from "@earendil-works/pi-ai";
+import { SECRET_NAME_PATTERN, SECRET_VALUE_PATTERN } from "../secrets.js";
 import { complete } from "./complete.js";
 import type { GateCheck, GateCheckResult, GateRun } from "./types.js";
 import { GateHaltError, WeakGateError } from "./types.js";
-
-/**
- * Secret-shaped env-var patterns to scrub from child processes (F9 DiD).
- * Matches the §1 secret-scan prefixes: any value beginning with these is a
- * credential and must not inherit into model-authored shell.
- */
-const SECRET_ENV_VALUE_PATTERNS: readonly RegExp[] = [
-  /^sk-/,
-  /^nvapi-/,
-  /^fw_/,
-  /^AIza/,
-  /^ghp_/,
-  /^xai-/,
-];
-
-/**
- * Env vars scrubbed by NAME regardless of value (F9 DiD). These are known
- * credential variables the CLI loads from `.env`.
- */
-const SECRET_ENV_NAMES: ReadonlySet<string> = new Set([
-  "OPENROUTER_API_KEY",
-]);
-
-/**
- * Build a child environment with secret-shaped variables scrubbed (F9 DiD).
- * Gate checks are MODEL-AUTHORED shell run with operator privileges; the
- * child must not inherit credentials the CLI loaded from `.env`.
- */
-function scrubbedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { CI: "1" };
-  for (const [key, value] of Object.entries(process.env)) {
-    if (SECRET_ENV_NAMES.has(key)) continue;
-    if (
-      typeof value === "string" &&
-      SECRET_ENV_VALUE_PATTERNS.some((p) => p.test(value))
-    ) {
-      continue;
-    }
-    env[key] = value;
-  }
-  return env;
-}
 
 const VALIDATOR_SYSTEM =
   "You are the GATE VALIDATOR in a fusion run. Read the task and design the " +
@@ -161,6 +120,28 @@ export interface RunGateOptions {
   maxOutputChars?: number;
 }
 
+/**
+ * The environment handed to a gate check. The commands are MODEL-AUTHORED and
+ * run unsandboxed, so the operator's credentials are not theirs to inherit:
+ * anything whose NAME or VALUE is secret-shaped is dropped (E001 finding F9).
+ * SECURITY.md §4 keeps secrets in `.env`, and `.env` is loaded into this
+ * process — without this scrub one designed check exfiltrates the lot.
+ *
+ * ponytail: name+value shape match, not an allowlist. A check that genuinely
+ * needs a credential should be given one explicitly; tighten to an allowlist
+ * if that case ever turns up.
+ */
+function childEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (SECRET_NAME_PATTERN.test(name)) continue;
+    if (value !== undefined && SECRET_VALUE_PATTERN.test(value)) continue;
+    env[name] = value;
+  }
+  env.CI = "1";
+  return env;
+}
+
 /** Execute every check; pass = ALL checks exit as expected. */
 export function runGate(
   checks: GateCheck[],
@@ -175,7 +156,7 @@ export function runGate(
       cwd: options.cwd,
       timeout: timeoutMs,
       encoding: "utf-8",
-      env: scrubbedEnv(),
+      env: childEnv(),
     });
     const exitCode =
       typeof proc.status === "number" ? proc.status : proc.error ? 127 : 1;
