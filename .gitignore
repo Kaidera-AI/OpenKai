@@ -10,3 +10,4 @@ dist-test/
 .env
 .env.*
 !.env.example
+.tui-test/
