@@ -52,6 +52,15 @@ export const CHANNEL_ENV = "OPENKAI_CHANNEL";
 export const MANIFEST_ENV = "OPENKAI_MANIFEST_URL";
 export const RELEASE_KEY_ENV = "OPENKAI_RELEASE_PUBLIC_KEY";
 
+/**
+ * Brew-managed installs ship the standalone binary, but the package manager
+ * owns the binary lifecycle — self-upgrade must not mutate the Cellar.
+ * Detect by install path (Homebrew Cellar / linuxbrew).
+ */
+export function isBrewManaged(execPath: string = process.execPath): boolean {
+  return /\/(Cellar|linuxbrew|homebrew)\//i.test(execPath);
+}
+
 // ─── Pure helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -508,12 +517,22 @@ export async function runUpgrade(
 ): Promise<UpgradeRunResult> {
   const ctx = resolveContext(options);
 
+  // Brew-managed install: Homebrew owns the binary lifecycle.
+  if (isBrewManaged() && options.currentBinary === undefined) {
+    const message = [
+      `openkai upgrade — this install is managed by Homebrew.`,
+      `Self-upgrade is disabled here so the Cellar stays consistent.`,
+      `Upgrade with: brew update && brew upgrade openkai`,
+    ].join("\n");
+    return { exitCode: 0, message, channel: ctx.channel, autoUpdateEnabled: false };
+  }
+
   // npm channel: pinned at build time, never self-mutates.
   if (ctx.channel === "npm") {
     const message = [
       `openkai upgrade — channel: npm (pinned at build time)`,
       `npm installs never self-mutate. Upgrade explicitly with:`,
-      `  npm install -g openkai@<version>`,
+      `  npm install -g @kaidera/openkai@<version>`,
     ].join("\n");
     return { exitCode: 0, message, channel: "npm", autoUpdateEnabled: false };
   }
@@ -529,7 +548,7 @@ export async function runUpgrade(
       `openkai upgrade — refusing standalone self-upgrade: this build is not a`,
       `standalone binary (${CHANNEL_ENV}=standalone was set on an npm build).`,
       `Self-upgrade here would overwrite ${ctx.currentBinary}, not an openkai binary.`,
-      `Upgrade explicitly with: npm install -g openkai@<version>`,
+      `Upgrade explicitly with: npm install -g @kaidera/openkai@<version>`,
     ].join("\n");
     return {
       exitCode: 1,

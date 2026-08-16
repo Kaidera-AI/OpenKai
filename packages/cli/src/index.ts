@@ -68,6 +68,9 @@ Commands:
                          KOS-managed), Cortex reachability, model catalogue,
                          local state counts. Always exits 0.
 
+  upgrade | update       Self-upgrade (standalone channel; rollback with
+                         --rollback, check only with --check).
+
   events --print         Stream live Cortex team events (GET /events SSE) to
                          stdout, one TSV row per event:
                          id <TAB> type <TAB> agent <TAB> summary
@@ -381,7 +384,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // ── upgrade (Inc 08, ADR OK-8 dual-channel) ───────────────────────────────
-  if (command === "upgrade") {
+  if (command === "upgrade" || command === "update") {
     const options: UpgradeCliOptions = {
       check: getBool("--check"),
       rollback: getBool("--rollback"),
