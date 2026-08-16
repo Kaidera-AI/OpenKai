@@ -407,11 +407,21 @@ SECURITY: 0.1.1 has 2 HIGH findings - F4 (protected name as a directory componen
    operation; all four return EMPTY. Confirmed independently against the raw packument
    (`registry.npmjs.org/@kaidera%2Fopenkai`), which reports `0.1.1 -> '<the message>'`,
    `0.1.2 -> None`, `0.1.3 -> None`.
-3. **`dist-tags.latest` unchanged at `0.1.3`** on both: `{"latest": "0.1.3"}` for
-   `@kaidera/openkai` and `@kaidera/openkai-core`. (§2.2's `latest = 0.1.2` was accurate when
-   written; the operator has since cut 0.1.3.)
-4. **NOTHING unpublished** — after the operation, `npm view <pkg> versions --json` still returns
-   exactly `["0.1.1","0.1.2","0.1.3"]` for **both** packages, byte-identical to the pre-state.
+3. **`dist-tags.latest` unchanged by this operation** — `{"latest": "0.1.3"}` on both at the time
+   of the deprecation. (§2.2's `latest = 0.1.2` was accurate when written.) `npm deprecate` does
+   not touch dist-tags; this action wrote no tag.
+4. **NOTHING unpublished** — immediately after the operation, `npm view <pkg> versions --json`
+   still returned exactly `["0.1.1","0.1.2","0.1.3"]` for **both** packages, byte-identical to
+   the pre-state.
+
+**Re-verified after the concurrent 0.1.4 cut.** Main advanced to `d633824` (0.1.4 published)
+*while this task was running*, so criteria 3 and 4 were re-probed rather than left to go stale.
+Current live state on **both** packages: `versions` = `["0.1.1","0.1.2","0.1.3","0.1.4"]` and
+`dist-tags.latest` = `0.1.4` — the list **grew by the new publish and lost nothing**, which is the
+real no-unpublish invariant. `0.1.1` is **still deprecated** on both (message re-read verbatim
+after the publish, unchanged), and `0.1.4` is **not** deprecated on either. Stated durably so it
+does not rot again: this action deprecated exactly one version — `0.1.1` — on each package, and
+changed nothing else.
 
 **Effect proven end-to-end, not assumed.** A real `npm i @kaidera/openkai@0.1.1` into a scratch
 project now emits, on npm 11.6.2:
