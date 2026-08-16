@@ -27,7 +27,7 @@ Every agent harness gives you a chat box. OpenKai gives you a **workstation**:
 ## Install
 
 ```bash
-npm install -g openkai        # node ≥ 22.19
+npm install -g @kaidera/openkai   # node ≥ 22.19
 openkai info                        # self-check: providers, memory, local state
 openkai                             # the TUI
 ```

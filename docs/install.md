@@ -10,7 +10,7 @@ Requires Node.js >= 22.19. The binary channel additionally requires
 
 ## Channel 1 — npm
 
-At release: `npm install -g openkai`.
+At release: `npm install -g @kaidera/openkai`.
 
 Until then, pack the workspaces and install the tarballs. `--prefix` keeps this
 out of your real global install:
@@ -18,7 +18,7 @@ out of your real global install:
 ```bash
 npm run build
 npm pack ./packages/core ./packages/cli
-npm install -g --prefix /tmp/openkai ./openkai-core-0.0.0.tgz ./openkai-cli-0.0.0.tgz
+npm install -g --prefix /tmp/openkai ./kaidera-openkai-core-0.1.1.tgz ./kaidera-openkai-0.1.1.tgz
 export PATH="/tmp/openkai/bin:$PATH"
 ```
 
@@ -66,7 +66,7 @@ Across three runs: **13.3–15.3s** on a cold npm cache, **6.0s** warm — again
 a five-minute budget. One cold run, verbatim and unedited:
 
 ```text
-$ time (npm install -g --prefix "$CLEAN/prefix" openkai-core-0.0.0.tgz openkai-cli-0.0.0.tgz && openkai info)
+$ time (npm install -g --prefix "$CLEAN/prefix" kaidera-openkai-core-0.1.1.tgz kaidera-openkai-0.1.1.tgz && openkai info)
 added 193 packages in 12s
 openkai 0.0.0
 node v24.11.1 · darwin/arm64

@@ -99,7 +99,7 @@ does not probe for versions, it just restates the pin:
 ```text
 openkai upgrade — channel: npm (pinned at build time)
 npm installs never self-mutate. Upgrade explicitly with:
-  npm install -g openkai@<version>
+  npm install -g @kaidera/openkai@<version>
 ```
 
 **Standalone channel** — self-upgrade with verification:

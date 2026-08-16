@@ -8,7 +8,7 @@ OpenKai will be available as an npm package.
 
 ```bash
 # Example install (package name TBD)
-npm install -g openkai
+npm install -g @kaidera/openkai
 ```
 
 ## Configuration
