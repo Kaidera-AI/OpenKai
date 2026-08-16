@@ -2,6 +2,36 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.4] — Inc 09 parity pack (TUI liveness + activity feed)
+
+Publishes the unpublished Inc 09 delta that main carried under the stale 0.1.3
+version string, and re-syncs all three channels (npm, standalone binaries,
+Homebrew tap) so the UAT plan is executable end-to-end. The CLI and core are
+bumped to 0.1.4 **in lockstep** (the CLI pins `@kaidera/openkai-core@0.1.4`) so
+an install resolves the matching core at publish time — the exact skew that made
+0.1.1 and 0.1.3 invisible is closed.
+
+### TUI / Inc 09
+- **Slash autocomplete** on `/`, a provider→model picker (`/model`), effort cycle (`/effort`), and fast mode (`/fast`).
+- **TUI liveness + activity feed**: animated busy chip (braille frame + current action + elapsed seconds, awaiting/attention priority preserved), provider chip in the chrome, an `onActivity` sink in the transport, a `.openkai/activity.jsonl` feed, and the `openkai tail [-f]` command to watch the machine think from a second terminal.
+- **`openkai update`** alias for upgrade: Homebrew-managed installs refuse self-upgrade (Homebrew owns the Cellar) with `brew upgrade` guidance; npm guidance uses the scoped name.
+
+### Packaging
+- npm: `@kaidera/openkai@0.1.4` + `@kaidera/openkai-core@0.1.4` (dist-tag `latest`).
+- Standalone binaries rebuilt from the certified main tip and attached to `v0.01.004` (darwin-arm64/x64, linux-arm64/x64).
+- Homebrew tap `Formula/openkai.rb` repointed to `v0.01.004` with recomputed sha256 values.
+
+### Security baseline
+- Security-critical sources (`packages/core/src/fusion/{fuse,gate,synthesis}.ts`) are logic-identical to the E001-certified line (only trailing-newline whitespace differs); `scripts/security-audit.sh` PASSED; 110/110 green.
+
+### Known gaps
+- F10 (LOW): `list_files` on a `.ssh` *directory* node still lists filenames (contents remain denied).
+
+## [0.1.3] — TUI stability fix
+
+- Fixes the TUI exit-after-first-turn regression (the session stream no longer closes on `agent_end`; chat exits explicitly on `session_end`; drain helpers break on `session_end`).
+- Bare-launch flags: `openkai --provider X` launches the TUI directly.
+
 ## [0.1.2] — security patch
 
 **0.1.1 shipped without the certified E001 security fixes and should not be used.** The fix-line was certified on a branch that had diverged from the release line, so the published tarballs were built without it. Upgrade with `npm install -g @kaidera/openkai@0.1.2`.

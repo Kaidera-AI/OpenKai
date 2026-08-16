@@ -1,7 +1,7 @@
 {
   "name": "openkai",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "OpenKai \u2014 open-source agent harness + TUI with Cortex memory and fusion. Workspace root.",
   "type": "module",
   "workspaces": [
