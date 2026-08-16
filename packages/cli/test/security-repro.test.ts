@@ -25,6 +25,7 @@ import {
   type PushPermissionEvent,
 } from "@openkai/core";
 import { Transcript } from "../dist/tui/transcript.js";
+import { PermissionOverlay } from "../dist/tui/permission.js";
 
 function readTool(cwd: string) {
   const t = readOnlyTools(cwd).find((x) => x.name === "read_file");
@@ -610,4 +611,129 @@ test("HELD: shadow-git undo cannot delete outside cwd via a symlinked dir", asyn
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// THIRD PASS 2026-08-16 — verifying the F6 fix (`1d46b35`, sanitizeTerminalText).
+// The sanitiser is sound where it is applied (streamed deltas, thinking,
+// replay, user paste, tool results all render clean), but it is NOT applied at
+// every boundary. REPRO 8/9 prove the residue. Both assert the CURRENT
+// behaviour — INVERT ON FIX.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** The hostile payload: clipboard write, screen clear, and chrome-colour SGR. */
+const TERM_PAYLOAD = "\x1b]52;c;cHduZWQ=\x07\x1b[2J\x1b[38;5;46m";
+
+/**
+ * FINDING 6b (HIGH, LIVE) — the CONSENT SURFACE is unsanitised. `PermissionOverlay`
+ * renders model-supplied strings (bash command, diff path, diff body, tool name)
+ * straight to the terminal. ADR §5.6 is explicit that execution is not a sandbox
+ * and the permission engine IS the control, so an overlay whose displayed text the
+ * model controls defeats informed consent: CSI 2J blanks the frame, SGR forges the
+ * approval chrome, and CR/backspace can rewrite the command the operator is reading
+ * while a different one is approved.
+ *
+ * This is the same defect class as F6 but on the one surface that must never be
+ * spoofable — hence HIGH rather than MEDIUM.
+ *
+ * INVERT ON FIX: route every overlay field through `sanitizeTerminalText`.
+ */
+test("REPRO 8: the permission overlay renders model-supplied escapes verbatim", () => {
+  const fields: Array<[string, PermissionOverlay]> = [
+    [
+      "bash command preview",
+      new PermissionOverlay({
+        toolName: "bash",
+        rule: "ask — bash requires approval",
+        preview: { kind: "command", command: TERM_PAYLOAD, cwd: "/p" },
+        onDecision: () => {},
+      }),
+    ],
+    [
+      "diff path",
+      new PermissionOverlay({
+        toolName: "write_file",
+        rule: "ask",
+        preview: { kind: "diff", path: TERM_PAYLOAD, before: "a", after: "b" },
+        onDecision: () => {},
+      }),
+    ],
+    [
+      "diff body",
+      new PermissionOverlay({
+        toolName: "write_file",
+        rule: "ask",
+        preview: { kind: "diff", path: "/p/a.txt", before: "a", after: TERM_PAYLOAD },
+        onDecision: () => {},
+      }),
+    ],
+    [
+      "tool name",
+      new PermissionOverlay({
+        toolName: TERM_PAYLOAD,
+        rule: "ask",
+        preview: { kind: "diff", path: "/p/a.txt", before: "a", after: "b" },
+        onDecision: () => {},
+      }),
+    ],
+  ];
+
+  for (const [label, overlay] of fields) {
+    const frame = overlay.render(80).join("\n");
+    assert.ok(frame.includes("\x1b]52;"), `LIVE: ${label} passes OSC 52 to the terminal`);
+    assert.ok(frame.includes("\x1b[2J"), `LIVE: ${label} passes CSI 2J to the terminal`);
+  }
+});
+
+/**
+ * FINDING 6c (MEDIUM, LIVE) — the transcript sanitiser misses two entry points.
+ * `tool_call` renders the tool NAME and top-level ARG VALUES unsanitised, and both
+ * are model-chosen, so the F6 channel is reinstated on every tool call. The `/btw`
+ * question header is also unsanitised while `addUserMessage` is not — an internal
+ * inconsistency worth closing even though that text is operator-supplied.
+ *
+ * INVERT ON FIX: sanitise the tool-card name/args and the btw question.
+ */
+test("REPRO 9: tool_call name/args and the btw header bypass the sanitiser", () => {
+  // Control: the paths kai fixed really are clean — this must keep passing.
+  const clean = new Transcript("openkai");
+  clean.applyEvent({ kind: "connected" });
+  clean.applyEvent({ kind: "delta", field: "text", delta: TERM_PAYLOAD });
+  clean.applyEvent({ kind: "turn_end" });
+  const cleanFrame = clean.render(80).join("\n");
+  assert.ok(!cleanFrame.includes("\x1b]52;"), "control: streamed deltas are sanitised");
+
+  // LIVE: model-chosen arg values reach the terminal through the tool card.
+  const viaArgs = new Transcript("openkai");
+  viaArgs.applyEvent({
+    kind: "tool_call",
+    toolCallId: "a1",
+    toolName: "read_file",
+    args: { path: TERM_PAYLOAD },
+  });
+  assert.ok(
+    viaArgs.render(80).join("\n").includes("\x1b]52;"),
+    "LIVE: tool args are rendered unsanitised",
+  );
+
+  // LIVE: so does a model-chosen tool name.
+  const viaName = new Transcript("openkai");
+  viaName.applyEvent({
+    kind: "tool_call",
+    toolCallId: "a2",
+    toolName: TERM_PAYLOAD,
+    args: { path: "ok.txt" },
+  });
+  assert.ok(
+    viaName.render(80).join("\n").includes("\x1b]52;"),
+    "LIVE: the tool name is rendered unsanitised",
+  );
+
+  // LIVE: the btw question header (inconsistent with addUserMessage).
+  const viaBtw = new Transcript("openkai");
+  viaBtw.beginBtwTurn(TERM_PAYLOAD);
+  assert.ok(
+    viaBtw.render(80).join("\n").includes("\x1b]52;"),
+    "LIVE: the btw question header is rendered unsanitised",
+  );
 });

