@@ -20,6 +20,15 @@ import path from "node:path";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { redactSecrets } from "../secrets.js";
+
+/**
+ * Owner-only modes for the session tree (E001 finding F7). SECURITY.md §4 says
+ * secrets never reach transcripts; a transcript every local user can read is
+ * the same disclosure by another route, so the tree is 0700/0600.
+ */
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
 
 /** Common fields of every JSONL tree entry (the v3 shape). */
 export interface EntryBase {
@@ -95,7 +104,11 @@ export class SessionStore {
 
   /** Ensure the session directory exists and the header line is written. */
   async ensure(): Promise<void> {
-    await fs.mkdir(this.dirPath, { recursive: true });
+    await fs.mkdir(this.dirPath, { recursive: true, mode: DIR_MODE });
+    // mkdir's mode applies only to directories it creates — chmod also narrows
+    // a tree written by an older build. Best-effort: a filesystem without POSIX
+    // modes must not break sessions.
+    await fs.chmod(this.dirPath, DIR_MODE).catch(() => undefined);
     if (!this.headerWritten) {
       const header: SessionHeader = {
         type: "header",
@@ -104,9 +117,24 @@ export class SessionStore {
         createdAt: Date.now(),
         parentSessionId: this.parentSessionId,
       };
-      await fs.appendFile(this.filePath, JSON.stringify(header) + "\n", "utf-8");
+      await this.appendLine(JSON.stringify(header));
       this.headerWritten = true;
     }
+  }
+
+  /**
+   * Append one JSONL line: redacted, owner-readable only.
+   *
+   * Redaction is at the single write seam so every entry shape is covered
+   * (messages, custom data, compaction summaries) — an approved `bash cat .env`
+   * is the realistic path that puts a live key into a turn (E001 finding F7).
+   */
+  private async appendLine(line: string): Promise<void> {
+    await fs.appendFile(this.filePath, redactSecrets(line) + "\n", {
+      encoding: "utf-8",
+      mode: FILE_MODE,
+    });
+    await fs.chmod(this.filePath, FILE_MODE).catch(() => undefined);
   }
 
   /** Append a message entry to the tree. Returns the entry id. */
@@ -151,7 +179,7 @@ export class SessionStore {
       parentId: this.leafId,
       timestamp: Date.now(),
     } as Entry;
-    await fs.appendFile(this.filePath, JSON.stringify(entry) + "\n", "utf-8");
+    await this.appendLine(JSON.stringify(entry));
     this.leafId = entry.id;
     return entry;
   }

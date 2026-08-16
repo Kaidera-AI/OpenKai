@@ -301,7 +301,16 @@ export function editFileTool(
       "Replace one exact occurrence of oldString with newString in a file. Errors if the match is absent or ambiguous. Requires operator approval.",
     parameters: EditFileParams,
     async execute(_id, params): Promise<AgentToolResult<unknown>> {
-      const abs = resolvePreviewPath(cwd, params.path);
+      // Boundary check BEFORE any read: reading first turns the error text into
+      // a confirmed-guess oracle over floor files and outside-cwd paths — a
+      // correct `oldString` guess reads back differently from a wrong one, and
+      // the ambiguous branch leaks a match count (E001 findings F5/F5b). Every
+      // out-of-bounds path now returns the same path-derived refusal.
+      const guard = guardPath(cwd, params.path);
+      if (guard.refusal !== undefined) {
+        return textResult(`Permission denied: ${guard.refusal}`, { path: params.path, denied: true });
+      }
+      const abs = guard.target!;
       let before = "";
       try {
         before = await fs.readFile(abs, "utf-8");

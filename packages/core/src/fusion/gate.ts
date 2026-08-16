@@ -26,6 +26,7 @@
 import { spawnSync } from "node:child_process";
 
 import type { Api, Model, StreamFunction } from "@earendil-works/pi-ai";
+import { SECRET_NAME_PATTERN, SECRET_VALUE_PATTERN } from "../secrets.js";
 import { complete } from "./complete.js";
 import type { GateCheck, GateCheckResult, GateRun } from "./types.js";
 import { GateHaltError, WeakGateError } from "./types.js";
@@ -119,6 +120,28 @@ export interface RunGateOptions {
   maxOutputChars?: number;
 }
 
+/**
+ * The environment handed to a gate check. The commands are MODEL-AUTHORED and
+ * run unsandboxed, so the operator's credentials are not theirs to inherit:
+ * anything whose NAME or VALUE is secret-shaped is dropped (E001 finding F9).
+ * SECURITY.md §4 keeps secrets in `.env`, and `.env` is loaded into this
+ * process — without this scrub one designed check exfiltrates the lot.
+ *
+ * ponytail: name+value shape match, not an allowlist. A check that genuinely
+ * needs a credential should be given one explicitly; tighten to an allowlist
+ * if that case ever turns up.
+ */
+function childEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (SECRET_NAME_PATTERN.test(name)) continue;
+    if (value !== undefined && SECRET_VALUE_PATTERN.test(value)) continue;
+    env[name] = value;
+  }
+  env.CI = "1";
+  return env;
+}
+
 /** Execute every check; pass = ALL checks exit as expected. */
 export function runGate(
   checks: GateCheck[],
@@ -133,7 +156,7 @@ export function runGate(
       cwd: options.cwd,
       timeout: timeoutMs,
       encoding: "utf-8",
-      env: { ...process.env, CI: "1" },
+      env: childEnv(),
     });
     const exitCode =
       typeof proc.status === "number" ? proc.status : proc.error ? 127 : 1;
