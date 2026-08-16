@@ -177,6 +177,51 @@ export class Transcript implements Component {
     this.blocks.push({ kind: "assistant", text, comp });
   }
 
+  /**
+   * Render a fusion result (OK-7: fusion stops being invisible). Each role
+   * output gets its identity pill; the synthesis renders as an attributed
+   * merge block — consensus, kept divergences, discards, blind spots.
+   */
+  addFusionResult(
+    outputs: { role: string; modelId: string; text: string; latencyMs: number }[],
+    synthesis: {
+      consensus: string[];
+      divergences: { topic: string; architect: string; builder: string; kept: string }[];
+      discarded: { item: string; reason: string; by: string }[];
+      blindSpots: string[];
+    },
+  ): void {
+    for (const output of outputs) {
+      const header = `${rolePill(output.role)} ${textToken.dim(`· ${output.modelId} · ${output.latencyMs}ms`)}`;
+      const comp = new Markdown(`${header}\n\n${output.text}`, 1, 0, markdownTheme);
+      this.blocks.push({ kind: "assistant", text: output.text, comp });
+    }
+
+    const lines: string[] = [highlight.base("synthesis")];
+    if (synthesis.consensus.length > 0) {
+      lines.push(textToken.strong("consensus"));
+      for (const item of synthesis.consensus) lines.push(`  • ${item}`);
+    }
+    for (const d of synthesis.divergences) {
+      lines.push(`${textToken.strong("divergence")} ${d.topic} ${textToken.dim(`(kept: ${d.kept})`)}`);
+      lines.push(`  ${rolePill("architect")} ${d.architect}`);
+      lines.push(`  ${rolePill("builder")} ${d.builder}`);
+    }
+    for (const d of synthesis.discarded) {
+      lines.push(`${textToken.dim("discarded")} ${d.item} ${textToken.dim(`— ${d.reason} [${d.by}]`)}`);
+    }
+    if (synthesis.blindSpots.length > 0) {
+      lines.push(textToken.strong("blind spots"));
+      for (const b of synthesis.blindSpots) lines.push(`  • ${b}`);
+    }
+    const comp = new Text(
+      lines.map((line) => `${toolBorder("▎ ")}${line}`).join("\n"),
+      1,
+      0,
+    );
+    this.blocks.push({ kind: "notice", text: lines.join("\n"), comp });
+  }
+
   /** The last assistant block's accumulated text (for persistence at turn_end). */
   lastAssistantText(): string {
     for (let i = this.blocks.length - 1; i >= 0; i -= 1) {

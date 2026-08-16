@@ -38,6 +38,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "resume", description: "Resume a session by id (replays the v3 tree).", argumentHint: "<session-id>" },
   { name: "new", description: "Start a fresh session (local branch root)." },
   { name: "btw", description: "Ask a clarifying side question (answer as a system block, not a user turn).", argumentHint: "<text>" },
+  { name: "fuse", description: "Run the task through the fusion panel (architect + builder → attributed synthesis).", argumentHint: "<task>" },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },
   { name: "quit", description: "Exit the TUI (also Ctrl+C)." },
 ];
@@ -57,6 +58,7 @@ export function helpText(): string[] {
     "  /resume <id>     resume a session by id",
     "  /new             start a fresh session",
     "  /btw <text>      ask a side question (system block, not a user turn)",
+    "  /fuse <task>     fusion panel: architect + builder, then attributed synthesis",
     "  /undo            undo the last gated mutation",
     "  /quit            exit (also Ctrl+C)",
     "",

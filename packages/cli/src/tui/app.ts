@@ -24,6 +24,7 @@ import {
   CortexCheckpoint,
   SessionStore,
   listSessions,
+  type FuseResult,
   type SessionEvent,
   type SessionTransport,
   type UsageSnapshot,
@@ -70,6 +71,8 @@ export interface TuiAppOptions {
   history?: FrecencyHistory;
   /** `/undo` callback (scope §1.6) — restores the last gated mutation, returns sha. */
   onUndo?: () => Promise<string>;
+  /** `/fuse` callback (OK-7) — runs the fusion panel + synthesis for a task. */
+  runFusion?: (task: string) => Promise<FuseResult>;
 }
 
 /** The built TUI app handle. */
@@ -157,6 +160,7 @@ export class TuiController {
   private readonly stash: PromptStash;
   private readonly history?: FrecencyHistory;
   private readonly onUndo?: () => Promise<string>;
+  private readonly runFusion?: (task: string) => Promise<FuseResult>;
   private composer?: Composer;
   private busy = false;
   private done = false;
@@ -178,6 +182,7 @@ export class TuiController {
     this.stash = options.stash ?? new PromptStash();
     this.history = options.history;
     this.onUndo = options.onUndo;
+    this.runFusion = options.runFusion;
   }
 
   /** Attach the composer (set after construction so the controller can build it). */
@@ -223,6 +228,13 @@ export class TuiController {
           break;
         }
         await this.btw(argument);
+        break;
+      case "fuse":
+        if (argument.length === 0) {
+          this.transcript.addNotice("fuse: needs a task — /fuse <task>");
+          break;
+        }
+        await this.fuse(argument);
         break;
       case "undo":
         await this.undo();
@@ -278,6 +290,27 @@ export class TuiController {
       this.transcript.addNotice(`undo: restored to snapshot ${sha.slice(0, 10)}`);
     } catch (error) {
       this.transcript.addNotice(`undo: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.tui.requestRender();
+  }
+
+  /** `/fuse <task>` (OK-7): run the fusion panel and render both roles + the attributed synthesis. */
+  async fuse(task: string): Promise<void> {
+    if (!this.runFusion) {
+      this.transcript.addNotice("fuse: unavailable (no fusion runner on this transport)");
+      this.tui.requestRender();
+      return;
+    }
+    this.transcript.addNotice(`fusing: ${task.slice(0, 120)} (architect + builder, then synthesis…)`);
+    this.tui.requestRender();
+    try {
+      const result = await this.runFusion(task);
+      this.transcript.addFusionResult(result.outputs, result.synthesis);
+      if (result.gate.outcome !== "not-run") {
+        this.transcript.addNotice(`gate: ${result.gate.outcome} (${result.gate.rounds} round(s))`);
+      }
+    } catch (error) {
+      this.transcript.addNotice(`fuse failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.tui.requestRender();
   }

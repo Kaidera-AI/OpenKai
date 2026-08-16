@@ -25,9 +25,11 @@ import {
   InProcessTransport,
   MissingApiKeyError,
   SessionStore,
+  fuse,
   listSessions,
   readSessionMessages,
 } from "@openkai/core";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildTuiApp, type RunMode, type ExitRequest } from "./app.js";
 import {
@@ -159,6 +161,13 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   }
 
   let transport: InProcessTransport;
+  // The fusion lane shares the session's provider + model (self-pairing).
+  const fusionModels = builtinModels();
+  const fusionModel = fusionModels.getModel(provider, modelId);
+  if (!fusionModel) {
+    process.stderr.write(`ERROR: model "${modelId}" not found under provider "${provider}".\n`);
+    return { code: 2, next: { kind: "quit" } };
+  }
   try {
     transport = new InProcessTransport({
       sessionId: store.sessionId,
@@ -221,6 +230,17 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     agentName: agent,
     notifier,
     history,
+    // `/fuse` (OK-7): run the panel on the session's provider; self-pairing
+    // default (same model both roles), the E016-replicated first step.
+    runFusion: (task) =>
+      fuse(
+        (m, ctx, opts) => builtinModels().streamSimple(m, ctx, opts),
+        {
+          task,
+          architectModel: fusionModel,
+          builderModel: fusionModel,
+        },
+      ),
     // `/undo` (scope §1.6): trust boundary is InProcessTransport (§2);
     // undoLastMutation() throws cleanly when the gate is off / nothing to undo.
     onUndo: () => transport.undoLastMutation(),
