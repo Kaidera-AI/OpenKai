@@ -35,6 +35,9 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { ModelPicker } from "./model-picker.js";
 import { runWelcome } from "./welcome.js";
+import { helpIndex, helpTopic } from "../help.js";
+import { FEATURES, featureEnabled, setFeature } from "./features.js";
+import { tipOfTheDay } from "./tips.js";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
@@ -114,6 +117,10 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     // Brand moment: full splash exactly once, compact mark ever after
     // (droid bar; state is user-global, ~/.openkai/state.json).
     transcript.addNotice(splashLines(CLI_VERSION));
+    // The daily tip (disable via /features tips) — teaching, not noise.
+    if (featureEnabled("tips")) {
+      transcript.addNotice(tipOfTheDay());
+    }
   }
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
   statusState.agentName = agentName;
@@ -215,8 +222,34 @@ export class TuiController {
   async dispatchCommand(name: string, argument: string): Promise<void> {
     switch (name) {
       case "help":
-        this.transcript.addNotice(helpText());
+        if (argument.length > 0) {
+          const topic = helpTopic(argument);
+          this.transcript.addNotice(
+            topic ? [`${topic.title}:`, ...topic.lines, "", `see also: ${topic.seeAlso.join(", ")}`] : helpIndex(),
+          );
+        } else {
+          this.transcript.addNotice(helpText());
+        }
         break;
+      case "features": {
+        const lines = FEATURES.map((f) => {
+          const on = featureEnabled(f.key);
+          return `  ${on ? "●" : "○"} ${f.label.padEnd(24)} ${on ? "on" : "off"}  — ${f.description}`;
+        });
+        if (argument.length === 0) {
+          this.transcript.addNotice(["features (/features <key> toggles):", ...lines]);
+        } else {
+          const def = FEATURES.find((f) => f.key === argument);
+          if (!def) {
+            this.transcript.addNotice(`unknown feature "${argument}" — keys: ${FEATURES.map((f) => f.key).join(", ")}`);
+          } else {
+            const next = !featureEnabled(def.key);
+            setFeature(def.key, next);
+            this.transcript.addNotice(`${def.label}: ${next ? "on" : "off"}`);
+          }
+        }
+        break;
+      }
       case "model":
         this.openModelPicker();
         break;

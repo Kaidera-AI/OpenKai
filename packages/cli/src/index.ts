@@ -17,6 +17,7 @@ import { loadDotEnv } from "./env.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";
 import { runFusionAdvise, runFusionReport } from "./fusion.js";
 import { runInfo } from "./info.js";
+import { helpIndex, helpTopic } from "./help.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runTail } from "./tail.js";
@@ -223,7 +224,7 @@ async function main(argv: string[]): Promise<number> {
   if (
     command === "--help" ||
     command === "-h" ||
-    command === "help"
+    (command === "help" && rest.length === 0)
   ) {
     process.stdout.write(USAGE);
     return 0;
@@ -231,6 +232,22 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "--version" || command === "-v" || command === "version") {
     process.stdout.write(`openkai ${CLI_VERSION}\n`);
+    return 0;
+  }
+
+  // ── help [topic] ─────────────────────────────────────────────────────────
+  if (command === "help") {
+    const topic = rest[0];
+    if (!topic) {
+      process.stdout.write(`${helpIndex().join("\n")}\n`);
+      return 0;
+    }
+    const found = helpTopic(topic);
+    if (!found) {
+      process.stderr.write(`no help topic "${topic}"\n\n${helpIndex().join("\n")}\n`);
+      return 2;
+    }
+    process.stdout.write(`${found.title}\n\n${found.lines.join("\n")}\n\nsee also: ${found.seeAlso.join(", ")}\n`);
     return 0;
   }
 

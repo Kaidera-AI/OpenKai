@@ -40,6 +40,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "btw", description: "Ask a clarifying side question (answer as a system block, not a user turn).", argumentHint: "<text>" },
   { name: "fuse", description: "Run the task through the fusion panel (architect + builder → attributed synthesis).", argumentHint: "<task>" },
   { name: "welcome", description: "Re-run the first-run setup (providers, model, memory)." },
+  { name: "features", description: "List or toggle optional features (all on by default).", argumentHint: "[feature-key]" },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },
   { name: "quit", description: "Exit the TUI (also Ctrl+C)." },
 ];
@@ -60,6 +61,8 @@ export function helpText(): string[] {
     "  /new             start a fresh session",
     "  /btw <text>      ask a side question (system block, not a user turn)",
     "  /fuse <task>     fusion panel: architect + builder, then attributed synthesis",
+    "  /features [key]  list / toggle optional features (all on by default)",
+    "  /welcome         re-run first-run setup (providers, model, memory)",
     "  /undo            undo the last gated mutation",
     "  /quit            exit (also Ctrl+C)",
     "",
