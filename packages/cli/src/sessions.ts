@@ -9,7 +9,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { SessionStore } from "@openkai/core";
+import { SessionStore } from "openkai-core";
 
 /** Options for the `sessions` command. */
 export interface SessionsOptions {

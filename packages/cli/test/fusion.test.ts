@@ -39,7 +39,7 @@ import {
   shouldFuse,
   summariseFusionRuns,
   type FusionRunRecord,
-} from "@openkai/core";
+} from "openkai-core";
 
 interface FauxRig {
   streamFn: StreamFunction;
@@ -456,11 +456,11 @@ test("gate consent: approval lets the designed gate run", async () => {
  * unconsented execution. The engine's posture for the same risk is the
  * inverse and fail-safe: "bash can never be auto-allowed".
  *
- * This asserts the CURRENT fail-open contract — INVERT ON FIX: with checks
- * designed and no consent channel, the outcome must be "refused" and
- * `gateRuns` must stay empty.
+ * INVERTED (2026-08-16, F9 fix): with checks designed and no consent channel,
+ * the outcome must be "refused" and `gateRuns` must stay empty — the gate
+ * fails closed, model-authored shell never executes.
  */
-test("REPRO 9 (fusion): a designed gate runs model-authored shell with NO consent channel", async () => {
+test("REPRO 9 (fusion): a designed gate with NO consent channel is refused (fail-closed)", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "openkai-consent-"));
   const marker = path.join(cwd, "executed-without-consent.txt");
   try {
@@ -486,13 +486,14 @@ test("REPRO 9 (fusion): a designed gate runs model-authored shell with NO consen
       // approveGate deliberately omitted — the TUI's call shape.
     });
 
-    // LIVE: no refusal, and the model's command really ran.
-    assert.notEqual(result.gate.outcome, "refused", "LIVE: absent consent is treated as granted");
-    assert.ok(result.gateRuns.length >= 1, "LIVE: gate checks executed unapproved");
-    assert.equal(
-      await readFile(marker, "utf-8"),
-      "pwned",
-      "LIVE: model-authored shell produced a real side effect with no prompt",
+    // FIXED (F9): absent consent channel → refusal, no execution.
+    assert.equal(result.gate.outcome, "refused", "FIXED: no consent channel refuses the gate");
+    assert.equal(result.gateRuns.length, 0, "FIXED: no gate checks executed without consent");
+    // The model's command never ran — the marker must not exist.
+    await assert.rejects(
+      () => readFile(marker, "utf-8"),
+      /ENOENT/,
+      "FIXED: model-authored shell produced no side effect",
     );
   } finally {
     await rm(cwd, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 # Installing OpenKai
 
-> **Pre-release status.** `@openkai/cli` is not published to npm yet and there is
+> **Pre-release status.** `openkai` is not published to npm yet and there is
 > no public release page. Both commands below install from a locally built
 > artifact. The published forms are noted so this page needs only a one-line edit
 > at release; do not copy them yet — they will fail.
@@ -10,7 +10,7 @@ Requires Node.js >= 22.19. The binary channel additionally requires
 
 ## Channel 1 — npm
 
-At release: `npm install -g @openkai/cli`.
+At release: `npm install -g openkai`.
 
 Until then, pack the workspaces and install the tarballs. `--prefix` keeps this
 out of your real global install:

@@ -16,7 +16,7 @@ import { createModels } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import type { TUI } from "@earendil-works/pi-tui";
 
-import { InProcessTransport, SessionStore } from "@openkai/core";
+import { InProcessTransport, SessionStore } from "openkai-core";
 import { buildTuiApp } from "../dist/tui/app.js";
 import { CommandPalette, type PaletteItem } from "../dist/tui/palette.js";
 import { StatusLine, defaultStatusState } from "../dist/tui/status.js";

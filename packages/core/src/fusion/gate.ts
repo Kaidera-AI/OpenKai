@@ -30,6 +30,48 @@ import { complete } from "./complete.js";
 import type { GateCheck, GateCheckResult, GateRun } from "./types.js";
 import { GateHaltError, WeakGateError } from "./types.js";
 
+/**
+ * Secret-shaped env-var patterns to scrub from child processes (F9 DiD).
+ * Matches the §1 secret-scan prefixes: any value beginning with these is a
+ * credential and must not inherit into model-authored shell.
+ */
+const SECRET_ENV_VALUE_PATTERNS: readonly RegExp[] = [
+  /^sk-/,
+  /^nvapi-/,
+  /^fw_/,
+  /^AIza/,
+  /^ghp_/,
+  /^xai-/,
+];
+
+/**
+ * Env vars scrubbed by NAME regardless of value (F9 DiD). These are known
+ * credential variables the CLI loads from `.env`.
+ */
+const SECRET_ENV_NAMES: ReadonlySet<string> = new Set([
+  "OPENROUTER_API_KEY",
+]);
+
+/**
+ * Build a child environment with secret-shaped variables scrubbed (F9 DiD).
+ * Gate checks are MODEL-AUTHORED shell run with operator privileges; the
+ * child must not inherit credentials the CLI loaded from `.env`.
+ */
+function scrubbedEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { CI: "1" };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (SECRET_ENV_NAMES.has(key)) continue;
+    if (
+      typeof value === "string" &&
+      SECRET_ENV_VALUE_PATTERNS.some((p) => p.test(value))
+    ) {
+      continue;
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
 const VALIDATOR_SYSTEM =
   "You are the GATE VALIDATOR in a fusion run. Read the task and design the " +
   "acceptance gate BEFORE any work happens: map every explicit requirement " +
@@ -133,7 +175,7 @@ export function runGate(
       cwd: options.cwd,
       timeout: timeoutMs,
       encoding: "utf-8",
-      env: { ...process.env, CI: "1" },
+      env: scrubbedEnv(),
     });
     const exitCode =
       typeof proc.status === "number" ? proc.status : proc.error ? 127 : 1;

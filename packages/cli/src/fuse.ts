@@ -14,7 +14,7 @@ import {
   defaultFusionLogPath,
   type RoleOutput,
   type SynthesisArtifact,
-} from "@openkai/core";
+} from "openkai-core";
 import { providerKeyStatus, resolveProvider } from "./providers.js";
 
 export interface FuseCliOptions {

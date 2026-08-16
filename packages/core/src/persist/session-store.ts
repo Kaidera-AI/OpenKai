@@ -95,7 +95,12 @@ export class SessionStore {
 
   /** Ensure the session directory exists and the header line is written. */
   async ensure(): Promise<void> {
-    await fs.mkdir(this.dirPath, { recursive: true });
+    // F7: create the session tree with restrictive modes (0700 dirs, 0600
+    // files) so an approved `bash cat .env` cannot land secret material in a
+    // group/other-readable file. chmod ensures the mode even if the dir/file
+    // already existed with looser permissions from a pre-fix run.
+    await fs.mkdir(this.dirPath, { recursive: true, mode: 0o700 });
+    await fs.chmod(this.dirPath, 0o700);
     if (!this.headerWritten) {
       const header: SessionHeader = {
         type: "header",
@@ -104,7 +109,11 @@ export class SessionStore {
         createdAt: Date.now(),
         parentSessionId: this.parentSessionId,
       };
-      await fs.appendFile(this.filePath, JSON.stringify(header) + "\n", "utf-8");
+      await fs.appendFile(this.filePath, JSON.stringify(header) + "\n", {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
+      await fs.chmod(this.filePath, 0o600);
       this.headerWritten = true;
     }
   }

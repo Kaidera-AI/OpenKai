@@ -8,9 +8,9 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @openkai/core && npm run build -w @openkai/cli",
-    "typecheck": "npm run typecheck -w @openkai/core && npm run typecheck -w @openkai/cli",
-    "test": "npm run test -w @openkai/cli",
+    "build": "npm run build -w openkai-core && npm run build -w openkai",
+    "typecheck": "npm run typecheck -w openkai-core && npm run typecheck -w openkai",
+    "test": "npm run test -w openkai",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
   },
   "devDependencies": {

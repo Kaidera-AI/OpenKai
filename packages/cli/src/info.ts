@@ -8,7 +8,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { CortexClient, defaultFusionLogPath, readFusionRuns } from "@openkai/core";
+import { CortexClient, defaultFusionLogPath, readFusionRuns } from "openkai-core";
 import {
   BUILD_CHANNEL,
   KILL_SWITCH_ENV,

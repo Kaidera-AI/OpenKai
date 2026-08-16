@@ -1,7 +1,7 @@
 {
-  "name": "@openkai/cli",
+  "name": "openkai",
   "version": "0.1.1",
-  "description": "OpenKai CLI + TUI — the operator surface for the OpenKai harness.",
+  "description": "OpenKai CLI + TUI \u2014 the operator surface for the OpenKai harness.",
   "type": "module",
   "bin": {
     "openkai": "./dist/index.js"
@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/*.test.js",
-    "test:build": "npm run -w @openkai/core build && npm run build && tsc -p tsconfig.test.json && node --test dist-test/*.test.js",
+    "test:build": "npm run -w openkai-core build && npm run build && tsc -p tsconfig.test.json && node --test dist-test/*.test.js",
     "build:binaries": "scripts/build-binaries.sh",
     "test:e2e": "tui-test e2e/"
   },
@@ -36,10 +36,10 @@
     "access": "public"
   },
   "dependencies": {
+    "openkai-core": "0.1.1",
     "@earendil-works/pi-agent-core": "0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
-    "@earendil-works/pi-tui": "0.84.2",
-    "@openkai/core": "0.1.1"
+    "@earendil-works/pi-tui": "0.84.2"
   },
   "license": "MIT",
   "engines": {

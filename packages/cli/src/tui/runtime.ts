@@ -28,7 +28,7 @@ import {
   fuse,
   listSessions,
   readSessionMessages,
-} from "@openkai/core";
+} from "openkai-core";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildTuiApp, type RunMode, type ExitRequest } from "./app.js";

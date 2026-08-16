@@ -11,7 +11,7 @@ import {
   type FusionPolicyInput,
   type FusionPriority,
   type FusionTaskClass,
-} from "@openkai/core";
+} from "openkai-core";
 
 export interface FusionReportOptions {
   last?: number;

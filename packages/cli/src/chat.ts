@@ -19,7 +19,7 @@ import {
   DEFAULT_MODEL_ID,
   SessionStore,
   CortexCheckpoint,
-} from "@openkai/core";
+} from "openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { providerKeyStatus, resolveProvider } from "./providers.js";
 

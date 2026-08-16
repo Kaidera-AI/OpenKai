@@ -3,7 +3,7 @@
  * (Inc 05; opencode shadow-git pattern via ShadowGit).
  */
 
-import { ShadowGit, ShadowGitError } from "@openkai/core";
+import { ShadowGit, ShadowGitError } from "openkai-core";
 
 export interface UndoOptions {
   history: boolean;

@@ -22,7 +22,7 @@
 
 import { SelectList, type SelectItem } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
-import type { PermissionPreview } from "@openkai/core";
+import type { PermissionPreview } from "openkai-core";
 import { highlight, renderOverlayFooter, surface, text as textToken, toolBorder } from "./theme.js";
 
 /** The approval decision the overlay emits to the controller. */

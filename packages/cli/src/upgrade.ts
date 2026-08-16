@@ -8,9 +8,9 @@
  *     from a release manifest fetched over plain HTTPS. Honours an env
  *     kill-switch (`OPENKAI_AUTO_UPDATE_ENABLED=false`) that disables
  *     self-upgrade entirely, and supports rollback to the prior binary.
- *   - **npm** — `@openkai/cli` installed via npm. The channel is *pinned at
+ *   - **npm** — `openkai` installed via npm. The channel is *pinned at
  *     build time*: the published tarball carries a fixed version and never
- *     self-mutates. Upgrade is an explicit `npm install -g @openkai/cli@<v>`.
+ *     self-mutates. Upgrade is an explicit `npm install -g openkai@<v>`.
  *
  * Witness verification ships *with* the upgrader (an auto-updating component
  * without it is an attack surface): every artifact is SHA-256 verified before
@@ -513,7 +513,7 @@ export async function runUpgrade(
     const message = [
       `openkai upgrade — channel: npm (pinned at build time)`,
       `npm installs never self-mutate. Upgrade explicitly with:`,
-      `  npm install -g @openkai/cli@<version>`,
+      `  npm install -g openkai@<version>`,
     ].join("\n");
     return { exitCode: 0, message, channel: "npm", autoUpdateEnabled: false };
   }
@@ -529,7 +529,7 @@ export async function runUpgrade(
       `openkai upgrade — refusing standalone self-upgrade: this build is not a`,
       `standalone binary (${CHANNEL_ENV}=standalone was set on an npm build).`,
       `Self-upgrade here would overwrite ${ctx.currentBinary}, not an openkai binary.`,
-      `Upgrade explicitly with: npm install -g @openkai/cli@<version>`,
+      `Upgrade explicitly with: npm install -g openkai@<version>`,
     ].join("\n");
     return {
       exitCode: 1,

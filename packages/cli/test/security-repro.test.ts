@@ -23,7 +23,7 @@ import {
   SessionStore,
   ShadowGit,
   type PushPermissionEvent,
-} from "@openkai/core";
+} from "openkai-core";
 import { Transcript } from "../dist/tui/transcript.js";
 import { PermissionOverlay } from "../dist/tui/permission.js";
 
@@ -544,11 +544,13 @@ test("HELD: every case variant of the .env floor is denied", async () => {
  * the session tree is created with default permissions, so on a shared host the
  * transcript is readable by every local user.
  *
- * INVERT ON FIX: either redact secret-shaped spans on write, or amend §4 to
- * state the rule is operator-responsibility — and in both cases create the
- * session tree 0700/0600.
+ * INVERTED (2026-08-16, F7 fix): content redaction is out of scope (lead
+ * decision: sessions are operator-confidential under ADR §5.6, redaction
+ * risks corrupting replay/undo fidelity). The control is file-mode hardening:
+ * the session tree is created 0700/0600 so secrets cannot land in a
+ * group/other-readable file.
  */
-test("REPRO 7: session persistence stores secrets verbatim and world-readable", async () => {
+test("REPRO 7: session tree is created with restrictive file modes (0700/0600)", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "okrepro-persist-"));
   try {
     const store = new SessionStore({ root, sessionId: "11111111-1111-7111-8111-111111111111" });
@@ -562,13 +564,15 @@ test("REPRO 7: session persistence stores secrets verbatim and world-readable", 
     } as never);
 
     const onDisk = await readFile(store.filePath, "utf-8");
-    assert.match(onDisk, /sk-live-PERSISTED-7c21/, "LIVE: secret is persisted verbatim");
+    // Content redaction is out of scope (lead decision, ADR §5.6): the secret
+    // is still persisted verbatim — the control is the file mode, not redaction.
+    assert.match(onDisk, /sk-live-PERSISTED-7c21/, "secret is persisted verbatim (redaction out of scope)");
 
-    // LIVE: no restrictive mode on the session file or its directory.
+    // FIXED (F7): session file 0600, session dir 0700 — not group/other readable.
     const fileMode = (await stat(store.filePath)).mode & 0o777;
     const dirMode = (await stat(path.dirname(store.filePath))).mode & 0o777;
-    assert.notEqual(fileMode & 0o077, 0, `LIVE: session file is group/other readable (${fileMode.toString(8)})`);
-    assert.notEqual(dirMode & 0o077, 0, `LIVE: session dir is group/other readable (${dirMode.toString(8)})`);
+    assert.equal(fileMode & 0o077, 0, `FIXED: session file is not group/other readable (${fileMode.toString(8)})`);
+    assert.equal(dirMode & 0o077, 0, `FIXED: session dir is not group/other readable (${dirMode.toString(8)})`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

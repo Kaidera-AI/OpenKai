@@ -22,7 +22,7 @@ import {
   InProcessTransport,
   evaluate,
   type PermissionRule,
-} from "@openkai/core";
+} from "openkai-core";
 import { PermissionOverlay } from "../dist/tui/permission.js";
 import { OVERLAY_FOOTER } from "../dist/tui/theme.js";
 
@@ -105,8 +105,8 @@ function buildGatedTransport(tmpDir: string, responses: ReturnType<typeof fauxAs
 async function drainEvents(
   transport: InProcessTransport,
   onPermissionRequest: (requestId: string, event: { toolName: string; rule: string }) => void,
-): Promise<{ events: import("@openkai/core").SessionEvent[]; permissionCount: number }> {
-  const events: import("@openkai/core").SessionEvent[] = [];
+): Promise<{ events: import("openkai-core").SessionEvent[]; permissionCount: number }> {
+  const events: import("openkai-core").SessionEvent[] = [];
   let permissionCount = 0;
   const iter = transport.events()[Symbol.asyncIterator]();
   for (;;) {
