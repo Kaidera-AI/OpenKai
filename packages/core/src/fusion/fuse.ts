@@ -19,6 +19,7 @@ import { runPanel } from "./panel.js";
 import { runSynthesis } from "./synthesis.js";
 import type {
   FusionRunRecord,
+  GateCheck,
   GateRun,
   RoleOutput,
   SynthesisArtifact,
@@ -33,6 +34,14 @@ export interface FuseOptions {
   judgeModel?: Model<Api>;
   /** Wrap the run in the FU-3 gate. */
   gate?: boolean;
+  /**
+   * Operator consent for the designed gate (E001 §2, cole's re-review): the
+   * checks are MODEL-AUTHORED shell, run with operator privileges. Called
+   * with the designed checks before any execution; a false return refuses
+   * the gate (outcome "refused") and nothing runs. Absent = consent given
+   * (programmatic callers own the risk); the CLI wires --yes.
+   */
+  approveGate?: (checks: GateCheck[]) => boolean | Promise<boolean>;
   cwd?: string;
   maxRounds?: number;
 }
@@ -67,6 +76,40 @@ export async function fuse(
   const checks = gated
     ? await designGate(streamFn, judge, options.task)
     : undefined;
+
+  // Consent parity with the bash tool (E001 §2): model-authored checks do
+  // not execute without operator approval.
+  if (checks && options.approveGate) {
+    const approved = await options.approveGate(checks);
+    if (!approved) {
+      const record: FusionRunRecord = {
+        runId: uuidv7(),
+        ts: new Date().toISOString(),
+        task: options.task,
+        gated,
+        roles: [],
+        synthesis: undefined,
+        gate: { rounds: 0, outcome: "refused" },
+        wallMs: Date.now() - started,
+      };
+      return {
+        runId: record.runId,
+        outputs: [],
+        synthesis: {
+          consensus: [],
+          divergences: [],
+          discarded: [],
+          blindSpots: [],
+          raw: "",
+          modelId: judge.id,
+          usage: undefined,
+        },
+        gate: { rounds: 0, outcome: "refused" },
+        gateRuns: [],
+        record,
+      };
+    }
+  }
 
   // FU-1: the panel, with the immutable gate visible when gated (step 3).
   const outputs = await runPanel(streamFn, {

@@ -84,7 +84,7 @@ export interface FusionRunRecord {
   gated: boolean;
   roles: RoleOutput[];
   synthesis: Pick<SynthesisArtifact, "modelId" | "usage"> | undefined;
-  gate: { rounds: number; outcome: "pass" | "halt" | "weak-gate" | "not-run" };
+  gate: { rounds: number; outcome: "pass" | "halt" | "weak-gate" | "not-run" | "refused" };
   wallMs: number;
 }
 

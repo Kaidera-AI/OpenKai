@@ -24,6 +24,7 @@ export interface FuseCliOptions {
   judgeModel?: string;
   provider?: string;
   gate: boolean;
+  yes: boolean;
   maxRounds?: number;
   project?: string;
   api?: string;
@@ -121,6 +122,20 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
         judgeModel: judge,
         gate: options.gate,
         maxRounds: options.maxRounds,
+        // Consent parity (E001 §2): the gate's checks are model-authored
+        // shell with operator privileges. Print them; only --yes executes.
+        approveGate: (checks) => {
+          process.stderr.write("\n[openkai] validator-designed gate (model-authored shell):\n");
+          for (const [i, c] of checks.entries()) {
+            process.stderr.write(`  ${i + 1}. ${c.name}\n     $ ${c.command}\n`);
+          }
+          if (!options.yes) {
+            process.stderr.write("gate REFUSED — rerun with --yes to execute these checks.\n");
+            return false;
+          }
+          process.stderr.write("gate approved via --yes.\n");
+          return true;
+        },
       },
     );
 
@@ -156,13 +171,16 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
           ? `PASS after ${result.gate.rounds} evaluation round(s)`
           : result.gate.outcome === "weak-gate"
             ? "WEAK GATE — baseline was green before work; gate proves nothing"
-            : `HALT — gate still failing after the retry cap (escalate to triage)`;
+            : result.gate.outcome === "refused"
+              ? "REFUSED — checks not approved (rerun with --yes to execute)"
+              : `HALT — gate still failing after the retry cap (escalate to triage)`;
       process.stdout.write(`\n══ GATE: ${verdict} ══\n`);
     }
 
     if (!options.quiet) {
       process.stderr.write(`[openkai] run ${result.runId} recorded at ${logPath}\n`);
     }
+    if (result.gate.outcome === "refused") return 2;
     return options.gate && result.gate.outcome !== "pass" ? 1 : 0;
   } catch (error) {
     process.stderr.write(

@@ -87,6 +87,8 @@ Options:
   --builder-model <id>  (fuse) Builder role model (default: same as architect).
   --judge-model <id>    (fuse) Synthesis/gate-validator model.
   --gate                (fuse) Enable gate-first validation (FU-3).
+  --yes                 (fuse --gate) Approve executing the validator-designed
+                         checks (model-authored shell, operator privileges).
   --max-rounds <n>      (fuse) Gate repair cap, 1-10 (default 3).
   --model <id>           (tui) OpenRouter model id (default: $OPENKAI_MODEL).
   --last-id <id>         (events) Resume after a team_events id.
@@ -318,6 +320,7 @@ async function main(argv: string[]): Promise<number> {
       judgeModel: getString("--judge-model"),
       provider: getString("--provider"),
       gate: getBool("--gate"),
+      yes: getBool("--yes"),
       project: getString("--project") ?? process.env.CORTEX_PROJECT,
       api: getString("--api"),
       agent: getString("--agent"),

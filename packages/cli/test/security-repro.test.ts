@@ -10,11 +10,21 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, symlink, readdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, symlink, mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { evaluate, readOnlyTools } from "@openkai/core";
+import {
+  evaluate,
+  evaluateWithReason,
+  readOnlyTools,
+  gatedTools,
+  SessionPermissionGate,
+  SessionStore,
+  ShadowGit,
+  type PushPermissionEvent,
+} from "@openkai/core";
+import { Transcript } from "../dist/tui/transcript.js";
 
 function readTool(cwd: string) {
   const t = readOnlyTools(cwd).find((x) => x.name === "read_file");
@@ -25,6 +35,42 @@ function readTool(cwd: string) {
 async function callRead(cwd: string, p: string): Promise<string> {
   const res: any = await readTool(cwd).execute("t1", { path: p } as any);
   return res.content.map((c: any) => c.text).join("");
+}
+
+/** A gate that auto-answers every `ask` with `answer` (no operator in tests). */
+function autoGate(
+  cwd: string,
+  answer: "once" | "always" | "reject" = "once",
+): SessionPermissionGate {
+  const pushEvent: PushPermissionEvent = (event) => {
+    setImmediate(() => gate.respond(event.requestId, answer));
+  };
+  const gate = new SessionPermissionGate({ cwd, pushEvent });
+  return gate;
+}
+
+/** Fetch a gated tool by name. */
+function gatedTool(cwd: string, gate: SessionPermissionGate, name: string) {
+  const t = gatedTools(cwd, gate).find((x) => x.name === name);
+  assert.ok(t, `${name} tool must exist`);
+  return t!;
+}
+
+/**
+ * Join a tool result's text content without trusting the envelope shape —
+ * these assertions run against hostile inputs, so nothing is assumed.
+ */
+function textOf(res: unknown): string {
+  if (res === null || typeof res !== "object" || !("content" in res)) return "";
+  const { content } = res as { content: unknown };
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (part === null || typeof part !== "object" || !("text" in part)) return "";
+      const { text } = part as { text: unknown };
+      return typeof text === "string" ? text : "";
+    })
+    .join("");
 }
 
 /**
@@ -136,5 +182,432 @@ test("GUARD: recursive grep never surfaces floor-file content", async () => {
     assert.equal((body.match(/GREPPABLE_SECRET=\d/g) ?? []).length, 0, "no floor-file lines leak");
   } finally {
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// RE-REVIEW 2026-08-16 (cole@openkai) — E001 §2 gate, second pass.
+//
+// Verified the 09b56ce + 3f89a45 fixes (REPRO 1-3 above now assert `deny`),
+// then attacked the rest of the §2 table. Three NEW live classes are proved
+// below by REPRO 4-6. Per the file's convention those assert the CURRENT
+// (vulnerable) behaviour so they pass on this tree and prove the exploit —
+// INVERT ON FIX (flip to expect deny/refusal), same as REPRO 1-3 were.
+// The HELD-* tests below are regression guards: they must never flip.
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * FINDING 4 (HIGH, LIVE) — deny-floor blind spot: a protected NAME used as a
+ * DIRECTORY component is unprotected. `pathGlobMatch` matches a bare-name
+ * pattern against the whole relpath or the BASENAME only, so `.env/production`
+ * (basename `production`) misses the `.env` floor entirely. read_file returns
+ * decision=allow — a silent, unprompted secret read. `.env/` directories are a
+ * real convention (per-environment files), and the same hole applies to
+ * `*.pem` / `*.key` used as directory names.
+ *
+ * INVERT ON FIX: bare-name floor patterns must match ANY path component.
+ */
+test("REPRO 4: a protected name used as a DIRECTORY escapes the deny floor", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okrepro-floordir-"));
+  try {
+    await mkdir(path.join(cwd, ".env"));
+    await writeFile(path.join(cwd, ".env", "production"), "DB_PASSWORD=hunter2\n");
+    await mkdir(path.join(cwd, "server.pem"));
+    await writeFile(path.join(cwd, "server.pem", "privkey"), "PRIVATE-MATERIAL\n");
+
+    // Control: the floor still works when the secret is a leaf file.
+    assert.equal(evaluate("read_file", { path: ".env" }, cwd), "deny", "control: .env denied");
+
+    // LIVE: the same name as a directory is not covered.
+    assert.equal(
+      evaluate("read_file", { path: ".env/production" }, cwd),
+      "allow",
+      "LIVE: .env/production is allowed by the engine",
+    );
+    assert.equal(
+      evaluate("read_file", { path: "server.pem/privkey" }, cwd),
+      "allow",
+      "LIVE: server.pem/privkey is allowed by the engine",
+    );
+
+    // …and the tool layer hands the secret over verbatim.
+    const body = await callRead(cwd, ".env/production");
+    assert.match(body, /DB_PASSWORD=hunter2/, "LIVE: secret is disclosed with no prompt");
+
+    // Contrast: the slashed `**/.ssh/**` pattern DOES cover descendants —
+    // this is why the bare-name patterns are the defect, not the floor idea.
+    await mkdir(path.join(cwd, "deploy", ".ssh"), { recursive: true });
+    await writeFile(path.join(cwd, "deploy", ".ssh", "authorized_keys"), "ssh-rsa AAAA\n");
+    assert.equal(
+      evaluate("read_file", { path: "deploy/.ssh/authorized_keys" }, cwd),
+      "deny",
+      "slashed floor patterns already cover descendants",
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/**
+ * FINDING 5 (MEDIUM, LIVE) — `edit_file` reads the target BEFORE consulting the
+ * gate (tools.ts: `fs.readFile(abs)` + `countOccurrences` precede
+ * `gate.request`), so its error text is a confirmed-guess oracle over files the
+ * caller may never read: a correct guess returns "Permission denied", a wrong
+ * one returns "oldString not found", and the ambiguous branch leaks a match
+ * COUNT. No `permission_request` is emitted, so the operator never sees it.
+ *
+ * INVERT ON FIX: resolve + floor/containment check BEFORE any read, so both
+ * probes return an identical refusal.
+ */
+test("REPRO 5: edit_file's pre-gate read is a content oracle over floor files", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okrepro-oracle-"));
+  try {
+    await writeFile(path.join(cwd, ".env"), "OPENROUTER_API_KEY=sk-live-ORACLE-9f3a\n");
+    const gate = autoGate(cwd, "reject"); // operator refuses everything
+    const edit = gatedTool(cwd, gate, "edit_file");
+
+    const correct = textOf(
+      await edit.execute("o1", { path: ".env", oldString: "sk-live-ORACLE-9f3a", newString: "x" }),
+    );
+    const wrong = textOf(
+      await edit.execute("o2", { path: ".env", oldString: "sk-live-WRONGGUESS", newString: "x" }),
+    );
+
+    // LIVE: the two replies differ, which IS the oracle.
+    assert.notEqual(correct, wrong, "LIVE: correct vs wrong guess are distinguishable");
+    assert.match(correct, /protected path/, "correct guess → floor refusal");
+    assert.match(wrong, /oldString not found/, "wrong guess → read-derived error");
+
+    // The floor still stops the WRITE — confidentiality leaks, integrity holds.
+    assert.match(await callRead(cwd, ".env"), /denied — protected path/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/** FINDING 5b (LIVE) — the same oracle aimed outside cwd leaks existence too. */
+test("REPRO 5b: edit_file's pre-gate read leaks content/existence outside cwd", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okrepro-oracle2-"));
+  const cwd = path.join(root, "ws");
+  try {
+    await mkdir(cwd);
+    await writeFile(path.join(root, "secret.txt"), "TOPSECRET-OUTSIDE\n");
+    const gate = autoGate(cwd, "reject");
+    const edit = gatedTool(cwd, gate, "edit_file");
+
+    const correct = textOf(
+      await edit.execute("p1", {
+        path: "../secret.txt",
+        oldString: "TOPSECRET-OUTSIDE",
+        newString: "x",
+      }),
+    );
+    const wrong = textOf(
+      await edit.execute("p2", {
+        path: "../secret.txt",
+        oldString: "NOPE-NOT-PRESENT",
+        newString: "x",
+      }),
+    );
+
+    assert.notEqual(correct, wrong, "LIVE: outside-cwd content is probeable");
+    assert.match(correct, /outside working directory/, "correct guess → containment refusal");
+    assert.match(wrong, /oldString not found/, "wrong guess proves the file WAS read");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * FINDING 6 (MEDIUM, LIVE) — the §2 "TUI rendering" row: model output is
+ * appended to the transcript with no escape filtering, so a hostile model turn
+ * drives the operator's terminal — OSC 52 writes the clipboard, OSC 0 rewrites
+ * the window title, CSI 2J clears the screen (erasing evidence), and SGR text
+ * can forge the approval chrome the consent model depends on.
+ *
+ * INVERT ON FIX: strip/neutralise C0, CSI and OSC sequences from model text
+ * before it reaches a component.
+ */
+test("REPRO 6: model output injects raw ANSI/OSC escapes into the terminal", () => {
+  const transcript = new Transcript("openkai");
+  const hostile =
+    "Here is your answer.\n" +
+    "\x1b]52;c;aHR0cHM6Ly9hdHRhY2tlci5leGFtcGxlL3B3bg==\x07" + // clipboard write
+    "\x1b]0;PWNED-WINDOW-TITLE\x07" + // window title
+    "\x1b[2J\x1b[H" + // clear screen + home
+    "\x1b[38;5;46m✔ Allow always — approved by operator\x1b[39m\n"; // forged chrome
+
+  transcript.applyEvent({ kind: "connected" });
+  transcript.applyEvent({ kind: "delta", field: "text", delta: hostile });
+  transcript.applyEvent({ kind: "turn_end" });
+  const frame = transcript.render(80).join("\n");
+
+  // FIXED (2026-08-16, sanitizeTerminalText at the transcript boundary): no
+  // control sequence survives into the rendered frame.
+  assert.ok(!frame.includes("\x1b]52;"), "OSC 52 clipboard write is stripped");
+  assert.ok(!frame.includes("\x1b]0;"), "OSC 0 title rewrite is stripped");
+  assert.ok(!frame.includes("\x1b[2J"), "CSI 2J screen clear is stripped");
+  assert.ok(!frame.includes("\x07"), "raw BEL is stripped");
+  // The printable text content survives — sanitisation alters only controls.
+  assert.match(frame, /Here is your answer\./);
+  // The forged chrome line loses its SGR but its text remains visible as
+  // ordinary model output — it can no longer impersonate the real overlay
+  // (the genuine overlay renders from components, not transcript text).
+  assert.ok(!frame.includes("\x1b[38;5;46m"), "forged chrome styling is stripped");
+});
+
+// ── HELD regression guards (verified 2026-08-16; must never flip) ───────────
+
+/** Handoff item 4 — a write routed through a symlinked parent stays in cwd. */
+test("HELD: write_file through a symlinked parent dir cannot land outside cwd", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okheld-wsym-"));
+  const cwd = path.join(root, "ws");
+  const outside = path.join(root, "outside");
+  try {
+    await mkdir(cwd);
+    await mkdir(outside);
+    await symlink(outside, path.join(cwd, "public"));
+
+    const { decision, reason } = evaluateWithReason(
+      "write_file",
+      { path: "public/pwned.txt", content: "X" },
+      cwd,
+    );
+    assert.equal(decision, "deny", "engine denies the symlinked-parent write");
+    assert.match(reason, /outside working directory/);
+
+    const gate = autoGate(cwd, "once"); // even a consenting operator cannot help
+    const body = textOf(
+      await gatedTool(cwd, gate, "write_file").execute("w1", {
+        path: "public/pwned.txt",
+        content: "PWNED-OUTSIDE-CWD",
+      }),
+    );
+    assert.match(body, /Permission denied/, "tool refuses");
+    await assert.rejects(
+      () => readFile(path.join(outside, "pwned.txt"), "utf-8"),
+      "nothing landed outside cwd",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** Handoff item 4 — the same guard for edit_file's write side. */
+test("HELD: edit_file through a symlinked parent dir cannot tamper outside cwd", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okheld-esym-"));
+  const cwd = path.join(root, "ws");
+  const outside = path.join(root, "outside");
+  try {
+    await mkdir(cwd);
+    await mkdir(outside);
+    const victim = path.join(outside, "victim.txt");
+    await writeFile(victim, "KEEPME original\n");
+    await symlink(outside, path.join(cwd, "public"));
+
+    const gate = autoGate(cwd, "once");
+    const body = textOf(
+      await gatedTool(cwd, gate, "edit_file").execute("e1", {
+        path: "public/victim.txt",
+        oldString: "KEEPME original",
+        newString: "TAMPERED",
+      }),
+    );
+    assert.match(body, /Permission denied/, "tool refuses");
+    assert.doesNotMatch(await readFile(victim, "utf-8"), /TAMPERED/, "outside file untouched");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** §2 "Rule-ordering bypass" — the floor precedes the rule walk. */
+test("HELD: no allow rule can override the deny floor", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okheld-order-"));
+  try {
+    await writeFile(path.join(cwd, ".env"), "SECRET=1\n");
+    const attacker = [
+      { tool: "read_file", path: "**", decision: "allow" as const, label: "wildcard" },
+      { tool: "read_file", path: ".env", decision: "allow" as const, label: "explicit-env" },
+    ];
+    assert.equal(
+      evaluate("read_file", { path: ".env" }, cwd, attacker),
+      "deny",
+      "two attacker allow rules incl. an explicit .env rule still deny",
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/** §2 "always-cache poisoning" — the floor is checked before the cache. */
+test("HELD: an always-approval cannot be replayed onto a floor path", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okheld-cache-"));
+  try {
+    await writeFile(path.join(cwd, ".env"), "SECRET=cache\n");
+    const gate = autoGate(cwd, "always");
+    const write = gatedTool(cwd, gate, "write_file");
+
+    // Seed the session `always` cache with a benign approved write.
+    assert.match(
+      textOf(await write.execute("c1", { path: "benign.txt", content: "hello" })),
+      /Wrote benign\.txt/,
+    );
+    // The floor path must still be refused, cache notwithstanding.
+    assert.match(
+      textOf(await write.execute("c2", { path: ".env", content: "SECRET=overwritten" })),
+      /Permission denied/,
+    );
+    assert.doesNotMatch(await readFile(path.join(cwd, ".env"), "utf-8"), /overwritten/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/** §2 "bash obfuscation" — bash can never be auto-allowed, however written. */
+test("HELD: bash is never auto-allowed, even with an explicit allow rule", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okheld-bash-"));
+  try {
+    const attacker = [{ tool: "bash", decision: "allow" as const, label: "attacker-bash" }];
+    assert.equal(evaluate("bash", { command: "cat .env" }, cwd, attacker), "ask");
+    assert.equal(
+      evaluate("bash", { command: 'c""at $(printf "\\056")env | base64' }, cwd, attacker),
+      "ask",
+      "obfuscated command still only reaches `ask`",
+    );
+    assert.equal(
+      evaluate("bash", { command: "cat", path: "benign.txt" }, cwd, attacker),
+      "ask",
+      "a path arg does not route bash through the file-tool branch",
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/** Handoff item 5 breadth — the read-only trio cannot follow a symlinked dir. */
+test("HELD: list_files and grep cannot escape via a symlinked directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okheld-ls-"));
+  const cwd = path.join(root, "ws");
+  const outside = path.join(root, "outside");
+  try {
+    await mkdir(cwd);
+    await mkdir(outside);
+    await writeFile(path.join(outside, "loot.txt"), "OUTSIDE-LOOT-LINE\n");
+    await symlink(outside, path.join(cwd, "docs"));
+
+    const list = readOnlyTools(cwd).find((t) => t.name === "list_files")!;
+    const grep = readOnlyTools(cwd).find((t) => t.name === "grep")!;
+
+    assert.match(
+      textOf(await list.execute("l1", { path: "docs" })),
+      /escapes working directory/,
+      "list_files refuses the symlinked dir",
+    );
+    assert.doesNotMatch(
+      textOf(await grep.execute("g1", { pattern: "OUTSIDE-LOOT-LINE" })),
+      /OUTSIDE-LOOT-LINE/,
+      "recursive grep does not follow it",
+    );
+    assert.doesNotMatch(
+      textOf(await grep.execute("g2", { pattern: "OUTSIDE-LOOT-LINE", path: "docs" })),
+      /OUTSIDE-LOOT-LINE/,
+      "targeted grep does not follow it either",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** Finding-2 breadth — the whole case/normalisation family stays denied. */
+test("HELD: every case variant of the .env floor is denied", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "okheld-variants-"));
+  try {
+    await writeFile(path.join(cwd, ".env"), "SECRET=variants\n");
+    for (const variant of [".ENV", ".Env", ".eNv", "./.ENV", "sub/../.ENV", ".env.local", ".ENV.LOCAL"]) {
+      assert.equal(
+        evaluate("read_file", { path: variant }, cwd),
+        "deny",
+        `${variant} must be denied by the floor`,
+      );
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/**
+ * FINDING 7 (MEDIUM, LIVE) — §2 "Session persistence" row: SECURITY.md §4 states
+ * secrets must live only in `.env` and "never in Cortex memory, sessions,
+ * artifacts, or transcripts", but no redaction layer exists anywhere in
+ * `persist/` or `cortex/` — whatever reaches a turn is written verbatim. Worse,
+ * the session tree is created with default permissions, so on a shared host the
+ * transcript is readable by every local user.
+ *
+ * INVERT ON FIX: either redact secret-shaped spans on write, or amend §4 to
+ * state the rule is operator-responsibility — and in both cases create the
+ * session tree 0700/0600.
+ */
+test("REPRO 7: session persistence stores secrets verbatim and world-readable", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okrepro-persist-"));
+  try {
+    const store = new SessionStore({ root, sessionId: "11111111-1111-7111-8111-111111111111" });
+    await store.ensure();
+    // An approved `bash cat .env` (ADR §5.6: execution is not a sandbox) puts
+    // real secret material into the turn — this is the realistic path.
+    await store.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "OPENROUTER_API_KEY=sk-live-PERSISTED-7c21" }],
+      timestamp: 1,
+    } as never);
+
+    const onDisk = await readFile(store.filePath, "utf-8");
+    assert.match(onDisk, /sk-live-PERSISTED-7c21/, "LIVE: secret is persisted verbatim");
+
+    // LIVE: no restrictive mode on the session file or its directory.
+    const fileMode = (await stat(store.filePath)).mode & 0o777;
+    const dirMode = (await stat(path.dirname(store.filePath))).mode & 0o777;
+    assert.notEqual(fileMode & 0o077, 0, `LIVE: session file is group/other readable (${fileMode.toString(8)})`);
+    assert.notEqual(dirMode & 0o077, 0, `LIVE: session dir is group/other readable (${dirMode.toString(8)})`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * §2 "Shadow-git undo" row — restore-path escape. `undo()` deletes files git
+ * reports as added between the two snapshots; the containment check is lexical
+ * (`path.resolve` + `startsWith`) rather than canonical, so this guard proves
+ * the escape is not reachable: git records a symlink as a symlink and never
+ * descends it, and the non-recursive `rm` unlinks the link, not the target.
+ */
+test("HELD: shadow-git undo cannot delete outside cwd via a symlinked dir", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okheld-undo-"));
+  const cwd = path.join(root, "ws");
+  const outside = path.join(root, "outside");
+  try {
+    await mkdir(cwd);
+    await mkdir(outside);
+    const precious = path.join(outside, "precious.txt");
+    await writeFile(precious, "MUST-SURVIVE-UNDO\n");
+
+    const shadow = new ShadowGit(cwd);
+    await writeFile(path.join(cwd, "base.txt"), "base\n");
+    await shadow.snapshot("baseline");
+
+    // Between snapshots the agent plants a symlink to the outside directory
+    // plus a file reached through it — undo must not follow either.
+    await symlink(outside, path.join(cwd, "escape"));
+    await writeFile(path.join(cwd, "added.txt"), "added\n");
+    await shadow.snapshot("with-escape");
+
+    await shadow.undo();
+
+    assert.equal(await readFile(precious, "utf-8"), "MUST-SURVIVE-UNDO\n", "outside file survives");
+    await assert.rejects(
+      () => readFile(path.join(cwd, "added.txt"), "utf-8"),
+      "in-cwd added file is rolled back",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

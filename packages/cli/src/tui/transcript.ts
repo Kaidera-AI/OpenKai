@@ -26,6 +26,7 @@
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, markdownTheme, rolePill, text as textToken, toolBorder } from "./theme.js";
+import { sanitizeTerminalText } from "./sanitize.js";
 
 /** One rendered line's max length for previews (kept short for cards). */
 const PREVIEW_LEN = 120;
@@ -88,7 +89,9 @@ function extractResultText(result: unknown, isError: boolean): string[] {
   }
   text ??= safeStringify(result);
 
-  const lines = text.split("\n").filter((l) => l.trim().length > 0 || !isError);
+  const lines = sanitizeTerminalText(text)
+    .split("\n")
+    .filter((l) => l.trim().length > 0 || !isError);
   const head = lines.slice(0, MAX_RESULT_LINES);
   const more = lines.length - head.length;
   const out = head.map((l) => (l.length > PREVIEW_LEN ? l.slice(0, PREVIEW_LEN - 1) + "…" : l));
@@ -134,9 +137,10 @@ export class Transcript implements Component {
   /** Add a user message block at the top of a turn. */
   addUserMessage(text: string): void {
     // Dim marker, not a shouty bold label — the operator's own text needs no
-    // emphasis, the model's output does.
-    const comp = new Text(`${textToken.dim("You")}\n\n${text}`, 1, 0);
-    this.blocks.push({ kind: "user", text, comp });
+    // emphasis, the model's output does. Sanitised: pastes can carry escapes.
+    const clean = sanitizeTerminalText(text);
+    const comp = new Text(`${textToken.dim("You")}\n\n${clean}`, 1, 0);
+    this.blocks.push({ kind: "user", text: clean, comp });
   }
 
   /**
@@ -173,8 +177,9 @@ export class Transcript implements Component {
 
   /** Replay a settled assistant message (session resume — no live streaming). */
   replayAssistant(text: string): void {
-    const comp = new Markdown(`${rolePill(this.agentName)}\n\n${text}`, 1, 0, markdownTheme);
-    this.blocks.push({ kind: "assistant", text, comp });
+    const clean = sanitizeTerminalText(text);
+    const comp = new Markdown(`${rolePill(this.agentName)}\n\n${clean}`, 1, 0, markdownTheme);
+    this.blocks.push({ kind: "assistant", text: clean, comp });
   }
 
   /**
@@ -193,26 +198,28 @@ export class Transcript implements Component {
   ): void {
     for (const output of outputs) {
       const header = `${rolePill(output.role)} ${textToken.dim(`· ${output.modelId} · ${output.latencyMs}ms`)}`;
-      const comp = new Markdown(`${header}\n\n${output.text}`, 1, 0, markdownTheme);
-      this.blocks.push({ kind: "assistant", text: output.text, comp });
+      const clean = sanitizeTerminalText(output.text);
+      const comp = new Markdown(`${header}\n\n${clean}`, 1, 0, markdownTheme);
+      this.blocks.push({ kind: "assistant", text: clean, comp });
     }
 
+    const clean = (s: string): string => sanitizeTerminalText(s);
     const lines: string[] = [highlight.base("synthesis")];
     if (synthesis.consensus.length > 0) {
       lines.push(textToken.strong("consensus"));
-      for (const item of synthesis.consensus) lines.push(`  • ${item}`);
+      for (const item of synthesis.consensus) lines.push(`  • ${clean(item)}`);
     }
     for (const d of synthesis.divergences) {
-      lines.push(`${textToken.strong("divergence")} ${d.topic} ${textToken.dim(`(kept: ${d.kept})`)}`);
-      lines.push(`  ${rolePill("architect")} ${d.architect}`);
-      lines.push(`  ${rolePill("builder")} ${d.builder}`);
+      lines.push(`${textToken.strong("divergence")} ${clean(d.topic)} ${textToken.dim(`(kept: ${d.kept})`)}`);
+      lines.push(`  ${rolePill("architect")} ${clean(d.architect)}`);
+      lines.push(`  ${rolePill("builder")} ${clean(d.builder)}`);
     }
     for (const d of synthesis.discarded) {
-      lines.push(`${textToken.dim("discarded")} ${d.item} ${textToken.dim(`— ${d.reason} [${d.by}]`)}`);
+      lines.push(`${textToken.dim("discarded")} ${clean(d.item)} ${textToken.dim(`— ${clean(d.reason)} [${d.by}]`)}`);
     }
     if (synthesis.blindSpots.length > 0) {
       lines.push(textToken.strong("blind spots"));
-      for (const b of synthesis.blindSpots) lines.push(`  • ${b}`);
+      for (const b of synthesis.blindSpots) lines.push(`  • ${clean(b)}`);
     }
     const comp = new Text(
       lines.map((line) => `${toolBorder("▎ ")}${line}`).join("\n"),
@@ -302,17 +309,21 @@ export class Transcript implements Component {
 
   /** Append a text delta to the live block (btw side channel or assistant). */
   private appendText(delta: string): void {
+    // Model output is hostile to the terminal: strip control sequences at the
+    // boundary (E001 §2 — cole's OSC/CSI finding). Safe across split deltas:
+    // a lone ESC is a stripped control char.
+    const clean = sanitizeTerminalText(delta);
     if (this.liveBtw !== null) {
       const block = this.blocks[this.liveBtw]!;
       if (block.kind !== "btw") return;
-      block.text += delta;
+      block.text += clean;
       block.comp.setText(this.btwBody(block.question, block.text));
       return;
     }
     if (this.liveAssistant === null) this.beginAssistantTurn();
     const block = this.blocks[this.liveAssistant!]!;
     if (block.kind !== "assistant") return;
-    block.text += delta;
+    block.text += clean;
     block.comp.setText(block.text.length > 0 ? `${rolePill(this.agentName)}\n\n${block.text}` : "");
   }
 
@@ -322,7 +333,7 @@ export class Transcript implements Component {
     if (this.liveThinking === null) this.beginAssistantTurn();
     const block = this.blocks[this.liveThinking!]!;
     if (block.kind !== "thinking") return;
-    block.text += delta;
+    block.text += sanitizeTerminalText(delta);
     this.renderThinking(block);
   }
 

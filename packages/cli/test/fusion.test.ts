@@ -396,3 +396,47 @@ test("bandit: ungated runs carry no verdict and are ignored", () => {
   const rec = bandit.recommend("low", ["model-z"]);
   assert.match(rec?.reason ?? "", /no evidence/);
 });
+
+// ── E001 §2 re-review fixes: terminal sanitiser + gate consent ─────────────
+
+test("gate consent: refused approval skips execution entirely (outcome refused)", async () => {
+  const rig = makeRig((system) => {
+    if (system.includes("VALIDATOR")) {
+      return JSON.stringify([{ name: "probe", command: "true" }]);
+    }
+    if (system.includes("SYNTHESISER")) return SYNTHESIS_JSON;
+    if (system.includes("ARCHITECT role")) return "A";
+    return "B";
+  });
+  const result = await fuse(rig.streamFn, {
+    task: "gated task",
+    architectModel: rig.model,
+    builderModel: rig.model,
+    gate: true,
+    approveGate: () => false,
+  });
+  assert.equal(result.gate.outcome, "refused");
+  assert.equal(result.gateRuns.length, 0, "no gate check may execute without consent");
+  assert.equal(result.outputs.length, 0, "a refused gate aborts the run before the panel");
+});
+
+test("gate consent: approval lets the designed gate run", async () => {
+  const rig = makeRig((system) => {
+    if (system.includes("VALIDATOR")) {
+      return JSON.stringify([{ name: "fails at baseline", command: "false" }]);
+    }
+    if (system.includes("SYNTHESISER")) return SYNTHESIS_JSON;
+    if (system.includes("ARCHITECT role")) return "A";
+    return "B";
+  });
+  const result = await fuse(rig.streamFn, {
+    task: "gated task",
+    architectModel: rig.model,
+    builderModel: rig.model,
+    gate: true,
+    approveGate: () => true,
+  });
+  // Baseline fails RED (command `false`), evaluation fails, no applyWork → halt.
+  assert.equal(result.gate.outcome, "halt");
+  assert.ok(result.gateRuns.length >= 2, "baseline + evaluation executed with consent");
+});
