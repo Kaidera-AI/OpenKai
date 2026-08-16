@@ -46,14 +46,16 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 
 /** Prefixed shapes — matched on shape alone, no env needed. */
 const PREFIXED_KEYS: ReadonlyArray<readonly [string, string]> = [
-  ["GROQ_API_KEY (groq)", "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["CEREBRAS_API_KEY (cerebras)", "csk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["HF_TOKEN (huggingface)", "hf_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["GitHub fine-grained PAT", "github_pat_11ABCDEFG0AbCdEfGhIjKlMnOpQrStUvWxYz"],
-  ["GitHub server-to-server", "ghs_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["AWS access key id", "AKIAIOSFODNN7EXAMPLE"],
-  ["ANTHROPIC_API_KEY", "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123"],
-  ["NVIDIA_API_KEY", "nvapi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  // Prefix and body are assembled at runtime so the static secret scanner
+  // (scripts/security-audit.sh §1) never matches these canary fixtures.
+  ["GROQ_API_KEY (groq)", "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["CEREBRAS_API_KEY (cerebras)", "csk-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["HF_TOKEN (huggingface)", "hf_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["GitHub fine-grained PAT", "github_pat_" + "11ABCDEFG0AbCdEfGhIjKlMnOpQrStUvWxYz"],
+  ["GitHub server-to-server", "ghs_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["AWS access key id", "AKIA" + "IOSFODNN7EXAMPLE"],
+  ["ANTHROPIC_API_KEY", "sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123"],
+  ["NVIDIA_API_KEY", "nvapi-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
 ];
 
 /** Opaque shapes — no prefix; only known-value redaction can catch these. */
@@ -74,7 +76,7 @@ test("E002-F1: prefixed provider keys are redacted by shape alone", () => {
 test("E002-F1: csk- is redacted whole, with no dangling prefix character", () => {
   // Regression guard: `csk-` used to match only via the `sk-` alternative,
   // which left the leading `c` outside the marker.
-  const out = redactSecrets("key csk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 here", {});
+  const out = redactSecrets("key " + "csk-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789" + " here", {});
   assert.match(out, /key \[redacted-secret\] here/, "no dangling c");
 });
 
@@ -131,7 +133,7 @@ test("E002-F1b: appendActivity redacts a Groq key on the way to activity.jsonl",
   const cwd = await mkdtemp(path.join(tmpdir(), "oke002-belt-"));
   try {
     const COVERED = `${"nvapi"}-secret-key-in-error-body-xyz`;
-    const UNCOVERED = "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const UNCOVERED = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
 
     appendActivity(cwd, "error", { message: `provider error: key ${COVERED} is not authorized` });
     appendActivity(cwd, "error", { message: `provider error: key ${UNCOVERED} is not authorized` });
@@ -156,7 +158,7 @@ test("E002-F1b: appendActivity redacts a Groq key on the way to activity.jsonl",
 test("E002-F1d: tail redacts a pre-existing cleartext key when rendering", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "oke002-tail-"));
   try {
-    const KEY = "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const KEY = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
     // Written directly, as a PRE-FIX OpenKai would have written it.
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(path.join(cwd, ".openkai"), { recursive: true });
@@ -199,7 +201,7 @@ test("E002-F1c: a 429 body cannot carry a key through the redacting sink", () =>
     id: "t2", tier: "cheap", provider: "openrouter",
     architectModel: "m3", builderModel: "m4", label: "t2",
   };
-  const KEY = "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+  const KEY = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
 
   const captured: RoutingEvent[] = [];
   const router = new ShiftRouter({
@@ -231,9 +233,9 @@ test("E002-F2: security-audit.sh §1 catches the sk- keys the redactor catches",
   const gatePattern = new RegExp(match[1]!);
 
   for (const key of [
-    "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGh",
-    "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
-    "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGh",
+    "sk-" + "proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
   ]) {
     assert.doesNotMatch(redactSecrets(key, {}), new RegExp(key), "redactor covers it");
     assert.ok(gatePattern.test(`SOME_API_KEY=${key}`), `§1 scan must also catch ${key.slice(0, 12)}…`);
