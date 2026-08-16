@@ -27,12 +27,17 @@ Every agent harness gives you a chat box. OpenKai gives you a **workstation**:
 ## Install
 
 ```bash
-npm install -g @kaidera/openkai   # node ≥ 22.19
-openkai info                        # self-check: providers, memory, local state
-openkai                             # the TUI
+# Homebrew (macOS/Linux)
+brew install kaidera-ai/tap/openkai
+
+# curl (standalone binary, no node required)
+curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh
+
+# npm (node ≥ 22.19)
+npm install -g @kaidera/openkai
 ```
 
-Standalone per-platform binaries (no node required) ship with each release; `openkai upgrade` self-updates with rollback.
+Then: `openkai info` to self-check, `openkai` to start. Upgrades: `openkai upgrade` (brew users: `brew upgrade openkai`); rollback built in.
 
 ```bash
 # 30 seconds to a working agent

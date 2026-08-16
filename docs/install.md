@@ -10,7 +10,10 @@ Requires Node.js >= 22.19. The binary channel additionally requires
 
 ## Channel 1 — npm
 
-At release: `npm install -g @kaidera/openkai`.
+At release, three channels:
+- **Homebrew**: `brew install kaidera-ai/tap/openkai`
+- **curl** (standalone binary): `curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh`
+- **npm**: `npm install -g @kaidera/openkai`
 
 Until then, pack the workspaces and install the tarballs. `--prefix` keeps this
 out of your real global install:
