@@ -78,6 +78,11 @@ export interface InProcessTransportOptions extends SessionTransportOptions {
    * uses the read-only trio and `respond()` throws (no approval channel).
    */
   enablePermissions?: boolean;
+  /**
+   * Activity sink: every session event is also offered here (for the live
+   * activity feed behind `openkai tail`). Fire-and-forget; never awaited.
+   */
+  onActivity?: (event: SessionEvent) => void;
 }
 
 /** A bounded async queue for bridging agent events to the consumer stream. */
@@ -136,6 +141,7 @@ export class InProcessTransport implements SessionTransport {
   /** P4b permission gate (undefined when permissions are disabled — v1 path). */
   private readonly gate: SessionPermissionGate | undefined;
   private readonly shadow: ShadowGit | undefined;
+  private readonly onActivity: ((event: SessionEvent) => void) | undefined;
 
   /** Stamp + push a permission_request event onto the session queue. */
   private emitPermissionEvent(e: PermissionRequestPayload): void {
@@ -179,6 +185,7 @@ export class InProcessTransport implements SessionTransport {
     // guarantee, now explicit instead of by absence (scope §2).
     const enablePermissions = options.enablePermissions === true;
     this.queue = new EventQueue();
+    this.onActivity = options.onActivity;
     this.gate = enablePermissions
       ? new SessionPermissionGate({ cwd: options.cwd, pushEvent: (e) => this.emitPermissionEvent(e) })
       : undefined;
@@ -227,11 +234,13 @@ export class InProcessTransport implements SessionTransport {
     this.agent.subscribe((event: AgentEvent) => {
       for (const mapped of mapAgentEvent(event)) {
         this.seq += 1;
-        this.queue.push({
+        const stamped = {
           ...mapped,
           sessionId: this.sessionId,
           seq: this.seq,
-        } as SessionEvent);
+        } as SessionEvent;
+        this.queue.push(stamped);
+        this.onActivity?.(stamped);
       }
       return Promise.resolve();
     });

@@ -116,6 +116,7 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   }
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
   statusState.agentName = agentName;
+  statusState.provider = options.provider ?? "";
   const status = new StatusLine(statusState);
 
   const controller = new TuiController(tui, options, transcript, status);
@@ -526,14 +527,20 @@ export class TuiController {
   applyEvent(event: SessionEvent): void {
     switch (event.kind) {
       case "connected":
+        this.setActivity("connecting");
         this.setBusy(true);
         this.transcript.applyEvent(event);
         break;
       case "delta":
+        this.setActivity(event.field === "thinking" ? "thinking" : "writing");
         this.transcript.applyEvent(event);
         break;
       case "tool_call":
+        this.setActivity(`tool: ${event.toolName ?? "?"}`);
+        this.transcript.applyEvent(event);
+        break;
       case "tool_result":
+        this.setActivity("settling");
         this.transcript.applyEvent(event);
         break;
       case "usage":
@@ -578,6 +585,10 @@ export class TuiController {
 
   /** Tear down: abort + flush store + checkpoint + close transport. */
   async shutdown(): Promise<void> {
+    if (this.busyTick !== undefined) {
+      clearInterval(this.busyTick);
+      this.busyTick = undefined;
+    }
     this.transport.abort();
     if (this.checkpoint) await this.checkpoint.flushNow();
     await this.transport.close();
@@ -613,10 +624,39 @@ export class TuiController {
     this.status.update({ ...state, attention: on });
   }
 
+  private busyTick?: ReturnType<typeof setInterval>;
+
   private setBusy(busy: boolean): void {
     this.busy = busy;
     const state = this.status.currentState;
-    this.status.update({ ...state, busy });
+    this.status.update({
+      ...state,
+      busy,
+      busySince: busy ? Date.now() : null,
+      busyFrame: 0,
+      activity: busy ? state.activity : "",
+    });
+
+    // The braille tick: 80ms frames while busy so the operator SEES the work
+    // (spinner + activity + elapsed seconds in the chrome). Cleared on idle.
+    if (busy && this.busyTick === undefined) {
+      this.busyTick = setInterval(() => {
+        const s = this.status.currentState;
+        if (!s.busy) return;
+        this.status.update({ ...s, busyFrame: s.busyFrame + 1 });
+        this.tui.requestRender();
+      }, 80);
+    } else if (!busy && this.busyTick !== undefined) {
+      clearInterval(this.busyTick);
+      this.busyTick = undefined;
+    }
+  }
+
+  /** Update the "what it's doing" label in the busy chip. */
+  private setActivity(activity: string): void {
+    const state = this.status.currentState;
+    if (state.activity === activity) return;
+    this.status.update({ ...state, activity });
   }
 
   private setAwaitingApproval(awaiting: boolean): void {

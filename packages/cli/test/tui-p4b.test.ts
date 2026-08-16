@@ -143,7 +143,7 @@ test("attention chrome: busy + awaiting take priority over attention", () => {
   state.busy = true;
   const status = new StatusLine(state);
   const plain = status.render(80).map(stripAnsi).join("\n");
-  assert.ok(plain.includes("busy"), "busy must show over attention");
+  assert.ok(/working|thinking|writing/.test(plain), "busy shows the animated activity chip");
   assert.ok(!plain.includes("attention"), "attention glyph is suppressed while busy");
 
   state.busy = false;

@@ -19,6 +19,7 @@ import { runFusionAdvise, runFusionReport } from "./fusion.js";
 import { runInfo } from "./info.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
+import { runTail } from "./tail.js";
 import { runUndo } from "./undo.js";
 import { CLI_VERSION } from "./version.js";
 
@@ -63,6 +64,10 @@ Commands:
   undo [--history]       Restore the work tree to the previous shadow-git
                          snapshot (taken before every gated mutation);
                          --history lists snapshots newest-first.
+
+  tail [-f] [-n N]       Live activity feed: turn starts, tool calls, results,
+                         tokens — what the agent is doing right now
+                         (.openkai/activity.jsonl). -f follows like tail -f.
 
   info                   Self-check: version, run mode (standalone-local /
                          KOS-managed), Cortex reachability, model catalogue,
@@ -373,6 +378,18 @@ async function main(argv: string[]): Promise<number> {
   // ── undo (Inc 05) ────────────────────────────────────────────────────────
   if (command === "undo") {
     return runUndo({ history: getBool("--history") });
+  }
+
+  // ── tail: live activity feed ─────────────────────────────────────────────
+  if (command === "tail") {
+    let lines = 30;
+    const linesRaw = getString("--lines") ?? getString("-n");
+    if (linesRaw) {
+      const parsed = parseBoundedInt("--lines", linesRaw, 1, 5000);
+      if (typeof parsed === "string") return fail(parsed);
+      lines = parsed;
+    }
+    return runTail({ follow: getBool("--follow") || getBool("-f"), lines });
   }
 
   // ── info (Inc 08) ────────────────────────────────────────────────────────

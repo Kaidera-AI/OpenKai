@@ -49,6 +49,7 @@ import {
 } from "./attention.js";
 import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
+import { appendActivity } from "../tail.js";
 import { CLI_VERSION } from "../version.js";
 import { providerKeyStatus, resolveProvider } from "../providers.js";
 
@@ -181,6 +182,15 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       // shadow repo to restore. `openkai chat` leaves this unset (no approval
       // channel in print mode).
       enablePermissions: true,
+      // The live activity feed (`openkai tail`): every event, one JSONL row.
+      onActivity: (event) =>
+        appendActivity(cwd, event.kind, {
+          toolName: "toolName" in event ? (event.toolName as string) : undefined,
+          args: "args" in event ? event.args : undefined,
+          isError: "isError" in event ? (event.isError as boolean) : undefined,
+          usage: "usage" in event ? (event.usage as { totalTokens?: number }) : undefined,
+          message: "message" in event ? (event.message as string) : undefined,
+        }),
     });
   } catch (error) {
     if (error instanceof MissingApiKeyError) {

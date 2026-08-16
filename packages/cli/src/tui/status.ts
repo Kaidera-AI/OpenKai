@@ -29,6 +29,8 @@ export interface StatusState {
   agentName: string;
   /** Model id (full string, truncated for display). */
   modelId: string;
+  /** Active provider id (nvidia, openrouter, …). */
+  provider: string;
   /** Session id (short 8-char prefix for display). */
   sessionId: string;
   /** Token usage snapshot (updated at `turn_end`). */
@@ -37,6 +39,12 @@ export interface StatusState {
   persistMode: string;
   /** True while an assistant turn is streaming. */
   busy: boolean;
+  /** Current activity label while busy (thinking / writing / tool name). */
+  activity: string;
+  /** Busy-animation frame index (rotated by the controller's busy tick). */
+  busyFrame: number;
+  /** Epoch ms when the current busy stretch started (for elapsed seconds). */
+  busySince: number | null;
   /** True while a gated tool is awaiting operator approval (P4b). */
   awaitingApproval: boolean;
   /** True when an unfocused turn settled / permission arrived (P4b, scope §1.1). */
@@ -49,25 +57,36 @@ export function defaultStatusState(modelId: string, sessionId: string, persistMo
     mode: "chat",
     agentName: "openkai",
     modelId,
+    provider: "",
     sessionId,
     usage: null,
     persistMode,
     busy: false,
+    activity: "",
+    busyFrame: 0,
+    busySince: null,
     awaitingApproval: false,
     attention: false,
   };
 }
 
+const BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 /**
- * Render the spinner chip — reflects true turn state (scope §3.3 + §1.1).
- * Priority: awaiting > busy > attention > idle. The amber `◉ attention` glyph
- * only shows when not busy/awaiting, so a settled-but-unnoticed turn is the
- * only attention signal (clean-by-default, scope §2).
+ * Render the spinner chip — animated while busy, and always telling the truth
+ * about WHAT is happening (scope §3.3 "spinner reflects true turn state"):
+ * a braille frame + the current activity + elapsed seconds. Priority:
+ * awaiting > busy > attention > idle.
  */
-function spinnerChip(busy: boolean, awaiting: boolean, attention: boolean): string {
-  if (awaiting) return highlight.danger("◐ waiting");
-  if (busy) return highlight.base("◌ busy");
-  if (attention) return highlight.attention("◉ attention");
+function spinnerChip(state: StatusState): string {
+  if (state.awaitingApproval) return highlight.danger("◐ waiting");
+  if (state.busy) {
+    const frame = BUSY_FRAMES[state.busyFrame % BUSY_FRAMES.length];
+    const elapsed = state.busySince ? Math.max(0, Math.round((Date.now() - state.busySince) / 1000)) : 0;
+    const what = state.activity || "working";
+    return highlight.base(`${frame} ${what} ${elapsed}s`);
+  }
+  if (state.attention) return highlight.attention("◉ attention");
   return textToken.muted("○ idle");
 }
 
@@ -103,14 +122,16 @@ export class StatusLine implements Component {
     const session = this.state.sessionId.slice(0, 8);
     const tokens = this.state.usage ? `${this.state.usage.totalTokens}t` : "—";
     const sep = textToken.muted("·");
-    return [
+    const chips = [
       rolePill(this.state.agentName),
       model,
       session,
       tokens,
       `p:${this.state.persistMode}`,
-      spinnerChip(this.state.busy, this.state.awaitingApproval, this.state.attention),
-    ].join(` ${sep} `);
+    ];
+    if (this.state.provider) chips.push(this.state.provider);
+    chips.push(spinnerChip(this.state));
+    return chips.join(` ${sep} `);
   }
 
   // ── Component ───────────────────────────────────────────────────────────
