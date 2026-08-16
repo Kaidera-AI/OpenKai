@@ -23,6 +23,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentMessage, AgentTool, AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Message, Model } from "@earendil-works/pi-ai";
+import type { Api } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Models } from "@earendil-works/pi-ai";
 import { mapAgentEvent } from "./events.js";
@@ -126,7 +127,8 @@ class EventQueue {
  */
 export class InProcessTransport implements SessionTransport {
   readonly sessionId: string;
-  readonly modelId: string;
+  private currentModelId: string;
+  private currentThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" = "off";
   private readonly agent: Agent;
   private readonly queue: EventQueue;
   private seq = 0;
@@ -147,7 +149,7 @@ export class InProcessTransport implements SessionTransport {
 
   constructor(options: InProcessTransportOptions) {
     this.sessionId = options.sessionId;
-    this.modelId = options.modelId;
+    this.currentModelId = options.modelId;
 
     const provider = options.provider ?? "openrouter";
     const injected = options.models !== undefined;
@@ -233,6 +235,31 @@ export class InProcessTransport implements SessionTransport {
       }
       return Promise.resolve();
     });
+  }
+
+  /** The active model id (mutable: `/model` switches mid-session). */
+  get modelId(): string {
+    return this.currentModelId;
+  }
+
+  /**
+   * Switch the model for future turns (pi-agent-core: state.model is
+   * forward-looking by contract). The picker resolves the Model from the
+   * catalogue; this just applies it.
+   */
+  setModel(model: Model<Api>): void {
+    this.agent.state.model = model as never;
+    this.currentModelId = model.id;
+  }
+
+  /** Set the reasoning effort for future turns (off…max). */
+  setThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): void {
+    this.currentThinkingLevel = level;
+    this.agent.state.thinkingLevel = level === "off" ? ("off" as never) : level;
+  }
+
+  get thinkingLevel(): string {
+    return this.currentThinkingLevel;
   }
 
   prompt(text: string): Promise<void> {

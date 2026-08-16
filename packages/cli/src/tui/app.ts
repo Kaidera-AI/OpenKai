@@ -30,6 +30,10 @@ import {
   type UsageSnapshot,
 } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { PROVIDERS, providerKeyStatus } from "../providers.js";
+import { ModelPicker } from "./model-picker.js";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
@@ -73,6 +77,15 @@ export interface TuiAppOptions {
   onUndo?: () => Promise<string>;
   /** `/fuse` callback (OK-7) — runs the fusion panel + synthesis for a task. */
   runFusion?: (task: string) => Promise<FuseResult>;
+  /** Active provider id (for the model picker's current marker). */
+  provider?: string;
+  /** `/model` callback — switch the session model mid-run. */
+  onSetModel?: (model: Model<Api>) => void;
+  /** `/effort` + `/fast` callbacks — reasoning effort control. */
+  onSetEffort?: {
+    set: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
+    current: () => string;
+  };
 }
 
 /** The built TUI app handle. */
@@ -152,7 +165,6 @@ export class TuiController {
   private readonly checkpoint?: CortexCheckpoint;
   private readonly transcript: Transcript;
   private readonly status: StatusLine;
-  private readonly modelId: string;
   private readonly sessionId: string;
   private readonly sessionsRoot?: string;
   private readonly onExit?: (request: ExitRequest) => void;
@@ -161,6 +173,10 @@ export class TuiController {
   private readonly history?: FrecencyHistory;
   private readonly onUndo?: () => Promise<string>;
   private readonly runFusion?: (task: string) => Promise<FuseResult>;
+  private provider?: string;
+  private modelId: string;
+  private modelSwitch?: (model: Model<Api>) => void;
+  private effortSwitch?: { set: (level: "off" | "minimal" | "low" | "medium" | "high") => void; current: () => string };
   private composer?: Composer;
   private busy = false;
   private done = false;
@@ -183,6 +199,9 @@ export class TuiController {
     this.history = options.history;
     this.onUndo = options.onUndo;
     this.runFusion = options.runFusion;
+    this.provider = options.provider;
+    this.modelSwitch = options.onSetModel;
+    this.effortSwitch = options.onSetEffort;
   }
 
   /** Attach the composer (set after construction so the controller can build it). */
@@ -197,11 +216,13 @@ export class TuiController {
         this.transcript.addNotice(helpText());
         break;
       case "model":
-        this.transcript.addNotice(
-          argument.length > 0
-            ? `model: ${this.modelId} — changing the model mid-session is P4b; relaunch with --model ${argument}`
-            : `model: ${this.modelId}`,
-        );
+        this.openModelPicker();
+        break;
+      case "effort":
+        this.cycleEffort(argument);
+        break;
+      case "fast":
+        this.toggleFast();
         break;
       case "sessions": {
         const ids = await listSessions(this.sessionsRoot);
@@ -312,6 +333,87 @@ export class TuiController {
     } catch (error) {
       this.transcript.addNotice(`fuse failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+    this.tui.requestRender();
+  }
+
+  /** `/model` — the two-level provider→model picker (world-class floor). */
+  openModelPicker(): void {
+    if (!this.modelSwitch) {
+      this.transcript.addNotice(`model: ${this.modelId} (switching unavailable on this transport)`);
+      this.tui.requestRender();
+      return;
+    }
+    const providers = Object.entries(PROVIDERS).map(([id, info]) => {
+      const status = providerKeyStatus(id);
+      return {
+        id,
+        label: info.label,
+        configured: status.configured,
+        oauth: status.oauth,
+      };
+    });
+    const catalogue = builtinModels();
+    const picker = new ModelPicker(
+      providers,
+      (providerId) =>
+        catalogue
+          .getModels(providerId)
+          .map((m) => ({ id: m.id, name: m.name }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+      { provider: this.provider ?? "openrouter", modelId: this.modelId },
+      (selection) => {
+        this.tui.hideOverlay();
+        this.applyModelSelection(selection.provider, selection.modelId);
+        this.refocusComposer();
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(picker, { anchor: "center", width: "60%", maxHeight: "70%" });
+  }
+
+  /** Apply a picker selection: switch the session model + update chrome. */
+  private applyModelSelection(provider: string, modelId: string): void {
+    const catalogue = builtinModels();
+    const model = catalogue.getModel(provider, modelId);
+    if (!model || !this.modelSwitch) {
+      this.transcript.addNotice(`model ${modelId} unavailable under ${provider}`);
+      this.tui.requestRender();
+      return;
+    }
+    this.provider = provider;
+    this.modelSwitch(model);
+    this.status.update({ ...this.status.currentState, modelId });
+    this.transcript.addNotice(`model: ${modelId} (${provider})`);
+    this.tui.requestRender();
+  }
+
+  /** `/effort [level]` — set or cycle reasoning effort for future turns. */
+  cycleEffort(argument: string): void {
+    if (!this.effortSwitch) return;
+    const levels = ["off", "minimal", "low", "medium", "high"] as const;
+    let next: (typeof levels)[number];
+    if (argument && (levels as readonly string[]).includes(argument)) {
+      next = argument as (typeof levels)[number];
+    } else {
+      const current = this.effortSwitch.current();
+      const idx = levels.indexOf(current as (typeof levels)[number]);
+      next = levels[(idx + 1) % levels.length]!;
+    }
+    this.effortSwitch.set(next);
+    this.transcript.addNotice(`effort: ${next}`);
+    this.tui.requestRender();
+  }
+
+  /** `/fast` — toggle fast mode (effort off) with a chrome note. */
+  private fast = false;
+  toggleFast(): void {
+    if (!this.effortSwitch) return;
+    this.fast = !this.fast;
+    this.effortSwitch.set(this.fast ? "off" : "medium");
+    this.transcript.addNotice(this.fast ? "fast mode: on (effort off)" : "fast mode: off (effort medium)");
     this.tui.requestRender();
   }
 

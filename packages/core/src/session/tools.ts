@@ -376,6 +376,16 @@ export function bashTool(
         return textResult(`Permission denied: ${outcome.reason}`, { command: params.command, denied: true });
       }
       try {
+        // A model-hallucinated cwd must not reach posix_spawn raw: report it
+        // as a clean tool error instead.
+        const stat = await fs.stat(runCwd).catch(() => undefined);
+        if (!stat?.isDirectory()) {
+          return textResult(`Error: cwd does not exist: ${runCwd}`, {
+            command: params.command,
+            cwd: runCwd,
+            exitOk: false,
+          });
+        }
         if (hooks?.beforeMutation) {
           await hooks.beforeMutation("bash", params.command).catch(() => undefined);
         }

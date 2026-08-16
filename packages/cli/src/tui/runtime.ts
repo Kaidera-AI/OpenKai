@@ -230,6 +230,12 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     agentName: agent,
     notifier,
     history,
+    provider,
+    onSetModel: (model) => transport.setModel(model),
+    onSetEffort: {
+      set: (level) => transport.setThinkingLevel(level),
+      current: () => transport.thinkingLevel,
+    },
     // `/fuse` (OK-7): run the panel on the session's provider; self-pairing
     // default (same model both roles), the E016-replicated first step.
     runFusion: (task) =>

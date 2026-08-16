@@ -9,14 +9,17 @@
  * (used by the palette's `/btw` / `/resume` actions, scope §1.3).
  */
 
-import { Editor } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, Editor } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { editorTheme } from "./theme.js";
+import { SLASH_COMMANDS } from "./commands.js";
 
 /** Options for constructing a {@link Composer}. */
 export interface ComposerOptions {
   /** Called when the user submits a non-empty prompt. */
   onSubmit: (text: string) => void;
+  /** Working directory for `@` file completion (defaults to cwd). */
+  cwd?: string;
 }
 
 /**
@@ -32,6 +35,12 @@ export class Composer {
     this.onSubmitCb = options.onSubmit;
     const editor = new Editor(tui, editorTheme, { paddingX: 1 });
     editor.disableSubmit = false;
+    // Discoverability: typing `/` opens the command autocomplete (and `@`
+    // completes files) — the operator should never need to know the set in
+    // advance.
+    editor.setAutocompleteProvider(
+      new CombinedAutocompleteProvider(SLASH_COMMANDS, options.cwd ?? process.cwd()),
+    );
     editor.onSubmit = (text: string): void => {
       const trimmed = text.trim();
       if (trimmed.length === 0) return;
