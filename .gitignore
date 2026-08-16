@@ -11,3 +11,5 @@ dist-test/
 .env.*
 !.env.example
 .tui-test/
+__pycache__/
+*.pyc
