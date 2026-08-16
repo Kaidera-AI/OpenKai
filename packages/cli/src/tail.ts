@@ -130,7 +130,14 @@ export async function runTail(options: TailOptions): Promise<number> {
     const slice = lines.slice(offset < 0 ? Math.max(0, lines.length + offset) : offset);
     for (const line of slice) {
       try {
-        const rendered = renderRow(JSON.parse(line) as ActivityRow);
+        // Redact on READ as well as on write (E002-F1d). appendActivity
+        // sanitises what IT writes, but the file outlives any one version:
+        // a log written before the redactor covered a given provider still
+        // holds that key in cleartext, and rendering it here would put it on
+        // the operator's screen and into any pasted bug report. Same rule the
+        // deny floor follows since 09b56ce — the boundary holds regardless of
+        // who wrote the data.
+        const rendered = renderRow(redactStrings(JSON.parse(line) as ActivityRow));
         if (rendered) process.stdout.write(`${rendered}\n`);
       } catch {
         // skip malformed rows

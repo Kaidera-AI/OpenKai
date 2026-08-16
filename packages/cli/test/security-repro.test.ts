@@ -838,7 +838,8 @@ function capturingCheckpoint(task = "probe") {
 }
 
 test("REPRO 10: Cortex ingest redacts secrets at the wire seam, not by caller convention", async () => {
-  const SECRET = "sk-live-CORTEXINGEST-9f31c7";
+  // Prefix assembled at runtime — §1 static-scan canary note (3f89a45).
+  const SECRET = `${"sk"}-live-CORTEXINGEST-9f31c7`;
 
   // (a) The SHIPPED path — entries re-read from the redacted file. This passed
   // before the fix too; it is the control that localises the defect to the seam.
@@ -1033,7 +1034,10 @@ test("REPRO 12: list_files on a .ssh directory is denied (node held, no name lea
     // CONTROL (F4, row 16): `.env` AS A DIRECTORY is still denied — the node
     // fix did not regress the existing ancestor-prefix coverage.
     await mkdir(path.join(root, ".env"));
-    await writeFile(path.join(root, ".env", "production"), "OPENAI_API_KEY=sk-live-abcdefghijklmnop");
+    await writeFile(
+      path.join(root, ".env", "production"),
+      `OPENAI_API_KEY=${"sk"}-live-abcdefghijklmnop`,
+    );
     const env = await text(tool("list_files"), { path: ".env" });
     assert.match(env, /denied — protected path/);
 

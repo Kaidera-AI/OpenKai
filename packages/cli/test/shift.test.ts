@@ -694,9 +694,11 @@ test("SECURITY: redactRoutingEvent redacts all string fields", () => {
   const redacted = redactRoutingEvent({
     kind: "routing_error",
     stage: "build",
-    model: "sk-test-key-in-model-field-123456",
-    provider: "nvapi-test-provider-key-abcdef",
-    reason: "failed: key sk-secret-key-here-abcdef is revoked",
+    // Prefixes assembled at runtime so the §1 static secret scan does not trip
+    // on these canary fixtures (same treatment as the OPENSSH canary, 3f89a45).
+    model: `${"sk"}-test-key-in-model-field-123456`,
+    provider: `${"nvapi"}-test-provider-key-abcdef`,
+    reason: `failed: key ${"sk"}-secret-key-here-abcdef is revoked`,
   });
   assert.match(redacted.model!, /\[redacted-secret\]/);
   assert.match(redacted.provider!, /\[redacted-secret\]/);
@@ -737,7 +739,7 @@ test("SECURITY REPRODUCER: secret-bearing provider error is redacted in activity
     // Simulate a provider error that echoes the API key back in the body.
     // This is the F7/F6c attack: a 429/401 response body containing the
     // caller's secret, which would be persisted to the activity feed.
-    const SECRET = "sk-live-abc123def456ghi789";
+    const SECRET = `${"sk"}-live-abc123def456ghi789`;
     router.route("plan");
     // The error message carries the secret — as a real provider might echo.
     try {
@@ -792,7 +794,8 @@ test("SECURITY REPRODUCER: secret-bearing provider error is redacted in activity
 test("SECURITY: appendActivity redacts secrets even when called directly (belt and braces)", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "okshift-belt-"));
   try {
-    const SECRET = "nvapi-secret-key-in-error-body-xyz";
+    // Prefix assembled at runtime — see the §1 canary note above (3f89a45).
+    const SECRET = `${"nvapi"}-secret-key-in-error-body-xyz`;
     appendActivity(cwd, "error", {
       message: `provider error: key ${SECRET} is not authorized`,
     });

@@ -10,7 +10,18 @@ failures=0
 echo "== 1. Secret scan (tracked files) =="
 # API-key/token shapes in tracked source. .env and .openkai are gitignored;
 # this scan proves nothing tracked carries a secret.
-secret_hits="$(git grep -nE '(sk-or-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|sk-kim[A-Za-z0-9_-]{10,}|fw_[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|xai-[A-Za-z0-9_-]{20,}|BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY)' -- . ':!*.md' || true)"
+#
+# This list MIRRORS SECRET_PREFIXES in packages/core/src/secrets.ts — the two
+# are separate implementations of one list, and E002-F2 was them drifting
+# apart (the scan matched only sk-or- and sk-kim, so a committed Anthropic
+# sk-ant- or OpenAI sk-proj- key passed clean while the runtime redactor
+# caught that same shape). The drift test in security-repro-e002.test.ts
+# asserts every prefix in secrets.ts appears below; update both together.
+#
+# Thresholds are {20,} here vs {10,} in secrets.ts on purpose: this scan runs
+# over tracked source where a false positive blocks the gate, and a real key
+# is always long.
+secret_hits="$(git grep -nE '(sk-[A-Za-z0-9_-]{20,}|csk-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|fw_[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[opusr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY)' -- . ':!*.md' || true)"
 if [ -n "${secret_hits}" ]; then
     echo "FAIL: possible secrets in tracked files:"
     echo "${secret_hits}" | head -10

@@ -1,20 +1,78 @@
 /**
  * Secret-shape detection, shared by every boundary that must not leak one
- * (E001 security gate, findings F7/F9). One copy of the patterns: a security
- * regex that drifts between call sites is its own defect class.
+ * (E001 security gate, findings F7/F9; E002 findings F1/F2). One copy of the
+ * patterns: a security regex that drifts between call sites is its own defect
+ * class.
  *
- * The value patterns mirror `scripts/security-audit.sh` §1 — the same provider
- * token shapes the per-increment secret scan already gates on.
+ * TWO mechanisms, because shape alone is not enough (E002-F1):
+ *
+ *  1. **Shape matching** ({@link SECRET_PREFIXES}) — provider tokens carry a
+ *     distinctive prefix. Cheap, works on text from anywhere, catches a key
+ *     this process has never held.
+ *  2. **Known-value matching** ({@link knownSecretValues}) — several providers
+ *     OpenKai supports issue OPAQUE tokens with no prefix at all (together:
+ *     64 hex; mistral: 32 alphanumerics; `CORTEX_ADMIN_TOKEN`). No shape can
+ *     match those without also matching git SHAs and ordinary identifiers, so
+ *     instead we redact the literal values this process actually holds —
+ *     `process.env` entries whose NAME is credential-shaped. Zero false
+ *     positives by construction: we only redact a string we know is a secret.
+ *
+ * Mechanism 2 reuses {@link SECRET_NAME_PATTERN}, the same name test
+ * `fusion/gate.ts` already trusts to decide which env vars a model-authored
+ * gate check may inherit.
+ *
+ * The prefix list is mirrored by `scripts/security-audit.sh` §1 (the
+ * commit-time scan). They are two implementations of one list, so
+ * `security-repro-e002.test.ts` asserts the shell script covers every prefix
+ * below — E002-F2 was exactly this pair drifting apart unnoticed.
  */
 
 /**
- * Provider token / private-key shapes, as they appear in free text. Built from
- * one source so the matcher and the redactor can never disagree — and so the
- * `test()` copy stays non-global (a `/g` regex's `lastIndex` makes `test()`
- * stateful across calls).
+ * Provider token prefixes, as they appear in free text. Exported so the
+ * drift test can assert `scripts/security-audit.sh` §1 covers the same set.
+ *
+ * `csk-` is listed explicitly: it was previously matched only by accident,
+ * via the `sk-` alternative, which redacted `csk-XXX` as `c[redacted-secret]`
+ * and left the leading character exposed.
  */
-const SECRET_VALUE_SOURCE =
-  "(sk-[A-Za-z0-9_-]{10,}|nvapi-[A-Za-z0-9_-]{10,}|fw_[A-Za-z0-9_-]{10,}|AIza[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{10,}|xai-[A-Za-z0-9_-]{10,}|-----BEGIN (?:RSA |OPENSSH |EC |PGP )?PRIVATE KEY-----)";
+export const SECRET_PREFIXES: readonly string[] = [
+  "sk-", // openai, anthropic, deepseek, openrouter (sk-or-), kimi (sk-kim)
+  "csk-", // cerebras
+  "nvapi-", // nvidia
+  "gsk_", // groq
+  "hf_", // huggingface
+  "fw_", // fireworks
+  "xai-", // xai
+  "AIza", // google / gemini
+  "github_pat_", // github fine-grained PAT
+  "AKIA", // aws access key id
+];
+
+/** PEM private-key headers — not a prefix-shaped token. */
+const PRIVATE_KEY_SOURCE = "-----BEGIN (?:RSA |OPENSSH |EC |PGP )?PRIVATE KEY-----";
+
+/**
+ * The alternation. Longer prefixes are matched at the position they start, so
+ * `csk-` wins over `sk-` on `csk-…` regardless of list order.
+ *
+ * `gh[opusr]_` covers the whole GitHub classic family (ghp_ personal, gho_
+ * oauth, ghu_ user-to-server, ghs_ server-to-server, ghr_ refresh) — the
+ * previous pattern caught only `ghp_`.
+ */
+const SECRET_VALUE_SOURCE = `(${[
+  "sk-[A-Za-z0-9_-]{10,}",
+  "csk-[A-Za-z0-9_-]{10,}",
+  "nvapi-[A-Za-z0-9_-]{10,}",
+  "gsk_[A-Za-z0-9_-]{10,}",
+  "hf_[A-Za-z0-9]{10,}",
+  "fw_[A-Za-z0-9_-]{10,}",
+  "xai-[A-Za-z0-9_-]{10,}",
+  "AIza[A-Za-z0-9_-]{10,}",
+  "github_pat_[A-Za-z0-9_]{10,}",
+  "gh[opusr]_[A-Za-z0-9]{10,}",
+  "AKIA[0-9A-Z]{16}",
+  PRIVATE_KEY_SOURCE,
+].join("|")})`;
 
 /** Non-global — safe for repeated `test()`. */
 export const SECRET_VALUE_PATTERN = new RegExp(SECRET_VALUE_SOURCE);
@@ -25,14 +83,78 @@ const SECRET_VALUE_GLOBAL = new RegExp(SECRET_VALUE_SOURCE, "g");
 export const SECRET_NAME_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION)/i;
 
 /**
- * Replace secret-shaped spans with a fixed marker.
+ * Env var names whose VALUE may be redacted from output. Deliberately TIGHTER
+ * than {@link SECRET_NAME_PATTERN}, because the two decide opposite things and
+ * have opposite failure modes.
  *
- * ponytail: shape-matching, so it is a blast-radius reducer, not a guarantee —
- * a novel token format passes through. SECURITY.md §4 still says secrets live
- * in `.env` and nowhere else; this catches the realistic path where an approved
- * `bash cat .env` puts one into a turn that is then persisted. Widen the
- * patterns when a provider ships a new shape.
+ * `SECRET_NAME_PATTERN` decides which variables a model-authored gate check
+ * may INHERIT (`fusion/gate.ts`). Over-matching there is fail-safe — dropping
+ * `SSH_AUTH_SOCK` from a model's shell is a feature, not a bug.
+ *
+ * Redacting too much from OUTPUT is not fail-safe: it blanks socket paths and
+ * session ids out of activity logs and transcripts for no security gain. A
+ * real shell carries `SSH_AUTH_SOCK` (a 47-char path), `SECURITYSESSIONID`,
+ * and `CLAUDE_CODE_SESSION_ID` (a uuid) — all credential-NAMED, none secret.
+ *
+ * Anchored at the END, so `*_KEY` / `*_TOKEN` match while `SSH_AUTH_SOCK`
+ * (…_SOCK), `CLAUDE_CODE_SESSION_ID` (…_ID) and `…_SESSION` do not. Every
+ * credential in `.env.example` is named `*_API_KEY` or `*_TOKEN`.
  */
-export function redactSecrets(text: string): string {
-  return text.replace(SECRET_VALUE_GLOBAL, "[redacted-secret]");
+const REDACTABLE_NAME_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)$/i;
+
+/** The marker every redaction leaves behind. */
+const MARKER = "[redacted-secret]";
+
+/**
+ * Minimum length for known-value redaction. A credential-named variable set
+ * to something short (`CI_TOKEN=1`, `AUTH=on`) is not a secret worth
+ * redacting, and blanking every `1` in the output would be its own bug.
+ */
+const MIN_KNOWN_VALUE_LENGTH = 12;
+
+/**
+ * The literal credential values this process holds: `process.env` entries
+ * whose NAME is credential-shaped and whose value is long enough, and shaped
+ * plausibly enough, to be a real token. Longest first, so a value that is a
+ * substring of another does not fragment the longer one's replacement.
+ *
+ * Read fresh on each call rather than cached at module load — the CLI
+ * auto-loads `.env` after import, and tests set variables per-case. The list
+ * is short (tens of entries) and this runs once per redacted string, not per
+ * streamed token.
+ */
+function knownSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
+  const values: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined) continue;
+    if (value.length < MIN_KNOWN_VALUE_LENGTH) continue;
+    if (!REDACTABLE_NAME_PATTERN.test(name)) continue;
+    // No provider token contains a path separator or whitespace; a variable
+    // that does is a path or a sentence, and blanking it from output is pure
+    // noise. Second guard behind the name anchor, cheap and kills a class.
+    if (/[\s/]/.test(value)) continue;
+    values.push(value);
+  }
+  return values.sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Replace secret-shaped spans, and any known credential value, with a fixed
+ * marker.
+ *
+ * ponytail: shape matching stays a blast-radius reducer, not a guarantee — a
+ * novel PREFIXED token from a provider not in {@link SECRET_PREFIXES} passes
+ * through. Known-value matching closes that for any credential this process
+ * actually holds, which is the realistic leak path (a provider echoes the key
+ * back in a 401/429 body, or an approved `bash cat .env` puts one in a turn
+ * that is then persisted). Widen the prefix list when a provider ships a new
+ * shape; the drift test will tell you to update the shell scan too.
+ */
+export function redactSecrets(text: string, env: NodeJS.ProcessEnv = process.env): string {
+  let out = text.replace(SECRET_VALUE_GLOBAL, MARKER);
+  for (const value of knownSecretValues(env)) {
+    // split/join rather than RegExp — no metacharacter escaping to get wrong.
+    if (out.includes(value)) out = out.split(value).join(MARKER);
+  }
+  return out;
 }

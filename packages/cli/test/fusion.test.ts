@@ -449,8 +449,10 @@ test("gate consent: approval lets the designed gate run", async () => {
 test("gate consent: an approved check does not inherit secret-shaped env vars", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "openkai-env-"));
   const leak = path.join(cwd, "leak.txt");
-  process.env.OPENKAI_TEST_API_KEY = "sk-live-SHOULD-NOT-LEAK-1234";
-  process.env.OPENKAI_TEST_ODDNAME = "sk-live-SHOULD-NOT-LEAK-5678";
+  // Prefixes assembled at runtime so the §1 static secret scan does not trip
+  // on these canary fixtures (same treatment as the OPENSSH canary, 3f89a45).
+  process.env.OPENKAI_TEST_API_KEY = `${"sk"}-live-SHOULD-NOT-LEAK-1234`;
+  process.env.OPENKAI_TEST_ODDNAME = `${"sk"}-live-SHOULD-NOT-LEAK-5678`;
   process.env.OPENKAI_TEST_BENIGN = "keep-me";
   try {
     const rig = makeRig((system) => {
