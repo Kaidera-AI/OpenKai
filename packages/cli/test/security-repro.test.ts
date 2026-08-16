@@ -986,14 +986,17 @@ test("REPRO 11: fusion role output + synthesis cannot inject terminal escapes", 
   assert.match(frame, /SCREENCLEAR_PWNED/); // adjacent plaintext, harmless once the CSI is gone
 });
 
-// Row 26 / F10 (LOW): `list_files` on a protected-name DIRECTORY enumerates its
-// entries. Content stays protected — `read_file` and `grep` are denied by the
-// leaf filename patterns (**/id_rsa*, …) — so this leaks NAMES only, though the
-// existence of `.ssh/id_rsa` is itself a signal. The deny floor matches leaf
-// FILE patterns and `.env`-as-a-directory (F4, row 16) but carries no `.ssh`
-// directory node. LIVE reproducer — asserts the CURRENT gap; INVERT ON FIX when
-// the one-line `.ssh` DENY_FLOOR entry lands (flip list_files to a refusal).
-test("REPRO 12: list_files enumerates a .ssh directory (names leak; content held)", async () => {
+// Row 26 / F10 (LOW, FIXED 2026-08-16): `list_files` on a protected-name
+// DIRECTORY used to enumerate its entries — the deny floor carried
+// `**/.ssh/**` (matches CONTENTS inside .ssh but not the `.ssh` node itself),
+// so `list_files .ssh` surfaced `id_rsa` / `known_hosts` / `authorized_keys`.
+// Content was already held by the leaf patterns; the gap was NAMES. The fix
+// replaces `**/.ssh/**` with `**/.ssh`: `matchesDenyFloor` walks ancestor
+// prefixes, so a node pattern also denies every path beneath it — one entry
+// holds both the node and its contents. INVERTED from the LIVE reproducer:
+// `list_files .ssh` now refuses. The `.env`-as-a-directory control (F4) still
+// denies, and ordinary directories (`src`, `docs`, `packages/cli`) still LIST.
+test("REPRO 12: list_files on a .ssh directory is denied (node held, no name leak)", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "okrepro-ssh-"));
   try {
     await mkdir(path.join(root, ".ssh"));
@@ -1012,26 +1015,50 @@ test("REPRO 12: list_files enumerates a .ssh directory (names leak; content held
     const text = async (t: any, args: unknown): Promise<string> =>
       ((await t.execute("t", args)).content as { text: string }[]).map((c) => c.text).join("");
 
-    // LEAK (current): the directory listing surfaces the private-key filenames.
+    // FIXED: the directory NODE is now denied — no filename enumeration.
     const listed = await text(tool("list_files"), { path: ".ssh" });
-    assert.match(listed, /id_rsa/);
-    assert.match(listed, /known_hosts/);
-    assert.match(listed, /authorized_keys/);
+    assert.match(listed, /denied — protected path/, "list_files refuses the .ssh node");
+    assert.doesNotMatch(listed, /id_rsa|known_hosts|authorized_keys/, "no names leak");
+    // The matched floor pattern is the node entry, not a leaf-contents one.
+    assert.match(listed, /\*\*\/\.ssh/);
 
-    // HELD: content is still protected. The leaf floor patterns deny the read
-    // and grep never surfaces the key body — the gap is names, not bytes.
+    // HELD: content stays protected (the node hold also covers contents now,
+    // and the leaf **/id_rsa* pattern still independently denies the key).
     const rf = await text(tool("read_file"), { path: ".ssh/id_rsa" });
     assert.match(rf, /denied — protected path/);
     assert.doesNotMatch(rf, /SECRETKEYBODY/);
     const gp = await text(tool("grep"), { pattern: "SECRETKEYBODY", path: ".ssh" });
     assert.doesNotMatch(gp, /SECRETKEYBODY/);
 
-    // CONTROL (F4, row 16): `.env` AS A DIRECTORY is denied — proves the floor
-    // covers ancestor prefixes and isolates the gap to the un-floored `.ssh`.
+    // CONTROL (F4, row 16): `.env` AS A DIRECTORY is still denied — the node
+    // fix did not regress the existing ancestor-prefix coverage.
     await mkdir(path.join(root, ".env"));
     await writeFile(path.join(root, ".env", "production"), "OPENAI_API_KEY=sk-live-abcdefghijklmnop");
     const env = await text(tool("list_files"), { path: ".env" });
     assert.match(env, /denied — protected path/);
+
+    // NO OVER-BLOCK: ordinary directories still LIST. Probes run: `src`,
+    // `docs`, and `packages/cli` (the three named in the close-out spec),
+    // plus a nested `packages/cli/src`. Each holds a marker file that
+    // list_files must surface — a denial here would mean the node pattern
+    // over-matched ordinary paths.
+    await mkdir(path.join(root, "src"));
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await mkdir(path.join(root, "packages", "cli", "src"), { recursive: true });
+    await writeFile(path.join(root, "src", "index.ts"), "export {};");
+    await writeFile(path.join(root, "docs", "README.md"), "# docs");
+    await writeFile(path.join(root, "packages", "cli", "src", "main.ts"), "void 0;");
+
+    for (const [dir, marker] of [
+      ["src", "index.ts"],
+      ["docs", "README.md"],
+      ["packages/cli", "src/"],
+      ["packages/cli/src", "main.ts"],
+    ] as const) {
+      const out = await text(tool("list_files"), { path: dir });
+      assert.doesNotMatch(out, /denied/i, `${dir}: ordinary directory is not blocked`);
+      assert.match(out, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${dir}: lists ${marker}`);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

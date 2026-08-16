@@ -81,6 +81,14 @@ export interface PermissionRule {
  * Matches against the path relative to cwd; a bare-name pattern (no `/`) also
  * matches the basename, so `.env` denies `subdir/.env` as well as `./.env`, and
  * every pattern also matches an ancestor DIRECTORY (see {@link matchesDenyFloor}).
+ *
+ * Node-vs-contents discipline (E001 finding F10): a protected concept must hold
+ * the directory NODE as well as its contents, otherwise `list_files` on the
+ * node enumerates the protected filenames. {@link matchesDenyFloor} walks every
+ * ancestor prefix, so a pattern that matches the node (e.g. the glob `**` + `/.ssh`) also
+ * denies every path beneath it — there is no need for a trailing contents-only form,
+ * and a contents-only form alone would NOT match the bare node (the F10 gap).
+ * Every entry here was checked to match its node, not just its leaves.
  */
 const DENY_FLOOR: readonly string[] = [
   ".env",
@@ -89,7 +97,7 @@ const DENY_FLOOR: readonly string[] = [
   "**/*.key",
   "**/id_rsa*",
   ".git/config",
-  "**/.ssh/**",
+  "**/.ssh",
 ];
 
 /**
@@ -224,7 +232,9 @@ function ruleMatches(
  * is denied by the `.env` pattern and `server.pem/privkey` by the `*.pem` one:
  * a protected NAME used as a DIRECTORY component holds the same secrets the
  * leaf file would, and `.env/` directories are a real per-environment
- * convention (E001 finding F4).
+ * convention (E001 finding F4). Because the walk tests each prefix, a node
+ * pattern (e.g. the `**` + `/.ssh` glob) also denies every path beneath it — the node holds
+ * the contents (E001 finding F10).
  */
 function matchesDenyFloor(relPath: string): string | undefined {
   const parts = relPath.split(/[\\/]/).filter((p) => p.length > 0);
