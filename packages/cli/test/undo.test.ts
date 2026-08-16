@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { ShadowGit, ShadowGitError } from "openkai-core";
+import { ShadowGit, ShadowGitError } from "@kaidera/openkai-core";
 
 async function tempProject(): Promise<string> {
   const cwd = await mkdtemp(path.join(tmpdir(), "openkai-shadow-"));

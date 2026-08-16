@@ -23,7 +23,7 @@ import {
   SessionStore,
   ShadowGit,
   type PushPermissionEvent,
-} from "openkai-core";
+} from "@kaidera/openkai-core";
 import { Transcript } from "../dist/tui/transcript.js";
 import { PermissionOverlay } from "../dist/tui/permission.js";
 

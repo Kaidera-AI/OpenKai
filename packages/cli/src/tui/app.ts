@@ -28,7 +28,7 @@ import {
   type SessionEvent,
   type SessionTransport,
   type UsageSnapshot,
-} from "openkai-core";
+} from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
@@ -523,7 +523,7 @@ export class TuiController {
   }
 
   /** Show the permission overlay for a `permission_request` event (P4b §5). */
-  private showPermission(event: { requestId: string; toolName: string; rule: string; preview: import("openkai-core").PermissionPreview }): void {
+  private showPermission(event: { requestId: string; toolName: string; rule: string; preview: import("@kaidera/openkai-core").PermissionPreview }): void {
     this.setAwaitingApproval(true);
     const overlay = new PermissionOverlay({
       toolName: event.toolName,

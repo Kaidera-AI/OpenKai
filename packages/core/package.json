@@ -1,5 +1,5 @@
 {
-  "name": "openkai-core",
+  "name": "@kaidera/openkai-core",
   "version": "0.1.1",
   "description": "OpenKai core: Cortex memory client (REST + SSE event bridge).",
   "type": "module",

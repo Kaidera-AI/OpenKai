@@ -39,7 +39,7 @@ import {
   shouldFuse,
   summariseFusionRuns,
   type FusionRunRecord,
-} from "openkai-core";
+} from "@kaidera/openkai-core";
 
 interface FauxRig {
   streamFn: StreamFunction;

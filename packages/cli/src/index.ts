@@ -9,9 +9,9 @@
  *      `openkai sessions` lists the local session tree.
  */
 
-import { CortexClient } from "openkai-core";
-import type { TeamEventEntry } from "openkai-core";
-import { DEFAULT_MODEL_ID } from "openkai-core";
+import { CortexClient } from "@kaidera/openkai-core";
+import type { TeamEventEntry } from "@kaidera/openkai-core";
+import { DEFAULT_MODEL_ID } from "@kaidera/openkai-core";
 import { runChat, type ChatOptions } from "./chat.js";
 import { loadDotEnv } from "./env.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";

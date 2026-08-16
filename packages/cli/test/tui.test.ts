@@ -21,7 +21,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { TUI } from "@earendil-works/pi-tui";
 
-import { InProcessTransport, SessionStore, CortexClient, CortexCheckpoint, listSessions, readSessionMessages } from "openkai-core";
+import { InProcessTransport, SessionStore, CortexClient, CortexCheckpoint, listSessions, readSessionMessages } from "@kaidera/openkai-core";
 import { buildTuiApp, type TuiApp, type ExitRequest } from "../dist/tui/app.js";
 import { resolveRunMode } from "../dist/tui/runtime.js";
 import { OVERLAY_FOOTER, renderOverlayFooter } from "../dist/tui/theme.js";

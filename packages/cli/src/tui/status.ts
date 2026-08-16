@@ -19,7 +19,7 @@
 import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
-import type { UsageSnapshot } from "openkai-core";
+import type { UsageSnapshot } from "@kaidera/openkai-core";
 
 /** The chrome state — mutated by the controller as events arrive. */
 export interface StatusState {
