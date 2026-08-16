@@ -30,7 +30,7 @@
 | 05 | P4b TUI ergonomics wave | bob (permission engine), kai (undo) | done | permission engine + protocol v2 (`eed8574`, accepted `d812fd3d`); shadow-git undo (`9107416`); remainder (attention, identity, palette, stash/frecency, /btw, /undo surface) landed on main by fast-forward at `7f04ef1` (+ `30f6f18`); CPO review ACCEPT (ren, handback `1648b734`); 62/62 tests, palette-frame evidence |
 | 06 | P3b fusion telemetry + invocation policy | kai | done | `ae1f71d`; 34/34 tests; CLI smoke green |
 | 07 | P5 learning loops (decay, mining, bandit) | kai | partial | bandit routing (`382c430`); decay SQL + mining jobs are KOS-side — post-v0.01.001, not standalone-release blockers |
-| 08 | P6 v1 packaging + release | kai | release candidate — **publish BLOCKED on the security gate** | LICENSE, metadata, binaries, info, auto-upgrade, docs all landed; clean-machine install verified (`npm install` from tarballs → working CLI); publish gated on F4 + F6b closure (see Security gate status) *and* CTO go |
+| 08 | P6 v1 packaging + release | kai | release candidate — **security gate CERTIFIED (cole pass 4); publish pending CTO go** | LICENSE, metadata, binaries, info, auto-upgrade, docs all landed; clean-machine install verified (`npm install` from tarballs → working CLI); F4 + F6b closed and certified (see Security gate status); publish now gated only on CTO go |
 
 Increment files: `Release_v0.1.0/E001_OPENKAI_V1/INCREMENTS/`.
 
@@ -44,20 +44,20 @@ Increment files: `Release_v0.1.0/E001_OPENKAI_V1/INCREMENTS/`.
 
 ## Security gate status
 
-**REOPENED — REWORK at `10fe7f5` (2026-08-16). The earlier "CLEARED" verdict is superseded and was stale for one commit.** The clearance below was real for the findings it named, but cole's third pass (`10fe7f5`, tip at review) completed the §2.1 outcome table across all 24 attack classes and filed **six new LIVE findings — 2 HIGH + 4 MEDIUM — each with an executed reproducer on disk**:
+**CERTIFIED — cole@openkai pass 4 (2026-08-16), independently re-executed against the merged fix-line after the `f585d39` REOPEN.** Pass 3 (`10fe7f5`) filed six LIVE findings (2 HIGH + 4 MEDIUM); kai fixed all six (`04406b6`) and a seventh, F7b, surfaced by re-review (`9efd246`). The `f585d39` REOPEN correctly reset `main` to REWORK (the fix-line was never merged), and this pass merges it and re-certifies by **executing every reproducer in both directions**, not on report:
 
-| Finding | Sev | Class | Reproducer |
+| Finding | Sev | Class | Status |
 |---|---|---|---|
-| F4 | HIGH | protected name as a *directory* component (`.env/production`) escapes the deny floor → silent secret read | `REPRO 4` |
-| F6b | HIGH | `PermissionOverlay` renders model-supplied escapes verbatim → the consent surface itself is spoofable | `REPRO 8` |
-| F5 | MED | `edit_file` pre-gate read = content oracle over floor files | `REPRO 5` |
-| F5b | MED | same oracle, outside cwd | `REPRO 5b` |
-| F6c | MED | sanitiser residue: `tool_call` name/args + `/btw` header | `REPRO 9` |
-| F9 | MED (latent) | fusion `approveGate` is fail-open (`checks && approveGate`) → model-authored shell with inherited env | `fusion.test.ts: REPRO 9 (fusion)` |
-| F7 | MED | sessions store secrets verbatim, world-readable | `REPRO 7` |
+| F4 | HIGH | protected name as a *directory* component (`.env/production`) escapes the deny floor | **HELD** — `matchesDenyFloor` tests every ancestor prefix (`REPRO 4`) |
+| F6b | HIGH | `PermissionOverlay` renders model-supplied escapes → spoofable consent surface | **HELD** — every field sanitised + newline-flattened (`REPRO 8`) |
+| F5 / F5b | MED | `edit_file` pre-gate read = content/existence oracle (floor + outside cwd) | **HELD** — `guardPath` precedes any read (`REPRO 5`/`5b`) |
+| F6c | MED | sanitiser residue: `tool_call` name/args + `/btw` header | **HELD** — card name + arg keys/values + btw header sanitised (`REPRO 9`) |
+| F9 | MED (latent) | fusion `approveGate` fail-open → model-authored shell with inherited env | **HELD** — absent consent = refusal + scrubbed child env (`REPRO 9 (fusion)` + env-scrub) |
+| F7 | MED | sessions store secrets verbatim, world-readable | **HELD** — span redaction at the write seam + `0700`/`0600` (`REPRO 7`) |
+| F7b | MED (latent) | Cortex `/sessions/ingest` leg of F7 left open | **HELD** — redaction at the wire seam (`REPRO 10`) |
+| #24 | — | fusion panel/synthesis prompt injection (role output → synthesiser/validator) | **HELD / NOT-EXPLOITABLE** — validator not reachable, synthesiser attribution enum-locked (`REPRO 13`), render sanitised (`REPRO 11`) |
+| F10 | LOW | `list_files` on a `.ssh` *directory* node leaks filenames (content held) | **OPEN, non-blocking** — one-line `DENY_FLOOR` fix routed separately (`REPRO 12`, LIVE) |
 
-Attack class #24 (fusion panel/synthesis prompt injection) is **NOT ATTACKED** — the surface landed in `a41c76b` mid-review.
+Controls re-run this pass in a worktree with `@openkai/core` proved to resolve locally: **Direction A 110/110** + `security-audit.sh` PASSED; **Direction B (source reverted to `10fe7f5`, inverted tests kept) 100/109 — exactly the 9 fix reproducers fail, no tautologies**; render control (sanitiser neutered) fails `REPRO 6/8/9/11`. The three non-blocking hardening followups (`walkGrep` label, `ShadowGit.undo` lexical containment, `grep` model-RegExp) were re-probed and none became blocking. Superseded records: `eba8cb9` (3 exploited classes) fixed at `09b56ce`/`3f89a45`; ANSI/OSC + gate consent at `1d46b35`.
 
-Re-verified by kai this beat rather than read: all reproducers exist at the stated paths in `packages/cli/test/security-repro.test.ts` and `packages/cli/test/fusion.test.ts`, and the suite runs **105/105 green** at `10fe7f5` (LIVE reproducers pass *because* they assert the current vulnerable behaviour — they invert on fix).
-
-Per SECURITY.md §2, acceptance waits on critical/high closure, so **Inc 08 publish is blocked** until F4 + F6b close and cole's pass 4 certifies. Superseded record: findings `eba8cb9` (3 exploited classes) fixed at `09b56ce`/`3f89a45`; ANSI/OSC injection + gate consent fixed at `1d46b35`; that pass accepted `d05ce2c8` at 102/102.
+Per SECURITY.md §2, no open critical/high remains, so **Inc 08 publish is unblocked on the security gate** (still pending CTO go). kai reviews this certification per §4 (cole certified kai's fixes; kai reviews cole's output).
