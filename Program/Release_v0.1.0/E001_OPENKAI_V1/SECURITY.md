@@ -368,6 +368,76 @@ controls run at the tip; seven findings fixed and load-bearing; F9 env scrub col
 critical/high on the certified line. §4 separation held: the certifying reviewer (cole) neither
 implemented nor merged the fix-line.
 
+### 2.3 Registry remediation — 0.1.1 deprecated on npm (kai@openkai, 2026-08-16)
+
+Closes the **residual exposure** §2.2 filed at pass 6 ("0.1.1 still exists on the registry — a
+`@0.1.1` pin is still exploitable via F4+F6b HIGH; deprecate-and-republish is owned by kai").
+Carried unowned since the 0.1.2 reconciliation as "needs explicit human sign-off"; taken at the
+handoff approval gate rather than deferred again.
+
+**Action:** `npm deprecate` on the exact version `0.1.1` of both published packages.
+**Hard constraint honoured: `npm unpublish` was NOT run, and no other npm mutation was run.**
+Unpublish breaks existing lockfiles and is irreversible for 72h+; deprecate is fully reversible
+with an empty-string message. Exact-version targets (`@0.1.1`, never a range) so 0.1.2/0.1.3
+could not be caught by the operation. Operator: `npm whoami` = `amadmalik`, `read-write`.
+
+```
+$ npm deprecate '@kaidera/openkai@0.1.1' "$MSG"
+npm notice deprecating @kaidera/openkai@0.1.1 with message "SECURITY: 0.1.1 has 2 HIGH findings - F4 (protected name as a directory component escapes the deny floor) and F6b (permission overlay renders model-supplied escapes; spoofable consent surface). Upgrade to >=0.1.2."
+$ npm deprecate '@kaidera/openkai-core@0.1.1' "$MSG"
+npm notice deprecating @kaidera/openkai-core@0.1.1 with message "SECURITY: 0.1.1 has 2 HIGH findings - F4 (protected name as a directory component escapes the deny floor) and F6b (permission overlay renders model-supplied escapes; spoofable consent surface). Upgrade to >=0.1.2."
+```
+
+**Pre-state (probed live against the registry immediately before the operation, not inferred):**
+`npm view @kaidera/openkai@0.1.1 deprecated` → EMPTY; same for `@kaidera/openkai-core@0.1.1`;
+`versions` = `["0.1.1","0.1.2","0.1.3"]` and `dist-tags.latest` = `0.1.3` on both. So an explicit
+`@0.1.1` pin (or any transitive resolution to it) installed the pre-fix line carrying F4 and F6b
+with **no warning emitted at install time**.
+
+**Post-state — all four verification criteria, `--prefer-online` to defeat packument caching:**
+
+1. **0.1.1 IS deprecated (both packages), verbatim:**
+```
+$ npm view --prefer-online @kaidera/openkai@0.1.1 deprecated
+SECURITY: 0.1.1 has 2 HIGH findings - F4 (protected name as a directory component escapes the deny floor) and F6b (permission overlay renders model-supplied escapes; spoofable consent surface). Upgrade to >=0.1.2.
+$ npm view --prefer-online @kaidera/openkai-core@0.1.1 deprecated
+SECURITY: 0.1.1 has 2 HIGH findings - F4 (protected name as a directory component escapes the deny floor) and F6b (permission overlay renders model-supplied escapes; spoofable consent surface). Upgrade to >=0.1.2.
+```
+2. **0.1.2 and 0.1.3 are NOT deprecated** — re-probed on both packages at both versions after the
+   operation; all four return EMPTY. Confirmed independently against the raw packument
+   (`registry.npmjs.org/@kaidera%2Fopenkai`), which reports `0.1.1 -> '<the message>'`,
+   `0.1.2 -> None`, `0.1.3 -> None`.
+3. **`dist-tags.latest` unchanged at `0.1.3`** on both: `{"latest": "0.1.3"}` for
+   `@kaidera/openkai` and `@kaidera/openkai-core`. (§2.2's `latest = 0.1.2` was accurate when
+   written; the operator has since cut 0.1.3.)
+4. **NOTHING unpublished** — after the operation, `npm view <pkg> versions --json` still returns
+   exactly `["0.1.1","0.1.2","0.1.3"]` for **both** packages, byte-identical to the pre-state.
+
+**Effect proven end-to-end, not assumed.** A real `npm i @kaidera/openkai@0.1.1` into a scratch
+project now emits, on npm 11.6.2:
+```
+npm warn deprecated @kaidera/openkai@0.1.1: SECURITY: 0.1.1 has 2 HIGH findings - F4 (...) and F6b (...). Upgrade to >=0.1.2.
+npm warn deprecated @kaidera/openkai-core@0.1.1: SECURITY: 0.1.1 has 2 HIGH findings - F4 (...) and F6b (...). Upgrade to >=0.1.2.
+```
+— covering both the direct pin **and** the transitively-resolved core, which was the second half
+of the exposure. A 0.1.3 control install emits no deprecation line.
+
+> **npm behaviour worth recording (it briefly looked like the fix had not worked).** `npm i
+> --dry-run` prints **no** deprecation warnings on npm 11.6.2 — the warnings are emitted during
+> reify, which `--dry-run` skips. The first verification probe used `--dry-run` and came back
+> silent on a correctly-deprecated package. Verify deprecation with a **real** install (or by
+> reading the packument) — a dry-run is a false negative for this check.
+
+**Residual, stated plainly:** deprecation **warns, it does not block**. 0.1.1 remains resolvable
+and installable by design (that is the whole reason unpublish was refused — removing it would
+break existing lockfiles). An operator who pins `@0.1.1` and ignores an `npm warn` line still
+gets the vulnerable line; a non-npm consumer of the tarball gets no signal at all. Homebrew tap
+and standalone-binary channels are a **separate** exposure with its own owner and are not
+addressed here. This action closes the "no warning at install time" gap, not the "0.1.1 still
+exists" fact.
+
+**Reversibility:** `npm deprecate '<pkg>@0.1.1' ""` clears the message if it is ever wrong.
+
 ## 3. Deep scans (per release)
 
 Before v1 ships: a full white-box pentest pass (Strix OSS CLI against the repo if the operator provides the model key; otherwise the manual pattern checklist executed by cole end-to-end), plus `fix-security-vulnerabilities` workflow for anything found, plus the CI scanning skill's checklist folded into the release runbook.
