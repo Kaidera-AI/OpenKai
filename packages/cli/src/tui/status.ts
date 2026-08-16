@@ -49,6 +49,8 @@ export interface StatusState {
   awaitingApproval: boolean;
   /** True when an unfocused turn settled / permission arrived (P4b, scope §1.1). */
   attention: boolean;
+  /** The autonomy axis (off/low/med/high); rendered as a fixed-width chip. */
+  autonomy?: string;
 }
 
 /** Default chrome state for a fresh session. */
@@ -131,6 +133,7 @@ export class StatusLine implements Component {
     ];
     if (this.state.mode === "bash") chips.push(highlight.base("$"));
     if (this.state.provider) chips.push(this.state.provider);
+    if (this.state.autonomy) chips.push(textToken.muted(`a:${this.state.autonomy}`));
     chips.push(spinnerChip(this.state));
     return chips.join(` ${sep} `);
   }

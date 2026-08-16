@@ -91,13 +91,28 @@ export class SessionPermissionGate implements PermissionGate {
   private readonly cwd: string;
   private readonly pushEvent: PushPermissionEvent;
   /** Pending approvals: requestId → resolver. */
-  private readonly pending = new Map<string, (d: "once" | "always" | "reject") => void>();
+  private readonly pending = new Map<string, (d: "once" | "always" | "reject") => void>;
   /** Session-scoped `always` cache: toolName + args signature. In memory only. */
   private readonly alwaysCache = new Set<string>();
+  /**
+   * The autonomy axis (droid's coarse visible layer over the fine rules):
+   * off/low = default posture; med auto-approves in-cwd write/edit; high
+   * auto-approves bash too. The deny FLOOR is terminal at every level.
+   */
+  private autonomy: "off" | "low" | "med" | "high" = "low";
 
   constructor(options: SessionPermissionGateOptions) {
     this.cwd = options.cwd;
     this.pushEvent = options.pushEvent;
+  }
+
+  /** Set the autonomy axis (operator's live choice; default `low`). */
+  setAutonomy(level: "off" | "low" | "med" | "high"): void {
+    this.autonomy = level;
+  }
+
+  get autonomyLevel(): "off" | "low" | "med" | "high" {
+    return this.autonomy;
   }
 
   async request(
@@ -109,6 +124,14 @@ export class SessionPermissionGate implements PermissionGate {
     const { decision, reason } = evaluateWithReason(toolName, args, this.cwd);
     if (decision === "allow") return { decision: "approve" };
     if (decision === "deny") return { decision: "reject", reason };
+
+    // The autonomy axis (operator's live posture): med auto-approves in-cwd
+    // file mutations; high also auto-approves bash. The floor already
+    // rejected above — this never lifts a deny.
+    if (this.autonomy === "high") return { decision: "approve" };
+    if (this.autonomy === "med" && (toolName === "write_file" || toolName === "edit_file")) {
+      return { decision: "approve" };
+    }
 
     // `ask` — consult the session-scoped `always` cache first.
     const key = alwaysKey(toolName, args);

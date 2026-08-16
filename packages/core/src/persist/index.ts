@@ -9,9 +9,12 @@ export {
   type SessionStoreOptions,
   SessionStore,
   defaultRoot,
+  forkSession,
   listSessions,
   readSessionMessages,
+  sessionTree,
 } from "./session-store.js";
+export type { SessionTreeRow } from "./session-store.js";
 export {
   type CortexCheckpointOptions,
   CortexCheckpoint,

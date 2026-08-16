@@ -235,3 +235,60 @@ export async function readSessionMessages(filePath: string): Promise<AgentMessag
 export function defaultRoot(): string {
   return path.join(process.cwd(), ".openkai", "sessions");
 }
+
+/**
+ * Fork a session (droid's background `/fork`): a new v3 branch whose header
+ * points at the source session, seeded with the source's messages so the
+ * forked context continues intact. Returns the new session's identity for
+ * the paste-able resume receipt.
+ */
+export async function forkSession(
+  source: SessionStore,
+): Promise<{ sessionId: string; filePath: string }> {
+  const root = path.dirname(path.dirname(source.filePath));
+  const fork = new SessionStore({ root, parentSessionId: source.sessionId });
+  await fork.ensure();
+  const entries = await source.readEntries();
+  for (const entry of entries) {
+    if (entry.type === "message") await fork.appendMessage(entry.message);
+  }
+  return { sessionId: fork.sessionId, filePath: fork.filePath };
+}
+
+/** One row of the session tree view. */
+export interface SessionTreeRow {
+  sessionId: string;
+  parentSessionId: string | null;
+  createdAt: number;
+  messages: number;
+}
+
+/** The session forest: every session under the root with its parent link. */
+export async function sessionTree(root?: string): Promise<SessionTreeRow[]> {
+  const base = root ?? defaultRoot();
+  let dirs: string[] = [];
+  try {
+    dirs = (await fs.readdir(base, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const rows: SessionTreeRow[] = [];
+  for (const id of dirs) {
+    const store = new SessionStore({ root: base, sessionId: id });
+    try {
+      const header = await store.readHeader();
+      const entries = await store.readEntries();
+      rows.push({
+        sessionId: id,
+        parentSessionId: header?.parentSessionId ?? null,
+        createdAt: header?.createdAt ?? 0,
+        messages: entries.filter((e) => e.type === "message").length,
+      });
+    } catch {
+      // unreadable session dir — skip
+    }
+  }
+  return rows.sort((a, b) => a.createdAt - b.createdAt);
+}

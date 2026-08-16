@@ -23,7 +23,9 @@ import type { Component, TUI, StackChild } from "@earendil-works/pi-tui";
 import {
   CortexCheckpoint,
   SessionStore,
+  forkSession,
   listSessions,
+  sessionTree,
   type FuseResult,
   type InProcessTransport,
   type SessionEvent,
@@ -89,6 +91,11 @@ export interface TuiAppOptions {
   /** `/effort` + `/fast` callbacks — reasoning effort control. */
   onSetEffort?: {
     set: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
+    current: () => string;
+  };
+  /** `/autonomy` callback — the coarse permission axis. */
+  onSetAutonomy?: {
+    set: (level: "off" | "low" | "med" | "high") => void;
     current: () => string;
   };
 }
@@ -187,6 +194,8 @@ export class TuiController {
   private modelId: string;
   private modelSwitch?: (model: Model<Api>) => void;
   private effortSwitch?: { set: (level: "off" | "minimal" | "low" | "medium" | "high") => void; current: () => string };
+  private autonomySwitch?: { set: (level: "off" | "low" | "med" | "high") => void; current: () => string };
+  private lastPrompt?: string;
   private composer?: Composer;
   /** Droid's `!` bash mode: submissions run through the gated bash tool. */
   bashMode = false;
@@ -214,6 +223,7 @@ export class TuiController {
     this.provider = options.provider;
     this.modelSwitch = options.onSetModel;
     this.effortSwitch = options.onSetEffort;
+    this.autonomySwitch = options.onSetAutonomy;
   }
 
   /** Attach the composer (set after construction so the controller can build it). */
@@ -295,6 +305,33 @@ export class TuiController {
         }
         await this.fuse(argument);
         break;
+      case "retry":
+        await this.retry(argument);
+        break;
+      case "fork": {
+        const fork = await forkSession(this.store);
+        this.transcript.addNotice(
+          `forked → ${fork.sessionId.slice(0, 8)} — resume with: openkai --session ${fork.sessionId}`,
+        );
+        break;
+      }
+      case "tree": {
+        const rows = await sessionTree(this.sessionsRoot);
+        if (rows.length === 0) {
+          this.transcript.addNotice("tree: no sessions yet");
+          break;
+        }
+        const lines = rows.map((r) => {
+          const depth = r.parentSessionId ? "  ⤷ " : "";
+          const current = r.sessionId === this.sessionId ? "  (current)" : "";
+          return `${depth}${r.sessionId.slice(0, 8)} · ${r.messages} msgs${current}`;
+        });
+        this.transcript.addNotice(["session tree:", ...lines]);
+        break;
+      }
+      case "autonomy":
+        this.cycleAutonomy(argument);
+        break;
       case "welcome":
         this.transcript.addNotice("welcome: exiting to re-run setup — relaunch with `openkai`");
         this.tui.requestRender();
@@ -329,6 +366,7 @@ export class TuiController {
       await this.runShellTurn(text);
       return;
     }
+    this.lastPrompt = text;
     const userMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
     await this.store.appendMessage(userMsg);
     this.transcript.addUserMessage(text);
@@ -390,6 +428,48 @@ export class TuiController {
     } catch (error) {
       this.transcript.addNotice(`bash: ${error instanceof Error ? error.message : String(error)}`);
     }
+    this.tui.requestRender();
+  }
+
+  /** `/retry [model-id]` — re-run the last prompt, optionally on another model. */
+  async retry(argument: string): Promise<void> {
+    if (!this.lastPrompt) {
+      this.transcript.addNotice("retry: nothing to retry yet");
+      this.tui.requestRender();
+      return;
+    }
+    if (argument.length > 0) {
+      this.applyModelSelection(this.provider ?? "openrouter", argument);
+    }
+    this.transcript.addNotice(`retrying: ${this.lastPrompt.slice(0, 80)}`);
+    await this.submit(this.lastPrompt);
+  }
+
+  /** `/autonomy [off|low|med|high]` — the coarse visible axis (droid). */
+  private cycleAutonomy(argument: string): void {
+    if (!this.autonomySwitch) {
+      this.transcript.addNotice("autonomy: unavailable (permission gate off)");
+      this.tui.requestRender();
+      return;
+    }
+    const levels = ["off", "low", "med", "high"] as const;
+    let next: (typeof levels)[number];
+    if ((levels as readonly string[]).includes(argument)) {
+      next = argument as (typeof levels)[number];
+    } else {
+      const idx = levels.indexOf(this.autonomySwitch.current() as (typeof levels)[number]);
+      next = levels[(idx + 1) % levels.length]!;
+    }
+    this.autonomySwitch.set(next);
+    this.status.update({ ...this.status.currentState, autonomy: next });
+    this.transcript.addNotice(
+      `autonomy: ${next}` +
+        (next === "med"
+          ? " — in-cwd writes auto-approve (floor + bash still gate)"
+          : next === "high"
+            ? " — everything auto-approves except the deny floor"
+            : ""),
+    );
     this.tui.requestRender();
   }
 

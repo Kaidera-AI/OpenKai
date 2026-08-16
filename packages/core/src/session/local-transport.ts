@@ -275,6 +275,15 @@ export class InProcessTransport implements SessionTransport {
     return this.currentThinkingLevel;
   }
 
+  /** Set the autonomy axis (no-op when the gate is disabled). */
+  setAutonomy(level: "off" | "low" | "med" | "high"): void {
+    this.gate?.setAutonomy(level);
+  }
+
+  get autonomyLevel(): string {
+    return this.gate?.autonomyLevel ?? "off";
+  }
+
   /**
    * Run a shell command through the SAME gate as model-driven bash (TUI
    * bash-mode, droid's `!` toggle): identical overlay, consent, and floor —
