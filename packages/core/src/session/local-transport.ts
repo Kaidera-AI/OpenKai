@@ -27,9 +27,10 @@ import type { Api } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Models } from "@earendil-works/pi-ai";
 import { mapAgentEvent } from "./events.js";
-import { gatedTools, readOnlyTools } from "./tools.js";
+import { gatedTools, readOnlyTools, bashTool } from "./tools.js";
 import type { MutationHooks } from "./tools.js";
 import { ShadowGit } from "../undo/shadow.js";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { SessionPermissionGate, type PermissionGate, type PushPermissionEvent } from "./permission-gate.js";
 
 /** The stripped `permission_request` payload the gate pushes onto the queue. */
@@ -141,6 +142,8 @@ export class InProcessTransport implements SessionTransport {
   /** P4b permission gate (undefined when permissions are disabled — v1 path). */
   private readonly gate: SessionPermissionGate | undefined;
   private readonly shadow: ShadowGit | undefined;
+  private readonly cwd: string;
+  private readonly mutationHooks: MutationHooks | undefined;
   private readonly onActivity: ((event: SessionEvent) => void) | undefined;
 
   /** Stamp + push a permission_request event onto the session queue. */
@@ -186,20 +189,21 @@ export class InProcessTransport implements SessionTransport {
     const enablePermissions = options.enablePermissions === true;
     this.queue = new EventQueue();
     this.onActivity = options.onActivity;
+    this.cwd = options.cwd;
     this.gate = enablePermissions
       ? new SessionPermissionGate({ cwd: options.cwd, pushEvent: (e) => this.emitPermissionEvent(e) })
       : undefined;
     // Inc 05: shadow-git undo. Snapshots fire after approval, before every
     // gated mutation (write/edit/bash), via the MutationHooks seam.
     this.shadow = this.gate ? new ShadowGit(options.cwd) : undefined;
-    const mutationHooks: MutationHooks | undefined = this.shadow
+    this.mutationHooks = this.shadow
       ? {
           beforeMutation: async (tool, summary) => {
             await this.shadow?.snapshot(`before ${tool}: ${summary.slice(0, 120)}`);
           },
         }
       : undefined;
-    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, mutationHooks) : readOnlyTools(options.cwd));
+    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, this.mutationHooks) : readOnlyTools(options.cwd));
     const systemPrompt =
       options.systemPrompt ??
       (this.gate
@@ -269,6 +273,26 @@ export class InProcessTransport implements SessionTransport {
 
   get thinkingLevel(): string {
     return this.currentThinkingLevel;
+  }
+
+  /**
+   * Run a shell command through the SAME gate as model-driven bash (TUI
+   * bash-mode, droid's `!` toggle): identical overlay, consent, and floor —
+   * the operator's keystroke and the model's tool call are one trust path.
+   * Throws when the gate is disabled (print mode).
+   */
+  async runBash(command: string): Promise<{ text: string; isError: boolean }> {
+    if (!this.gate) {
+      throw new Error("bash mode requires the permission gate (TUI mode)");
+    }
+    const tool = bashTool(this.cwd, this.gate, this.mutationHooks);
+    const result = await tool.execute(uuidv7(), { command });
+    const text = result.content
+      .filter((c): c is { type: "text"; text: string } => c.type === "text")
+      .map((c) => c.text)
+      .join("\n");
+    const isError = text.startsWith("Error") || text.startsWith("Permission denied");
+    return { text, isError };
   }
 
   prompt(text: string): Promise<void> {

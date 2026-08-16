@@ -39,6 +39,7 @@ import {
   isOpenPalette,
   isStash,
   DoubleEscDetector,
+  RewindEscDetector,
 } from "./keymap.js";
 import {
   AttentionNotifier,
@@ -280,6 +281,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
 
   // ── Input listener: focus, palette, stash, density, clear, quit-confirm ──
   const escDetector = new DoubleEscDetector();
+  const rewindDetector = new RewindEscDetector();
   let lastQuitConfirmAt = 0;
 
   tui.addInputListener((data) => {
@@ -305,6 +307,11 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       controller.openPalette();
       return { consume: true };
     }
+    // Bash mode (droid's `!`): only at an empty draft, so `!` mid-text types.
+    if (data === "!" && composer.text.trim() === "") {
+      controller.toggleBash();
+      return { consume: true };
+    }
     if (isStash(data, manager)) {
       controller.stashOrPop();
       return { consume: true };
@@ -317,6 +324,10 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     if (escDetector.feed(data)) {
       composer.clear();
       tui.flash("draft cleared");
+      return { consume: true };
+    }
+    if (rewindDetector.feed(data) === "triple") {
+      controller.openRewind();
       return { consume: true };
     }
     if (isQuit(data, manager)) {

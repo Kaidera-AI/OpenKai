@@ -121,3 +121,30 @@ export class DoubleEscDetector {
     return false;
   }
 }
+
+/**
+ * Triple-Esc detector (droid's panic-key grammar): Esc Esc clears the draft;
+ * a THIRD Esc inside the window opens the rewind menu — undo discoverable
+ * from the key every operator actually pounds.
+ */
+export class RewindEscDetector {
+  private times: number[] = [];
+  constructor(private readonly windowMs = 700) {}
+
+  /** Returns "double" | "triple" | undefined for this input chunk. */
+  feed(data: string): "double" | "triple" | undefined {
+    if (!isEscape(data)) {
+      this.times = [];
+      return undefined;
+    }
+    const now = Date.now();
+    this.times = this.times.filter((t) => now - t <= this.windowMs);
+    this.times.push(now);
+    if (this.times.length >= 3) {
+      this.times = [];
+      return "triple";
+    }
+    if (this.times.length === 2) return "double";
+    return undefined;
+  }
+}

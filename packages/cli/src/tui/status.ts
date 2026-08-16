@@ -129,6 +129,7 @@ export class StatusLine implements Component {
       tokens,
       `p:${this.state.persistMode}`,
     ];
+    if (this.state.mode === "bash") chips.push(highlight.base("$"));
     if (this.state.provider) chips.push(this.state.provider);
     chips.push(spinnerChip(this.state));
     return chips.join(` ${sep} `);

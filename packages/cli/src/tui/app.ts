@@ -25,6 +25,7 @@ import {
   SessionStore,
   listSessions,
   type FuseResult,
+  type InProcessTransport,
   type SessionEvent,
   type SessionTransport,
   type UsageSnapshot,
@@ -187,6 +188,8 @@ export class TuiController {
   private modelSwitch?: (model: Model<Api>) => void;
   private effortSwitch?: { set: (level: "off" | "minimal" | "low" | "medium" | "high") => void; current: () => string };
   private composer?: Composer;
+  /** Droid's `!` bash mode: submissions run through the gated bash tool. */
+  bashMode = false;
   private busy = false;
   private done = false;
   /** True while the current turn is a `/btw` side channel (scope §1.5) — persistTurn skips it so the ephemeral exchange never re-persists the prior assistant block. */
@@ -312,8 +315,20 @@ export class TuiController {
     this.tui.requestRender();
   }
 
+  /** Toggle bash mode (`!` at an empty draft) — the prompt-side shell. */
+  toggleBash(): void {
+    this.bashMode = !this.bashMode;
+    this.status.update({ ...this.status.currentState, mode: this.bashMode ? "bash" : "chat" });
+    this.transcript.addNotice(this.bashMode ? "bash mode — `$` shell, gated as usual; `!` to return" : "chat mode");
+    this.tui.requestRender();
+  }
+
   /** Submit a user prompt: persist + display + fire the transport turn. */
   async submit(text: string): Promise<void> {
+    if (this.bashMode) {
+      await this.runShellTurn(text);
+      return;
+    }
     const userMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
     await this.store.appendMessage(userMsg);
     this.transcript.addUserMessage(text);
@@ -353,6 +368,27 @@ export class TuiController {
       this.transcript.addNotice(`undo: restored to snapshot ${sha.slice(0, 10)}`);
     } catch (error) {
       this.transcript.addNotice(`undo: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.tui.requestRender();
+  }
+
+  /** Bash-mode turn: run the command through the gated tool; render the outcome. */
+  private async runShellTurn(command: string): Promise<void> {
+    const transport = this.transport;
+    if (typeof (transport as Partial<InProcessTransport>).runBash !== "function") {
+      this.transcript.addNotice("bash mode: unavailable on this transport");
+      this.tui.requestRender();
+      return;
+    }
+    this.transcript.addUserMessage(`$ ${command}`);
+    try {
+      const { text, isError } = await (transport as InProcessTransport).runBash(command);
+      const lines = text.split("\n").slice(0, 12);
+      if (text.split("\n").length > 12) lines.push(`… ${text.split("\n").length - 12} more`);
+      this.transcript.addNotice(lines.join("\n") || "(no output)");
+      if (isError) this.transcript.addNotice("(command reported an error)");
+    } catch (error) {
+      this.transcript.addNotice(`bash: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.tui.requestRender();
   }
@@ -457,6 +493,28 @@ export class TuiController {
     this.effortSwitch.set(this.fast ? "off" : "medium");
     this.transcript.addNotice(this.fast ? "fast mode: on (effort off)" : "fast mode: off (effort medium)");
     this.tui.requestRender();
+  }
+
+  /** Third-Esc rewind menu (droid panic-key grammar): undo discoverable from Esc. */
+  openRewind(): void {
+    const items: PaletteItem[] = [
+      { value: "undo", label: "Undo last mutation", description: "restore the tree to the previous snapshot", action: () => void this.undo() },
+      { value: "clear", label: "Clear draft", description: "wipe the composer", action: () => this.composer?.clear() },
+      { value: "cancel", label: "Cancel", description: "never mind", action: () => undefined },
+    ];
+    const palette = new CommandPalette({
+      items,
+      onSelect: (item: PaletteItem) => {
+        this.tui.hideOverlay();
+        item.action?.();
+        this.refocusComposer();
+      },
+      onCancel: () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    });
+    this.tui.showOverlay(palette, { anchor: "center", width: "44%", maxHeight: "40%" });
   }
 
   /** Open the leader-key command palette (scope §1.3). */
