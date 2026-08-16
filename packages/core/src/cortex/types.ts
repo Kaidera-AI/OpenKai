@@ -84,6 +84,51 @@ export interface CortexProject {
   [key: string]: unknown;
 }
 
+// ── Skill registry types (E002 Inc 05) ─────────────────────────────────────
+
+/** One registered skill row from `GET /skills` (subset). */
+export interface SkillInfo {
+  skill_slug: string;
+  name?: string | null;
+  description?: string | null;
+  scope: string;
+  version: string;
+  body_ref?: string | null;
+  body_hash?: string | null;
+  skill_type?: string;
+  permission?: string | null;
+  trust_tier?: string | null;
+  [key: string]: unknown;
+}
+
+/** Payload for `POST /skills` (register/upsert a skill). */
+export interface SkillRegisterPayload {
+  skill_slug: string;
+  name?: string;
+  description?: string;
+  scope?: string;
+  body_ref?: string;
+  body_hash?: string;
+  version?: string;
+  skill_type?: string;
+  permission?: string;
+  trust_tier?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** Payload for `POST /skills/{slug}/bind` (bind a skill to a subject). */
+export interface SkillBindPayload {
+  subject_kind?: string;
+  subject: string;
+  project?: string;
+  binding_type?: string;
+  priority?: number;
+  version_pin?: string;
+}
+
+/** `GET /skills` response shape (object wrapper or bare array). */
+export type SkillListResponse = { skills: SkillInfo[] } | SkillInfo[];
+
 export interface CortexClientOptions {
   /**
    * API base URL. Defaults to `process.env.CORTEX_API_URL`, then

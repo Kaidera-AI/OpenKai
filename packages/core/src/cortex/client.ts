@@ -13,6 +13,10 @@ import type {
   CortexHealth,
   CortexProject,
   CortexStreamItem,
+  SkillBindPayload,
+  SkillInfo,
+  SkillListResponse,
+  SkillRegisterPayload,
   StreamEventsOptions,
   TeamEventFields,
 } from "./types.js";
@@ -126,6 +130,27 @@ export class CortexClient {
     return JSON.parse(text) as T;
   }
 
+  /**
+   * `DELETE` a Cortex path. Returns the parsed JSON response (or `undefined`
+   * for an empty body). Used by the skill-remove flow (E002 Inc 05).
+   */
+  async deleteJson<T>(path: string): Promise<T> {
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method: "DELETE",
+      headers: this.headers(),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new CortexApiError(
+        `DELETE ${path} failed with HTTP ${response.status}`,
+        response.status,
+        text,
+      );
+    }
+    if (!text.trim()) return undefined as T;
+    return JSON.parse(text) as T;
+  }
+
   /** `GET /health` — liveness + backend configuration of this Cortex API. */
   health(): Promise<CortexHealth> {
     return this.getJson<CortexHealth>("/health");
@@ -139,6 +164,33 @@ export class CortexClient {
   /** `GET /sessions/ingested-ids` — ingested session ids for this project (mode-matrix evidence). */
   getIngestedIds(): Promise<{ project: string; ids: string[] }> {
     return this.getJson<{ project: string; ids: string[] }>("/sessions/ingested-ids");
+  }
+
+  // ── Skill registry (E002 Inc 05) ───────────────────────────────────────
+  //
+  // These mirror the API shapes from `.agents/scripts/cortex-skill` (POST
+  // /skills, GET /skills, DELETE /skills/{slug}, POST /skills/{slug}/bind)
+  // so `openkai skills` can talk to the same registry without shelling out.
+
+  /** `GET /skills` — list skills visible to this project. */
+  async listSkills(): Promise<SkillInfo[]> {
+    const raw = await this.getJson<SkillListResponse>("/skills");
+    return Array.isArray(raw) ? raw : (raw.skills ?? []);
+  }
+
+  /** `POST /skills` — register or upsert a skill in the agent_skills registry. */
+  registerSkill(payload: SkillRegisterPayload): Promise<unknown> {
+    return this.postJson("/skills", payload);
+  }
+
+  /** `DELETE /skills/{slug}` — remove a skill from the registry. */
+  deleteSkill(slug: string): Promise<unknown> {
+    return this.deleteJson(`/skills/${encodeURIComponent(slug)}`);
+  }
+
+  /** `POST /skills/{slug}/bind` — bind a skill to a role or agent. */
+  bindSkill(slug: string, payload: SkillBindPayload): Promise<unknown> {
+    return this.postJson(`/skills/${encodeURIComponent(slug)}/bind`, payload);
   }
 
   /**
