@@ -79,7 +79,8 @@ export interface PermissionRule {
  * The deny floor — terminal path globs that always resolve to `deny`, checked
  * *before* the rule walk so no later `allow` rule can override them (scope §3).
  * Matches against the path relative to cwd; a bare-name pattern (no `/`) also
- * matches the basename, so `.env` denies `subdir/.env` as well as `./.env`.
+ * matches the basename, so `.env` denies `subdir/.env` as well as `./.env`, and
+ * every pattern also matches an ancestor DIRECTORY (see {@link matchesDenyFloor}).
  */
 const DENY_FLOOR: readonly string[] = [
   ".env",
@@ -215,10 +216,23 @@ function ruleMatches(
   return true;
 }
 
-/** Return the deny-floor pattern that `relPath` matches, or `undefined`. */
+/**
+ * Return the deny-floor pattern that `relPath` matches, or `undefined`.
+ *
+ * A protected path protects everything **under** it, so the floor is tested
+ * against every ancestor prefix — not just the full path. `.env/production`
+ * is denied by the `.env` pattern and `server.pem/privkey` by the `*.pem` one:
+ * a protected NAME used as a DIRECTORY component holds the same secrets the
+ * leaf file would, and `.env/` directories are a real per-environment
+ * convention (E001 finding F4).
+ */
 function matchesDenyFloor(relPath: string): string | undefined {
-  for (const pattern of DENY_FLOOR) {
-    if (pathGlobMatch(pattern, relPath)) return pattern;
+  const parts = relPath.split(/[\\/]/).filter((p) => p.length > 0);
+  for (let i = 1; i <= parts.length; i += 1) {
+    const prefix = parts.slice(0, i).join("/");
+    for (const pattern of DENY_FLOOR) {
+      if (pathGlobMatch(pattern, prefix)) return pattern;
+    }
   }
   return undefined;
 }

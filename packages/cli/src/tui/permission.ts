@@ -23,7 +23,23 @@
 import { SelectList, type SelectItem } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { PermissionPreview } from "@kaidera/openkai-core";
+import { sanitizeTerminalText } from "./sanitize.js";
 import { highlight, renderOverlayFooter, surface, text as textToken, toolBorder } from "./theme.js";
+
+/**
+ * Every string on this overlay is model-supplied (tool name, bash command,
+ * diff path/body) and this is the ONE surface that must never be spoofable:
+ * ADR §5.6 makes the permission engine *the* control, so an overlay whose
+ * text the model drives removes it — CSI 2J blanks the frame, SGR forges the
+ * approval chrome (E001 finding F6b). `sanitizeTerminalText` strips the
+ * controls; `oneLine` additionally flattens newlines for the fields rendered
+ * as a single line, so a payload cannot fabricate an extra line of chrome
+ * inside the frame. The diff body keeps its newlines — it is rendered as
+ * multiple lines by design.
+ */
+function oneLine(value: string): string {
+  return sanitizeTerminalText(value).replace(/\n/g, " ");
+}
 
 /** The approval decision the overlay emits to the controller. */
 export type PermissionDecision = "once" | "always" | "reject";
@@ -61,8 +77,8 @@ export class PermissionOverlay implements Component {
   private answered = false;
 
   constructor(options: PermissionOverlayOptions) {
-    this.toolName = options.toolName;
-    this.rule = options.rule;
+    this.toolName = oneLine(options.toolName);
+    this.rule = oneLine(options.rule);
     this.preview = options.preview;
     this.onDecision = options.onDecision;
     this.select = new SelectList([...APPROVAL_ITEMS], 5, {
@@ -120,16 +136,17 @@ function renderPreview(preview: PermissionPreview, width: number): string[] {
   const cap = Math.max(8, Math.min(width - 2, 78));
   if (preview.kind === "command") {
     return [
-      `${textToken.muted("cwd  ")} ${textToken.base(preview.cwd)}`,
-      `${textToken.muted("cmd  ")} ${highlight.base(preview.command)}`,
+      `${textToken.muted("cwd  ")} ${textToken.base(oneLine(preview.cwd))}`,
+      `${textToken.muted("cmd  ")} ${highlight.base(oneLine(preview.command))}`,
     ];
   }
   // diff: removed/added lines, token-coloured. before→removed, after→added,
   // presented as a unified-ish +/- sketch (the renderer applies the tokens).
   const lines: string[] = [];
-  const beforeLines = preview.before.length === 0 ? ["(new file)"] : preview.before.split("\n");
-  const afterLines = preview.after.split("\n");
-  const pathLine = `${textToken.muted("file ")} ${textToken.base(preview.path)}`;
+  const beforeLines =
+    preview.before.length === 0 ? ["(new file)"] : sanitizeTerminalText(preview.before).split("\n");
+  const afterLines = sanitizeTerminalText(preview.after).split("\n");
+  const pathLine = `${textToken.muted("file ")} ${textToken.base(oneLine(preview.path))}`;
   lines.push(pathLine);
   for (const b of beforeLines) {
     lines.push(highlight.danger(truncate(`- ${b}`, cap)));

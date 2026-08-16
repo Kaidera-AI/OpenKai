@@ -19,6 +19,8 @@ import {
   evaluateWithReason,
   readOnlyTools,
   gatedTools,
+  CortexCheckpoint,
+  CortexClient,
   SessionPermissionGate,
   SessionStore,
   ShadowGit,
@@ -206,9 +208,12 @@ test("GUARD: recursive grep never surfaces floor-file content", async () => {
  * real convention (per-environment files), and the same hole applies to
  * `*.pem` / `*.key` used as directory names.
  *
- * INVERT ON FIX: bare-name floor patterns must match ANY path component.
+ * FIXED (2026-08-16, F4): `matchesDenyFloor` tests every ANCESTOR PREFIX, so a
+ * protected path protects its descendants. That covers the bare-name case
+ * (`.env/production`) and the slashed one the original note missed
+ * (`server.pem/privkey` — the `*.pem` pattern never matched it either).
  */
-test("REPRO 4: a protected name used as a DIRECTORY escapes the deny floor", async () => {
+test("REPRO 4: a protected name used as a DIRECTORY is denied by the floor", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "okrepro-floordir-"));
   try {
     await mkdir(path.join(cwd, ".env"));
@@ -219,21 +224,27 @@ test("REPRO 4: a protected name used as a DIRECTORY escapes the deny floor", asy
     // Control: the floor still works when the secret is a leaf file.
     assert.equal(evaluate("read_file", { path: ".env" }, cwd), "deny", "control: .env denied");
 
-    // LIVE: the same name as a directory is not covered.
+    // FIXED: the same name as a directory is covered by the same pattern.
     assert.equal(
       evaluate("read_file", { path: ".env/production" }, cwd),
-      "allow",
-      "LIVE: .env/production is allowed by the engine",
+      "deny",
+      ".env/production is denied by the engine",
     );
     assert.equal(
       evaluate("read_file", { path: "server.pem/privkey" }, cwd),
-      "allow",
-      "LIVE: server.pem/privkey is allowed by the engine",
+      "deny",
+      "server.pem/privkey is denied by the engine",
     );
 
-    // …and the tool layer hands the secret over verbatim.
+    // …and the tool layer refuses rather than disclosing.
     const body = await callRead(cwd, ".env/production");
-    assert.match(body, /DB_PASSWORD=hunter2/, "LIVE: secret is disclosed with no prompt");
+    assert.match(body, /denied — protected path/, "tool refuses the floor directory");
+    assert.doesNotMatch(body, /DB_PASSWORD=hunter2/, "no secret is disclosed");
+    assert.doesNotMatch(
+      await callRead(cwd, "server.pem/privkey"),
+      /PRIVATE-MATERIAL/,
+      "no key material is disclosed",
+    );
 
     // Contrast: the slashed `**/.ssh/**` pattern DOES cover descendants —
     // this is why the bare-name patterns are the defect, not the floor idea.
@@ -257,10 +268,10 @@ test("REPRO 4: a protected name used as a DIRECTORY escapes the deny floor", asy
  * one returns "oldString not found", and the ambiguous branch leaks a match
  * COUNT. No `permission_request` is emitted, so the operator never sees it.
  *
- * INVERT ON FIX: resolve + floor/containment check BEFORE any read, so both
- * probes return an identical refusal.
+ * FIXED (2026-08-16, F5): `guardPath` resolves + floor/containment-checks
+ * BEFORE any read, so both probes return an identical, path-derived refusal.
  */
-test("REPRO 5: edit_file's pre-gate read is a content oracle over floor files", async () => {
+test("REPRO 5: edit_file refuses floor files identically regardless of the guess", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "okrepro-oracle-"));
   try {
     await writeFile(path.join(cwd, ".env"), "OPENROUTER_API_KEY=sk-live-ORACLE-9f3a\n");
@@ -274,10 +285,15 @@ test("REPRO 5: edit_file's pre-gate read is a content oracle over floor files", 
       await edit.execute("o2", { path: ".env", oldString: "sk-live-WRONGGUESS", newString: "x" }),
     );
 
-    // LIVE: the two replies differ, which IS the oracle.
-    assert.notEqual(correct, wrong, "LIVE: correct vs wrong guess are distinguishable");
-    assert.match(correct, /protected path/, "correct guess → floor refusal");
-    assert.match(wrong, /oldString not found/, "wrong guess → read-derived error");
+    // FIXED: the two replies are identical, so there is nothing to learn.
+    assert.equal(correct, wrong, "correct vs wrong guess are indistinguishable");
+    assert.match(correct, /Permission denied/, "both are refusals");
+    assert.match(correct, /protected path/, "…from the floor, derived from the path alone");
+    assert.doesNotMatch(
+      correct + wrong,
+      /oldString not found|matches\)/,
+      "no read-derived error text — the file was never opened",
+    );
 
     // The floor still stops the WRITE — confidentiality leaks, integrity holds.
     assert.match(await callRead(cwd, ".env"), /denied — protected path/);
@@ -286,8 +302,8 @@ test("REPRO 5: edit_file's pre-gate read is a content oracle over floor files", 
   }
 });
 
-/** FINDING 5b (LIVE) — the same oracle aimed outside cwd leaks existence too. */
-test("REPRO 5b: edit_file's pre-gate read leaks content/existence outside cwd", async () => {
+/** FINDING 5b (FIXED) — the same probe aimed outside cwd leaks nothing either. */
+test("REPRO 5b: edit_file leaks no content/existence outside cwd", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "okrepro-oracle2-"));
   const cwd = path.join(root, "ws");
   try {
@@ -311,9 +327,14 @@ test("REPRO 5b: edit_file's pre-gate read leaks content/existence outside cwd", 
       }),
     );
 
-    assert.notEqual(correct, wrong, "LIVE: outside-cwd content is probeable");
-    assert.match(correct, /outside working directory/, "correct guess → containment refusal");
-    assert.match(wrong, /oldString not found/, "wrong guess proves the file WAS read");
+    assert.equal(correct, wrong, "outside-cwd content is not probeable");
+    assert.match(correct, /Permission denied/, "both are refusals");
+    assert.match(correct, /escapes working directory/, "…from containment, path-derived");
+    assert.doesNotMatch(
+      correct + wrong,
+      /oldString not found|matches\)/,
+      "the outside-cwd file was never read",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -544,13 +565,11 @@ test("HELD: every case variant of the .env floor is denied", async () => {
  * the session tree is created with default permissions, so on a shared host the
  * transcript is readable by every local user.
  *
- * INVERTED (2026-08-16, F7 fix): content redaction is out of scope (lead
- * decision: sessions are operator-confidential under ADR §5.6, redaction
- * risks corrupting replay/undo fidelity). The control is file-mode hardening:
- * the session tree is created 0700/0600 so secrets cannot land in a
- * group/other-readable file.
+ * FIXED (2026-08-16, F7): §4 is kept as written rather than weakened — the
+ * single JSONL write seam redacts secret-shaped spans (so every entry kind is
+ * covered), and the tree is created 0700/0600.
  */
-test("REPRO 7: session tree is created with restrictive file modes (0700/0600)", async () => {
+test("REPRO 7: session persistence redacts secrets and is owner-only", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "okrepro-persist-"));
   try {
     const store = new SessionStore({ root, sessionId: "11111111-1111-7111-8111-111111111111" });
@@ -564,15 +583,18 @@ test("REPRO 7: session tree is created with restrictive file modes (0700/0600)",
     } as never);
 
     const onDisk = await readFile(store.filePath, "utf-8");
-    // Content redaction is out of scope (lead decision, ADR §5.6): the secret
-    // is still persisted verbatim — the control is the file mode, not redaction.
-    assert.match(onDisk, /sk-live-PERSISTED-7c21/, "secret is persisted verbatim (redaction out of scope)");
+    assert.doesNotMatch(onDisk, /sk-live-PERSISTED-7c21/, "secret is not persisted verbatim");
+    assert.match(onDisk, /\[redacted-secret\]/, "the span is replaced, not silently dropped");
+    // The surrounding turn survives — redaction is span-level, not entry-level.
+    assert.match(onDisk, /OPENROUTER_API_KEY=/, "the rest of the message is intact");
+    // Still valid JSONL after redaction.
+    assert.equal((await store.readEntries()).length, 1, "the entry still parses");
 
-    // FIXED (F7): session file 0600, session dir 0700 — not group/other readable.
+    // Owner-only on the session file and its directory.
     const fileMode = (await stat(store.filePath)).mode & 0o777;
     const dirMode = (await stat(path.dirname(store.filePath))).mode & 0o777;
-    assert.equal(fileMode & 0o077, 0, `FIXED: session file is not group/other readable (${fileMode.toString(8)})`);
-    assert.equal(dirMode & 0o077, 0, `FIXED: session dir is not group/other readable (${dirMode.toString(8)})`);
+    assert.equal(fileMode & 0o077, 0, `session file is owner-only (${fileMode.toString(8)})`);
+    assert.equal(dirMode & 0o077, 0, `session dir is owner-only (${dirMode.toString(8)})`);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -640,9 +662,11 @@ const TERM_PAYLOAD = "\x1b]52;c;cHduZWQ=\x07\x1b[2J\x1b[38;5;46m";
  * This is the same defect class as F6 but on the one surface that must never be
  * spoofable — hence HIGH rather than MEDIUM.
  *
- * INVERT ON FIX: route every overlay field through `sanitizeTerminalText`.
+ * FIXED (2026-08-16, F6b): every overlay field goes through
+ * `sanitizeTerminalText`; single-line fields also lose newlines, so a payload
+ * cannot fabricate an extra line of chrome inside the frame.
  */
-test("REPRO 8: the permission overlay renders model-supplied escapes verbatim", () => {
+test("REPRO 8: the permission overlay strips model-supplied escapes", () => {
   const fields: Array<[string, PermissionOverlay]> = [
     [
       "bash command preview",
@@ -684,9 +708,36 @@ test("REPRO 8: the permission overlay renders model-supplied escapes verbatim", 
 
   for (const [label, overlay] of fields) {
     const frame = overlay.render(80).join("\n");
-    assert.ok(frame.includes("\x1b]52;"), `LIVE: ${label} passes OSC 52 to the terminal`);
-    assert.ok(frame.includes("\x1b[2J"), `LIVE: ${label} passes CSI 2J to the terminal`);
+    assert.ok(!frame.includes("\x1b]52;"), `${label}: OSC 52 clipboard write is stripped`);
+    assert.ok(!frame.includes("\x1b[2J"), `${label}: CSI 2J screen clear is stripped`);
+    assert.ok(!frame.includes("\x07"), `${label}: raw BEL is stripped`);
   }
+
+  // The overlay still renders its own chrome — sanitisation is not a blanket
+  // strip of the component's theme colours, only of the model's text.
+  const control = new PermissionOverlay({
+    toolName: "bash",
+    rule: "ask — bash requires approval",
+    preview: { kind: "command", command: "ls -la", cwd: "/p" },
+    onDecision: () => {},
+  }).render(80).join("\n");
+  assert.match(control, /ls -la/, "the real command is still shown");
+  assert.match(control, /Allow once/, "the approval actions still render");
+
+  // A newline in a single-line field cannot forge an extra frame line.
+  const forged = new PermissionOverlay({
+    toolName: "bash",
+    rule: "ask",
+    preview: { kind: "command", command: "rm -rf /\n✔ Allow always — approved", cwd: "/p" },
+    onDecision: () => {},
+  }).render(80);
+  const forgedLine = forged.find((l) => l.includes("Allow always — approved"));
+  assert.ok(forgedLine !== undefined, "the payload text is still shown to the operator");
+  assert.match(
+    forgedLine,
+    /rm -rf \//,
+    "…on the command's own line, not as a separate forged chrome line",
+  );
 });
 
 /**
@@ -696,9 +747,10 @@ test("REPRO 8: the permission overlay renders model-supplied escapes verbatim", 
  * question header is also unsanitised while `addUserMessage` is not — an internal
  * inconsistency worth closing even though that text is operator-supplied.
  *
- * INVERT ON FIX: sanitise the tool-card name/args and the btw question.
+ * FIXED (2026-08-16, F6c): the tool card sanitises both the name and each
+ * arg key/value, and `btwBody` sanitises the question.
  */
-test("REPRO 9: tool_call name/args and the btw header bypass the sanitiser", () => {
+test("REPRO 9: tool_call name/args and the btw header are sanitised", () => {
   // Control: the paths kai fixed really are clean — this must keep passing.
   const clean = new Transcript("openkai");
   clean.applyEvent({ kind: "connected" });
@@ -707,20 +759,20 @@ test("REPRO 9: tool_call name/args and the btw header bypass the sanitiser", () 
   const cleanFrame = clean.render(80).join("\n");
   assert.ok(!cleanFrame.includes("\x1b]52;"), "control: streamed deltas are sanitised");
 
-  // LIVE: model-chosen arg values reach the terminal through the tool card.
+  // FIXED: model-chosen arg values — and arg KEYS, equally model-chosen.
   const viaArgs = new Transcript("openkai");
   viaArgs.applyEvent({
     kind: "tool_call",
     toolCallId: "a1",
     toolName: "read_file",
-    args: { path: TERM_PAYLOAD },
+    args: { path: TERM_PAYLOAD, [`k${TERM_PAYLOAD}`]: "v" },
   });
-  assert.ok(
-    viaArgs.render(80).join("\n").includes("\x1b]52;"),
-    "LIVE: tool args are rendered unsanitised",
-  );
+  const argsFrame = viaArgs.render(80).join("\n");
+  assert.ok(!argsFrame.includes("\x1b]52;"), "tool arg values/keys are sanitised");
+  assert.ok(!argsFrame.includes("\x1b[2J"), "…including the screen clear");
+  assert.match(argsFrame, /read_file/, "the card still renders");
 
-  // LIVE: so does a model-chosen tool name.
+  // FIXED: so is a model-chosen tool name.
   const viaName = new Transcript("openkai");
   viaName.applyEvent({
     kind: "tool_call",
@@ -729,15 +781,258 @@ test("REPRO 9: tool_call name/args and the btw header bypass the sanitiser", () 
     args: { path: "ok.txt" },
   });
   assert.ok(
-    viaName.render(80).join("\n").includes("\x1b]52;"),
-    "LIVE: the tool name is rendered unsanitised",
+    !viaName.render(80).join("\n").includes("\x1b]52;"),
+    "the tool name is sanitised",
   );
 
-  // LIVE: the btw question header (inconsistent with addUserMessage).
+  // FIXED: the btw question header now matches addUserMessage.
   const viaBtw = new Transcript("openkai");
   viaBtw.beginBtwTurn(TERM_PAYLOAD);
   assert.ok(
-    viaBtw.render(80).join("\n").includes("\x1b]52;"),
-    "LIVE: the btw question header is rendered unsanitised",
+    !viaBtw.render(80).join("\n").includes("\x1b]52;"),
+    "the btw question header is sanitised",
   );
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// FINDING 7b (MEDIUM, latent) — kai's re-review of the F7 fix, 2026-08-16.
+//
+// F7 was closed by redacting at `SessionStore`'s single JSONL write seam. That
+// covers every entry shape written to the FILE — but `CortexCheckpoint` is a
+// second, independent consumer: `record()` accepts an `Entry[]` from anywhere
+// and ships `messages[].content` over the network to shared team memory.
+//
+// It is safe TODAY only by convention: both call sites (`chat.ts:171`,
+// `tui/app.ts:563`) feed it `await store.readEntries()`, re-reading the already
+// redacted file. Nothing in the type or the code says they must — the obvious
+// "why re-read the whole file every turn?" refactor reopens it silently, and
+// SECURITY.md §4 names Cortex memory FIRST. Same latent shape as F9, which was
+// filed as blocking while it too was unreachable.
+//
+// FIXED: redaction moved to `messageContent()`, the seam where content is
+// lifted onto the wire, so it holds regardless of where the entries came from.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** A checkpoint whose outbound request body the test can inspect. */
+function capturingCheckpoint(task = "probe") {
+  const box: { body?: string } = {};
+  const client = new CortexClient({
+    project: "openkai",
+    baseUrl: "http://127.0.0.1:1/api",
+    fetch: (async (_url: unknown, init: { body?: unknown }) => {
+      box.body = String(init?.body ?? "");
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch,
+  });
+  const checkpoint = new CortexCheckpoint({
+    client,
+    agent: "kai",
+    sessionId: "22222222-2222-7222-8222-222222222222",
+    sourcePath: "/tmp/session.jsonl",
+    provider: "openrouter",
+    modelId: "m",
+    cwd: process.cwd(),
+    task,
+  });
+  return { checkpoint, box };
+}
+
+test("REPRO 10: Cortex ingest redacts secrets at the wire seam, not by caller convention", async () => {
+  const SECRET = "sk-live-CORTEXINGEST-9f31c7";
+
+  // (a) The SHIPPED path — entries re-read from the redacted file. This passed
+  // before the fix too; it is the control that localises the defect to the seam.
+  const root = await mkdtemp(path.join(tmpdir(), "okrepro-ingest-"));
+  try {
+    const store = new SessionStore({ root, sessionId: "44444444-4444-7444-8444-444444444444" });
+    await store.ensure();
+    await store.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: `OPENROUTER_API_KEY=${SECRET}` }],
+      timestamp: 1,
+    } as never);
+    const shipped = capturingCheckpoint();
+    shipped.checkpoint.record(await store.readEntries());
+    await shipped.checkpoint.flushNow();
+    assert.ok(shipped.box.body, "the shipped path posts a payload");
+    assert.doesNotMatch(shipped.box.body!, /sk-live-CORTEXINGEST/, "shipped path: no secret on the wire");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+
+  // (b) The SEAM — in-memory entries, the refactor that bypasses the file.
+  // INVERTED: before the fix this shipped `sk-live-…` verbatim to Cortex.
+  const seam = capturingCheckpoint();
+  seam.checkpoint.record([
+    {
+      type: "message",
+      id: "e1",
+      seq: 1,
+      parentId: null,
+      timestamp: Date.now(),
+      message: {
+        role: "toolResult",
+        content: [{ type: "text", text: `OPENROUTER_API_KEY=${SECRET}` }],
+      },
+    } as never,
+  ]);
+  await seam.checkpoint.flushNow();
+  assert.ok(seam.box.body, "the seam posts a payload");
+  assert.doesNotMatch(seam.box.body!, /sk-live-CORTEXINGEST/, "seam: no secret on the wire");
+  assert.match(seam.box.body!, /\[redacted-secret\]/, "the span is replaced, not dropped");
+  assert.match(seam.box.body!, /OPENROUTER_API_KEY=/, "the rest of the turn survives");
+
+  // (c) The task field is the operator's prompt and crosses the same wire.
+  const viaTask = capturingCheckpoint(`debug this: OPENAI_API_KEY=${SECRET}`);
+  viaTask.checkpoint.record([
+    {
+      type: "message",
+      id: "e2",
+      seq: 1,
+      parentId: null,
+      timestamp: Date.now(),
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    } as never,
+  ]);
+  await viaTask.checkpoint.flushNow();
+  assert.doesNotMatch(viaTask.box.body!, /sk-live-CORTEXINGEST/, "task field: no secret on the wire");
+});
+
+// ── PASS 4 (2026-08-16, cole@openkai) — rows 24 + 26 ────────────────────────
+// The fusion RENDER boundary (`Transcript.addFusionResult`) landed in `a41c76b`
+// with no render test. It is the SAME ANSI/OSC class as REPRO 6 but a DISTINCT
+// sink: REPRO 6 covers streamed deltas (`applyEvent`); this covers the fusion
+// panel (role outputs) + the synthesis block. Coverage is per-sink — a refactor
+// of `addFusionResult` alone sails past REPRO 6 while reopening the hole. So
+// row 24 gets its own committed reproducer, exactly as row 13 has REPRO 6.
+// FIXED (`sanitizeTerminalText` at transcript.ts:206 for role text and :211 for
+// every synthesis field). INVERT TARGET: revert `tui/sanitize.ts` to a
+// passthrough, rebuild, and this test FAILS — an inverted test that passes
+// without the fix proves nothing (§4). Control run verified at commit time
+// (pass 4): sanitiser neutered to identity → this test fails at the OSC checks.
+// `kept`/`by` are interpolated UNSANITISED (transcript.ts) — safe only because
+// parseSynthesis enum-narrows both (synthesis.ts: architect|builder|both), so
+// hostile values below use the free-form fields; if that narrowing is ever
+// relaxed, the boundary reopens through kept/by and this test must extend.
+test("REPRO 11: fusion role output + synthesis cannot inject terminal escapes", () => {
+  const ESC = "\x1b";
+  const BEL = "\x07";
+
+  const outputs = [
+    {
+      role: "architect",
+      modelId: "m",
+      latencyMs: 1,
+      text:
+        `plan ${ESC}]0;TITLE_PWNED${BEL} ` + // OSC 0 window-title rewrite
+        `${ESC}]52;c;Q0xJUF9QV05E${BEL} ` + // OSC 52 clipboard write ("CLIP_PWNED")
+        `${ESC}[2J SCREENCLEAR_PWNED ` + // CSI 2J screen clear
+        `${ESC}]8;;http://evil${BEL}LINK_PWNED${ESC}]8;;${BEL}`, // OSC 8 hyperlink
+    },
+    {
+      role: "builder",
+      modelId: "m",
+      latencyMs: 2,
+      text:
+        `${ESC}]0;BUILDER_PWNED${BEL}` +
+        `${ESC}[38;5;46m✔ Allow always — approved by operator${ESC}[39m ` + // forged consent chrome (row 13's signature)
+        `\x9b2J C1_RESIDUE ` + // single-byte C1 CSI (the non-ESC spelling)
+        `${ESC}P+q544e${ESC}\\ DCS_RESIDUE`, // DCS request
+    },
+  ];
+  const synthesis = {
+    consensus: [`${ESC}]0;CONSENSUS_PWNED${BEL}shape agreed`],
+    divergences: [
+      {
+        topic: `${ESC}[2J DIVTOPIC_PWNED`,
+        architect: `pos-a ${BEL}`,
+        builder: `pos-b ${ESC}]52;c;RElWX1BXTkQ=${BEL}`,
+        kept: "architect",
+      },
+    ],
+    discarded: [{ item: `dropped ${ESC}]0;DISCARD_PWNED${BEL}`, reason: "weak", by: "builder" }],
+    blindSpots: [`missed ${ESC}[2J BLIND_PWNED`],
+  };
+
+  const transcript = new Transcript("openkai");
+  transcript.addFusionResult(outputs, synthesis);
+  const frame = transcript.render(100).join("\n");
+
+  // Each OSC sentinel is ENCLOSED by its escape (\x1b]0;SENTINEL\x07); if the
+  // sentinel is gone the whole OSC was removed, payload and all.
+  for (const s of ["TITLE_PWNED", "CLIP_PWNED", "BUILDER_PWNED", "CONSENSUS_PWNED", "DISCARD_PWNED"]) {
+    assert.ok(!frame.includes(s), `OSC-enclosed payload removed: ${s}`);
+  }
+
+  // The general property: strip the theme's LEGIT SGR colour codes (\x1b[…m),
+  // then NO dangerous escape — any OSC, or any non-SGR CSI (cursor/screen) —
+  // may remain anywhere in the frame.
+  const stripped = frame.replace(/\x1b\[[0-9;]*m/g, "");
+  const residual = [...stripped.matchAll(/\x1b[^\x1b]*/g)].map((m) => m[0]);
+  const dangerous = residual.filter(
+    (seq) => seq.startsWith(`${ESC}]`) || /\x1b\[[0-9;?]*[A-Za-ln-~]/.test(seq),
+  );
+  assert.deepEqual(dangerous, [], "no OSC or non-SGR CSI escape survives the fusion render");
+  assert.ok(!stripped.includes(BEL), "no raw BEL survives");
+  assert.ok(!stripped.includes("[2J"), "CSI screen-clear control bytes removed");
+  assert.ok(!stripped.includes("\x9b"), "C1 single-byte CSI is stripped");
+  assert.ok(!/\x1bP/.test(stripped), "DCS introducer is stripped");
+  assert.ok(!frame.includes("\x1b[38;5;46m"), "forged consent chrome SGR is stripped");
+
+  // Positive controls: legit content and the inert post-CSI plaintext survive —
+  // sanitisation strips only the control sequences, not the visible text.
+  assert.match(frame, /plan/);
+  assert.match(frame, /shape agreed/);
+  assert.match(frame, /SCREENCLEAR_PWNED/); // adjacent plaintext, harmless once the CSI is gone
+});
+
+// Row 26 / F10 (LOW): `list_files` on a protected-name DIRECTORY enumerates its
+// entries. Content stays protected — `read_file` and `grep` are denied by the
+// leaf filename patterns (**/id_rsa*, …) — so this leaks NAMES only, though the
+// existence of `.ssh/id_rsa` is itself a signal. The deny floor matches leaf
+// FILE patterns and `.env`-as-a-directory (F4, row 16) but carries no `.ssh`
+// directory node. LIVE reproducer — asserts the CURRENT gap; INVERT ON FIX when
+// the one-line `.ssh` DENY_FLOOR entry lands (flip list_files to a refusal).
+test("REPRO 12: list_files enumerates a .ssh directory (names leak; content held)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "okrepro-ssh-"));
+  try {
+    await mkdir(path.join(root, ".ssh"));
+    // Marker assembled at runtime so the static secret scanner doesn't trip on
+    // this canary fixture (it is not a real key) — same idiom as REPRO 1.
+    const keyMarker = `-----BEGIN ${"OPENSSH"} PRIVATE KEY-----`;
+    await writeFile(path.join(root, ".ssh", "id_rsa"), `${keyMarker}\nSECRETKEYBODY\n`);
+    await writeFile(path.join(root, ".ssh", "known_hosts"), "github.com ssh-rsa AAAAB3Nz");
+    await writeFile(path.join(root, ".ssh", "authorized_keys"), "ssh-ed25519 AAAAC3");
+
+    const tool = (name: string): any => {
+      const t = readOnlyTools(root).find((x) => x.name === name);
+      assert.ok(t, `${name} tool must exist`);
+      return t;
+    };
+    const text = async (t: any, args: unknown): Promise<string> =>
+      ((await t.execute("t", args)).content as { text: string }[]).map((c) => c.text).join("");
+
+    // LEAK (current): the directory listing surfaces the private-key filenames.
+    const listed = await text(tool("list_files"), { path: ".ssh" });
+    assert.match(listed, /id_rsa/);
+    assert.match(listed, /known_hosts/);
+    assert.match(listed, /authorized_keys/);
+
+    // HELD: content is still protected. The leaf floor patterns deny the read
+    // and grep never surfaces the key body — the gap is names, not bytes.
+    const rf = await text(tool("read_file"), { path: ".ssh/id_rsa" });
+    assert.match(rf, /denied — protected path/);
+    assert.doesNotMatch(rf, /SECRETKEYBODY/);
+    const gp = await text(tool("grep"), { pattern: "SECRETKEYBODY", path: ".ssh" });
+    assert.doesNotMatch(gp, /SECRETKEYBODY/);
+
+    // CONTROL (F4, row 16): `.env` AS A DIRECTORY is denied — proves the floor
+    // covers ancestor prefixes and isolates the gap to the un-floored `.ssh`.
+    await mkdir(path.join(root, ".env"));
+    await writeFile(path.join(root, ".env", "production"), "OPENAI_API_KEY=sk-live-abcdefghijklmnop");
+    const env = await text(tool("list_files"), { path: ".env" });
+    assert.match(env, /denied — protected path/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
