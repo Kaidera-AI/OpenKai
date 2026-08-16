@@ -59,9 +59,12 @@ function formatArgs(args: unknown): string[] {
   if (entries.length === 0) return [];
   return entries.slice(0, 4).map(([key, value]) => {
     const rendered = typeof value === "string" ? value : safeStringify(value);
-    const oneLine = rendered.replace(/\n/g, " ");
+    // Both the key and the value are model-chosen, so both are hostile input
+    // to the terminal — the F6 channel reopens on every tool call otherwise
+    // (E001 finding F6c).
+    const oneLine = sanitizeTerminalText(rendered).replace(/\n/g, " ");
     const text = oneLine.length > PREVIEW_LEN ? oneLine.slice(0, PREVIEW_LEN - 1) + "…" : oneLine;
-    return `${key}: ${text}`;
+    return `${sanitizeTerminalText(key).replace(/\n/g, " ")}: ${text}`;
   });
 }
 
@@ -171,7 +174,9 @@ export class Transcript implements Component {
 
   /** Render a btw block's markdown (header + streaming answer). */
   private btwBody(question: string, text: string): string {
-    const header = `${highlight.attention("⤷ btw:")} ${textToken.muted(question)}`;
+    // Operator-supplied, but a paste carries escapes just like model text —
+    // parity with addUserMessage (E001 finding F6c).
+    const header = `${highlight.attention("⤷ btw:")} ${textToken.muted(sanitizeTerminalText(question))}`;
     return text.length > 0 ? `${header}\n\n${text}` : header;
   }
 
@@ -385,7 +390,9 @@ export class Transcript implements Component {
       : isError
         ? highlight.danger("✗ failed")
         : highlight.base("✓ done");
-    const head = `${toolPrefix()}${highlight.base(toolName)} ${textToken.dim("·")} ${status}`;
+    // The tool name is model-chosen too (E001 finding F6c).
+    const safeName = sanitizeTerminalText(toolName).replace(/\n/g, " ");
+    const head = `${toolPrefix()}${highlight.base(safeName)} ${textToken.dim("·")} ${status}`;
 
     const argLines = formatArgs(args).map(
       (line) => `${toolPrefix()}  ${textToken.dim(line)}`,

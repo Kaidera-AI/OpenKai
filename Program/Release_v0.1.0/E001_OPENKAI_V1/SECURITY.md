@@ -27,16 +27,18 @@ For each increment's diff, cole reviews the NEW attack surface with the penetrat
 
 Findings are filed as Cortex handoffs with severity + reproducer; acceptance of the increment waits on critical/high closure.
 
-### 2.1 Outcome table — E001 re-review, 2026-08-16 (cole@openkai, tip `e32701e`)
+### 2.1 Outcome table — E001 re-review, 2026-08-16 (cole@openkai, tip `e32701e`; rows 16–22 fixed by kai@openkai)
 
 Second pass after the fabricated first review (findings `eba8cb9`) and the fixes at
 `09b56ce` + `3f89a45`, plus a third pass verifying the fixes kai landed *during* this
-review (`1d46b35`, `e32701e`). Every outcome below is backed by a named test that exists
-on disk and executes (§4 admissibility rule); **105/105 green** and `security-audit.sh`
-PASSED at `e32701e`. Reproducers live in `packages/cli/test/security-repro.test.ts` unless
-stated otherwise. `LIVE` reproducers assert the current vulnerable behaviour so they pass
-now and prove the exploit — they are inverted when the fix lands, exactly as REPRO 1–3 and
-REPRO 6 were.
+review (`1d46b35`, `e32701e`), plus kai's fixes for the six findings that pass left open
+(rows 16–22). Every outcome below is backed by a named test that exists on disk and
+executes (§4 admissibility rule); **106/106 green** and `security-audit.sh` PASSED after
+the fixes. Reproducers live in `packages/cli/test/security-repro.test.ts` unless stated
+otherwise. `LIVE` reproducers assert the current vulnerable behaviour so they pass on the
+vulnerable tree and prove the exploit — they are inverted when the fix lands, exactly as
+REPRO 1–3 and REPRO 6 were, and an inversion is only credible when the inverted test is
+shown to FAIL against the pre-fix source (see the control run below).
 
 | # | Attack class | Outcome | Reproducer |
 |---|---|---|---|
@@ -55,63 +57,72 @@ REPRO 6 were.
 | 13 | ANSI/OSC injection via streamed deltas, thinking, replay, user paste, tool results | **HELD** — `1d46b35` fix verified at each entry point | `REPRO 6` (inverted) |
 | 14 | Upgrade/packaging supply chain (unsigned channel, digest mismatch, channel pin) | **HELD** — negative paths tested | `upgrade.test.ts`: sha256 mismatch refused; unsigned manifest refused when a key is pinned; `OPENKAI_CHANNEL` never overwrites `process.execPath` |
 | 15 | Build cache + prebuilt binaries tracked in git (defeated the §1 secret scan) | **FIXED** — `e32701e`; 0 tracked cache files, 0 tracked binaries, audit PASSED | `scripts/security-audit.sh` |
-| 16 | **Deny-floor blind spot: protected name as a DIRECTORY component** | **LIVE — HIGH** (F4) | `REPRO 4` |
-| 17 | **Consent surface (`PermissionOverlay`) renders model-supplied escapes** | **LIVE — HIGH** (F6b) | `REPRO 8` |
-| 18 | **`edit_file` pre-gate read = content oracle over floor files** | **LIVE — MEDIUM** (F5) | `REPRO 5` |
-| 19 | **`edit_file` pre-gate read = content/existence oracle outside cwd** | **LIVE — MEDIUM** (F5b) | `REPRO 5b` |
-| 20 | **Sanitiser residue: `tool_call` name/args + `/btw` header** | **LIVE — MEDIUM** (F6c) | `REPRO 9` |
-| 21 | **Fusion gate consent is fail-open (absent `approveGate` = approved)** | **LIVE — MEDIUM** (F9, latent) | `fusion.test.ts`: `REPRO 9 (fusion)` |
-| 22 | **Secret exfiltration into sessions (verbatim + world-readable mode)** | **LIVE — MEDIUM** (F7) | `REPRO 7` |
+| 16 | Deny-floor blind spot: protected name as a DIRECTORY component | **HELD** — F4 fixed; floor tests every ancestor prefix | `REPRO 4` (inverted) |
+| 17 | Consent surface (`PermissionOverlay`) renders model-supplied escapes | **HELD** — F6b fixed; every field sanitised, single-line fields flattened | `REPRO 8` (inverted) |
+| 18 | `edit_file` pre-gate read = content oracle over floor files | **HELD** — F5 fixed; `guardPath` precedes any read | `REPRO 5` (inverted) |
+| 19 | `edit_file` pre-gate read = content/existence oracle outside cwd | **HELD** — F5b fixed; same guard | `REPRO 5b` (inverted) |
+| 20 | Sanitiser residue: `tool_call` name/args + `/btw` header | **HELD** — F6c fixed; card name + arg keys/values + btw header sanitised | `REPRO 9` (inverted) |
+| 21 | Fusion gate consent is fail-open (absent `approveGate` = approved) | **HELD** — F9 fixed; absent consent channel = refusal, child env scrubbed | `fusion.test.ts`: `REPRO 9 (fusion)` (inverted) + `gate consent: an approved check does not inherit secret-shaped env vars` |
+| 22 | Secret exfiltration into sessions (verbatim + world-readable mode) | **HELD** — F7 fixed; span redaction at the write seam + 0700/0600 tree | `REPRO 7` (inverted) |
 | 23 | SSE frame injection / cursor forgery | **REVIEW-ONLY — no reproducer** | none — `parseSse` is spec-shaped (prefix fields, unknown fields ignored, no `eval`, no prototype sink); `event`/`id` trust is inherited from `cortex-api`, so the residual is endpoint trust, not a parser primitive |
 | 24 | Fusion prompt injection (role output → synthesiser/validator) | **NOT ATTACKED** | none — the panel/synthesis injection path (as distinct from gate consent, #21) still needs a pass; surface landed in `a41c76b` mid-review |
 
-#### Open findings (blocking, filed to kai@openkai — §4 bars cole from fixing what cole must certify)
+#### Fixes landed (kai@openkai, 2026-08-16) — awaiting cole's certification
 
-- **F4 (HIGH) — deny-floor blind spot on directory components.** `pathGlobMatch` tests a
-  bare-name pattern against the whole relpath or the *basename* only, so `.env/production`
-  (basename `production`) misses the `.env` floor: `evaluate` returns `allow` and `read_file`
-  hands back `DB_PASSWORD=…` with no prompt. Same hole for `server.pem/privkey`. Slashed
-  patterns such as `**/.ssh/**` are unaffected, which localises the defect to the bare-name
-  branch. *Fix direction:* match bare-name floor patterns against **any path component**.
-- **F6b (HIGH) — the consent surface is spoofable.** `PermissionOverlay` renders the bash
-  command preview, diff path, diff body and tool name verbatim, so a hostile model can blank
-  the frame (CSI 2J), forge approval chrome (SGR), or rewrite the command the operator reads
-  while a different one is approved (CR/BS). ADR §5.6 makes the permission engine *the*
-  control; if consent can be spoofed the control is gone — hence HIGH, above the F6 class it
-  belongs to. *Fix direction:* route every overlay field through `sanitizeTerminalText`.
-- **F5 (MEDIUM) — `edit_file` reads before it checks.** `fs.readFile(abs)` +
-  `countOccurrences` run before `gate.request`, so the reply distinguishes a correct guess
-  ("Permission denied") from a wrong one ("oldString not found") and the ambiguous branch
-  leaks a match count — a confirmed-guess oracle over floor files and outside-cwd paths, with
-  no `permission_request` ever emitted for the operator to see. Integrity holds; only
-  confidentiality leaks. *Fix direction:* resolve + floor/containment check **before** any read.
-- **F6c (MEDIUM) — sanitiser coverage gap.** `1d46b35` is sound where applied, but the tool
-  card renders the model-chosen tool NAME and top-level ARG VALUES unsanitised, reinstating
-  the F6 channel on every tool call; the `/btw` question header is also raw while
-  `addUserMessage` is sanitised. *Fix direction:* sanitise the tool-card name/args and the btw
-  header.
-- **F9 (MEDIUM, latent) — fusion gate consent is fail-open.** The guard is
-  `if (checks && options.approveGate)`, so a caller that designs a gate but omits the callback
-  executes model-authored shell through `spawnSync(…, { shell: true, env: { ...process.env } })`
-  — inheriting every secret the CLI loaded from `.env`. Only `src/fuse.ts` wires consent; the
-  TUI's `/fuse` does not and is safe today ONLY because it never sets `gate: true`. *Fix
-  direction:* refuse when checks exist and no consent channel is supplied (fail closed), and
-  scrub secret-shaped variables from the child environment.
-- **F7 (MEDIUM) — sessions contradict §4.** No redaction exists in `persist/` or `cortex/`,
-  and the session tree is created with default modes, so an approved `bash cat .env`
-  (legitimate under ADR §5.6) writes secret material verbatim into a group/other-readable
-  file. *Fix direction:* create the tree `0700`/`0600`, and either redact secret-shaped spans
-  on write or amend §4 to state the rule is operator-responsibility.
+All six findings are fixed and every reproducer is inverted. Each fix is proved in **both
+directions**: with the fixes reverted (source only, tests kept) the suite is **98/106 with
+exactly these 8 tests failing**; with the fixes applied it is **106/106**. An inverted test
+that passes without the fix proves nothing, so the failing control run is the evidence.
 
-Non-blocking hardening followups: `walkGrep` labels matches with `process.cwd()` instead of the
-tool cwd (wrong/leaky paths); `ShadowGit.undo` containment is lexical rather than canonical
-(unreachable today, inconsistent with the `09b56ce` standard); `grep` compiles a
-model-supplied `RegExp` (local ReDoS only).
+- **F4 (HIGH) — deny-floor blind spot on directory components.** Fixed in
+  `permissions.ts: matchesDenyFloor`, which now tests the floor against **every ancestor
+  prefix** rather than the full path alone. The original fix direction ("bare-name patterns
+  against any path component") would have missed half the finding: `server.pem/privkey` is
+  matched by `**/*.pem`, a *slashed* pattern, so the defect is not confined to the bare-name
+  branch. "A protected path protects its descendants" covers both cases and is shorter.
+- **F6b (HIGH) — the consent surface is spoofable.** Fixed in `tui/permission.ts`: tool name,
+  rule, command, cwd, diff path and diff body all pass through `sanitizeTerminalText`.
+  Single-line fields are additionally newline-flattened, so a payload cannot fabricate an
+  extra line of chrome inside the frame — stripping escapes alone would not have stopped a
+  forged `✔ Allow always` line. `REPRO 8` asserts both, plus a control that the overlay's own
+  chrome and the real command still render.
+- **F5/F5b (MEDIUM) — `edit_file` reads before it checks.** Fixed in `tools.ts`: `guardPath`
+  (resolve + floor + containment) runs before `fs.readFile`, and out-of-bounds paths return a
+  refusal derived from the path alone. Both probes now return byte-identical text, which the
+  inverted reproducers assert by equality rather than by pattern.
+- **F6c (MEDIUM) — sanitiser coverage gap.** Fixed in `tui/transcript.ts`: the tool card
+  sanitises the name and each arg **key and value** (keys are model-chosen too, which the
+  finding did not call out), and `btwBody` sanitises the question.
+- **F9 (MEDIUM, latent) — fusion gate consent is fail-open.** Fixed in `fusion/fuse.ts`: the
+  guard is `if (checks)` and an absent `approveGate` is a **refusal**, matching the engine's
+  "bash can never be auto-allowed" posture. `fusion/gate.ts` now builds the child env through
+  `childEnv()`, dropping any variable whose NAME or VALUE is secret-shaped.
+- **F7 (MEDIUM) — sessions contradict §4.** Fixed in `persist/session-store.ts` without
+  weakening §4: redaction happens at the single JSONL write seam (so messages, custom entries
+  and compaction summaries are all covered), and the tree is created `0700`/`0600` with a
+  best-effort `chmod` so trees written by older builds are narrowed too. Shared shapes live in
+  `core/src/secrets.ts` — one copy, used by both the redactor and the env scrub, because a
+  security regex that drifts between call sites is its own defect class.
 
-**Gate verdict for v0.01.001: REWORK — not cleared.** Two HIGH (F4 silent secret disclosure,
-F6b spoofable consent) plus four MEDIUM. Findings 1–3 from the first pass are genuinely fixed
-and regression-guarded, `1d46b35`/`e32701e` are verified real (not asserted), and the fusion
-panel/synthesis injection path (#24) still needs its own pass before release.
+> **Review-methodology hazard (found while verifying these fixes).** In a git worktree with no
+> local `node_modules`, `@openkai/core` resolves *upward* to the main checkout's
+> `node_modules/@openkai/core` symlink — which points back into the **main working tree**. Every
+> `@openkai/core` import in a worktree test then executes the main checkout's build, so
+> core-side changes are silently not under test while CLI-side changes are. This produced a
+> false result on the first verification run here. Before certifying, confirm
+> `node -e "console.log(require.resolve('@openkai/core', {paths:['packages/cli']}))"` points
+> inside the tree under review.
+
+Non-blocking hardening followups (unchanged, not in this fix scope): `walkGrep` labels matches
+with `process.cwd()` instead of the tool cwd (wrong/leaky paths); `ShadowGit.undo` containment
+is lexical rather than canonical (unreachable today, inconsistent with the `09b56ce` standard);
+`grep` compiles a model-supplied `RegExp` (local ReDoS only).
+
+**Gate verdict for v0.01.001: pending cole's re-review (pass 4).** The six blocking findings
+are fixed with inverted reproducers and a failing control run; §4 bars the implementer from
+certifying their own fixes, so the verdict stays with cole. Row 24 (fusion panel/synthesis
+prompt injection) has still **never been attacked** and needs its own pass before release —
+it is a review action, not a fix, and remains outside this handoff's scope.
 
 ## 3. Deep scans (per release)
 

@@ -442,6 +442,53 @@ test("gate consent: approval lets the designed gate run", async () => {
 });
 
 /**
+ * F9, second half — an APPROVED check still must not inherit the operator's
+ * credentials. `.env` is loaded into this process, so without the scrub one
+ * designed check exfiltrates every key the CLI holds.
+ */
+test("gate consent: an approved check does not inherit secret-shaped env vars", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-env-"));
+  const leak = path.join(cwd, "leak.txt");
+  process.env.OPENKAI_TEST_API_KEY = "sk-live-SHOULD-NOT-LEAK-1234";
+  process.env.OPENKAI_TEST_ODDNAME = "sk-live-SHOULD-NOT-LEAK-5678";
+  process.env.OPENKAI_TEST_BENIGN = "keep-me";
+  try {
+    const rig = makeRig((system) => {
+      if (system.includes("VALIDATOR")) {
+        return JSON.stringify([
+          {
+            name: "env probe",
+            // Shell expansion in the child is the point — whatever the child's
+            // env holds is what a hostile check could exfiltrate.
+            command: `echo "$OPENKAI_TEST_API_KEY|$OPENKAI_TEST_ODDNAME|$OPENKAI_TEST_BENIGN" > ${JSON.stringify(leak)}`,
+          },
+        ]);
+      }
+      if (system.includes("SYNTHESISER")) return SYNTHESIS_JSON;
+      if (system.includes("ARCHITECT role")) return "A";
+      return "B";
+    });
+    await fuse(rig.streamFn, {
+      task: "gated task",
+      architectModel: rig.model,
+      builderModel: rig.model,
+      gate: true,
+      cwd,
+      approveGate: () => true,
+    });
+    const seen = await readFile(leak, "utf-8");
+    assert.doesNotMatch(seen, /SHOULD-NOT-LEAK-1234/, "secret-NAMED var is scrubbed");
+    assert.doesNotMatch(seen, /SHOULD-NOT-LEAK-5678/, "secret-SHAPED value is scrubbed");
+    assert.match(seen, /keep-me/, "benign vars still reach the check");
+  } finally {
+    delete process.env.OPENKAI_TEST_API_KEY;
+    delete process.env.OPENKAI_TEST_ODDNAME;
+    delete process.env.OPENKAI_TEST_BENIGN;
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+/**
  * FINDING 9 (MEDIUM, LIVE — latent) — E001 §2 re-review, cole@openkai.
  *
  * `approveGate` is OPTIONAL and absent means "consent given": the guard is
@@ -456,11 +503,12 @@ test("gate consent: approval lets the designed gate run", async () => {
  * unconsented execution. The engine's posture for the same risk is the
  * inverse and fail-safe: "bash can never be auto-allowed".
  *
- * This asserts the CURRENT fail-open contract — INVERT ON FIX: with checks
- * designed and no consent channel, the outcome must be "refused" and
- * `gateRuns` must stay empty.
+ * FIXED (2026-08-16, F9): the guard is `if (checks)` and an absent
+ * `approveGate` is a REFUSAL, matching the engine's fail-safe posture. The
+ * child env is also scrubbed of secret-shaped vars, so an approved check
+ * cannot exfiltrate what the CLI loaded from `.env`.
  */
-test("REPRO 9 (fusion): a designed gate runs model-authored shell with NO consent channel", async () => {
+test("REPRO 9 (fusion): a designed gate with NO consent channel refuses", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "openkai-consent-"));
   const marker = path.join(cwd, "executed-without-consent.txt");
   try {
@@ -486,13 +534,12 @@ test("REPRO 9 (fusion): a designed gate runs model-authored shell with NO consen
       // approveGate deliberately omitted — the TUI's call shape.
     });
 
-    // LIVE: no refusal, and the model's command really ran.
-    assert.notEqual(result.gate.outcome, "refused", "LIVE: absent consent is treated as granted");
-    assert.ok(result.gateRuns.length >= 1, "LIVE: gate checks executed unapproved");
-    assert.equal(
-      await readFile(marker, "utf-8"),
-      "pwned",
-      "LIVE: model-authored shell produced a real side effect with no prompt",
+    // FIXED: refused, nothing executed, no side effect on disk.
+    assert.equal(result.gate.outcome, "refused", "absent consent is a refusal");
+    assert.equal(result.gateRuns.length, 0, "no gate check executed");
+    await assert.rejects(
+      () => readFile(marker, "utf-8"),
+      "model-authored shell produced no side effect",
     );
   } finally {
     await rm(cwd, { recursive: true, force: true });

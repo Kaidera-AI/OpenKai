@@ -38,8 +38,11 @@ export interface FuseOptions {
    * Operator consent for the designed gate (E001 §2, cole's re-review): the
    * checks are MODEL-AUTHORED shell, run with operator privileges. Called
    * with the designed checks before any execution; a false return refuses
-   * the gate (outcome "refused") and nothing runs. Absent = consent given
-   * (programmatic callers own the risk); the CLI wires --yes.
+   * the gate (outcome "refused") and nothing runs.
+   *
+   * **Required whenever `gate` is true.** Absent is a REFUSAL, not consent
+   * (E001 finding F9): a caller that designs a gate but wires no consent
+   * channel cannot silently run model-authored shell.
    */
   approveGate?: (checks: GateCheck[]) => boolean | Promise<boolean>;
   cwd?: string;
@@ -78,9 +81,11 @@ export async function fuse(
     : undefined;
 
   // Consent parity with the bash tool (E001 §2): model-authored checks do
-  // not execute without operator approval.
-  if (checks && options.approveGate) {
-    const approved = await options.approveGate(checks);
+  // not execute without operator approval. No consent channel = refusal —
+  // fail-closed, because the fail-open form made an omitted callback grant
+  // consent on the caller's behalf (E001 finding F9).
+  if (checks) {
+    const approved = options.approveGate ? await options.approveGate(checks) : false;
     if (!approved) {
       const record: FusionRunRecord = {
         runId: uuidv7(),
