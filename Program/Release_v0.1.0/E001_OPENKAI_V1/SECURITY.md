@@ -292,6 +292,82 @@ routed separately and will be certified on landing (`REPRO 12` inverts then). No
 critical/high remains, so per §2 the increment is clearable. §4 separation held: kai
 implemented, cole certified; kai reviews this certification.
 
+### 2.2 Pass-6 certification — the NOW-REAL merged tip on main (cole@openkai, 2026-08-16)
+
+Pass 4 was scoped to `9efd246`/`8929d12`; pass 5 (`c94db4b`, on cole's branch — never landed
+on main, a destination-ref defect in the pass-5 criterion, not rework) correctly found the
+release line still unfixed at that time. This pass re-executes the certification against the
+merged tip from scratch; **pass 5 is not carried forward**.
+
+**SHA certified: `737bb6d`** — the merged tip named in the pass-6 dispatch (`bb1f027` merged
+the certified fix-line `8929d12` under the @kaidera rename; `737bb6d` landed it on main).
+`git merge-base --is-ancestor 8929d12 737bb6d` = YES. Main advanced to `1509774` during this
+pass (the operator cut 0.1.2); the security-relevant source — all 11 guard files — **and** both
+reproducer suites (`security-repro.test.ts`, `fusion.test.ts`) are **byte-identical across
+`737bb6d..1509774`** (empty `git diff`), the only source delta being `version.ts`
+`0.1.1→0.1.2`. This certification therefore extends unchanged to the current main tip
+`1509774` and to the published 0.1.2.
+
+**Module-resolution hazard defused before any test ran.** This worktree had no local
+`node_modules`, so `@kaidera/openkai-core` resolved *upward* to the main checkout's build (the
+boxed hazard above). `npm install` re-pointed the workspace symlink to the local
+`packages/core` — `require.resolve('@kaidera/openkai-core')` confirmed inside the tree — before
+Direction A/B.
+
+**Both-direction control, re-run at the tip:**
+- **Direction A (fixes applied):** `npm run build` clean, `typecheck` clean, **110/110**,
+  `security-audit.sh` PASSED.
+- **Direction B (source reverted to the pre-fix base `10fe7f5`, inverted reproducers kept,
+  rebuilt):** **101/110 — exactly the 9 fix reproducers fail** and nothing else: `REPRO 4`
+  (F4), `REPRO 5`/`5b` (F5/F5b), `REPRO 7` (F7), `REPRO 8` (F6b), `REPRO 9` (F6c), `REPRO 10`
+  (F7b), and both F9 fusion tests (`REPRO 9 (fusion)` + `gate consent … env vars`). Zero
+  collateral, zero tautologies. Total is 110 (not pass-4's 109 — the merge grew the fusion
+  suite by one; recounted at the tip).
+- **Render control (sanitiser neutered to identity):** `REPRO 6/8/9/11` fail — the sanitiser,
+  not incidental code, holds the render boundary (row 24 included).
+
+**Merge conflict-resolution audit** (the merge resolved conflicts in `tui/permission.ts` and
+`test/fusion.test.ts` — exactly where a guard gets silently altered). Confirmed intact at
+`737bb6d` by reading each mechanism: F4 `matchesDenyFloor` ancestor-prefix loop; F5/F5b
+`guardPath` precedes any read; F6b/F6c sanitiser sites (overlay fields + tool-card name and arg
+key+value + btw header, newline-flattened); F7 span redaction at the `SessionStore` append seam
++ `0700`/`0600` tree; F7b `redactSecrets` at the Cortex wire seam (`cortex-checkpoint.ts`); F9
+fail-closed (absent `approveGate` = refusal). **F9 DiD env scrub is the SINGLE `secrets.ts`
+implementation** — the divergent inline copy pass 5 found on the release line was collapsed by
+the merge: the only consumers of the shared shapes are `gate.ts` (`childEnv`, name+value),
+`session-store.ts` and `cortex-checkpoint.ts`, all importing `../secrets.js`; no raw
+token-shape regex exists anywhere else in the tree.
+
+**Row 24 (fusion prompt injection) — HELD / NOT-EXPLOITABLE, re-confirmed at the tip** at all
+three sinks: validator not reachable (`designGate` precedes `runPanel`/`runSynthesis`, prompt
+is `TASK:` only), synthesiser attribution enum-locked (`parseSynthesis` → `AttributionError`;
+`REPRO 13` green in Direction A), render sanitised (`REPRO 11` green in Direction A, fails under
+the render control).
+
+**F10 (row 26, LOW) — still OPEN, non-blocking.** `DENY_FLOOR` carries only `**/.ssh/**`
+(contents), no leaf `.ssh` node; `REPRO 12` is still LIVE (names-leak asserted, content-held).
+Rides this merge open; one-line fix routed separately per §4; does not block 0.1.2.
+
+**Published-artifact verification (certified tree ≠ shipped tree).** `npm pack
+@kaidera/openkai@0.1.2` and `@kaidera/openkai-core@0.1.2` from the registry: the shipped `dist/`
+carries every guard (F4 ancestor loop, F5/F5b `guardPath`, F6b/F6c `sanitizeTerminalText` with
+ESC-strip intact, F7/F7b `redactSecrets`, F9 `childEnv` + fail-closed), and the published CLI
+depends on core **0.1.2** (not the vulnerable 0.1.1). Registry `dist-tags.latest = 0.1.2` for
+both packages. **Residual exposure:** 0.1.1 still exists on the registry — a `@0.1.1` pin is
+still exploitable via F4+F6b HIGH; deprecate-and-republish is owned by kai, tracked separately,
+and does not gate this certification.
+
+**Criterion 4 — SHA safe to publish as 0.1.2:** the current main tip **`1509774`** (0.1.2
+release commit `eaeb93d`), whose security source is byte-identical to the certified `737bb6d`.
+Already published; the published artifact is verified above.
+
+**Gate verdict — pass 6: CERTIFIED for 0.1.2 (cole@openkai, 2026-08-16).** Merged tip
+`737bb6d` (⇒ main `1509774`, published 0.1.2) re-certified from scratch with both-direction
+controls run at the tip; seven findings fixed and load-bearing; F9 env scrub collapsed to one
+`secrets.ts`; row 24 held at all three sinks; F10 (LOW) open and non-blocking. No open
+critical/high on the certified line. §4 separation held: the certifying reviewer (cole) neither
+implemented nor merged the fix-line.
+
 ## 3. Deep scans (per release)
 
 Before v1 ships: a full white-box pentest pass (Strix OSS CLI against the repo if the operator provides the model key; otherwise the manual pattern checklist executed by cole end-to-end), plus `fix-security-vulnerabilities` workflow for anything found, plus the CI scanning skill's checklist folded into the release runbook.
