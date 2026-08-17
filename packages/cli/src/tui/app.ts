@@ -779,6 +779,11 @@ export class TuiController {
           writeStatuslineChips(STATUSLINE_PRESET_CHIPS[preset] ?? [...DEFAULT_STATUSLINE_CHIPS]);
           this.status.update({ ...this.status.currentState }); // live re-render of the chips
         },
+        pickAutonomy: () => {
+          this.tui.hideOverlay();
+          this.openAutonomyPicker("");
+        },
+        currentAutonomy: () => this.autonomySwitch?.current() ?? "off",
       },
       () => {
         this.tui.hideOverlay();

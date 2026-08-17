@@ -21,13 +21,17 @@ export interface SettingsActions {
   signIn: (providerId: string) => void;
   /** Apply a status line preset live + persist it. */
   setStatusline: (preset: string) => void;
+  /** Open the autonomy level picker. */
+  pickAutonomy: () => void;
+  /** Current autonomy level (off/low/med/high). */
+  currentAutonomy: () => string;
 }
 
 interface Row extends SelectItem {
   action?: () => string | undefined;
 }
 
-const TABS = ["appearance", "providers", "model", "memory", "features"] as const;
+const TABS = ["appearance", "providers", "model", "interaction", "memory", "features"] as const;
 type SettingsTab = (typeof TABS)[number];
 
 /** Status line presets (omp's statusLine.preset shape) over our chip sets. */
@@ -111,10 +115,32 @@ export class SettingsOverlay implements Component {
           {
             value: "model",
             label: "model & effort & fusion partner",
-            description: "open the four-level picker",
+            description: "open the picker",
             action: () => {
               this.actions.pickModel();
               return undefined;
+            },
+          },
+        ];
+      case "interaction":
+        return [
+          {
+            value: "autonomy",
+            label: "autonomy",
+            description: `now: ${this.actions.currentAutonomy()} — Enter to pick a level`,
+            action: () => {
+              this.actions.pickAutonomy();
+              return undefined;
+            },
+          },
+          {
+            value: "tips",
+            label: "daily tips",
+            description: featureEnabled("tips") ? "on" : "off",
+            action: () => {
+              const next = !featureEnabled("tips");
+              setFeature("tips", next);
+              return `tips: ${next ? "on" : "off"}`;
             },
           },
         ];
