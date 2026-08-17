@@ -38,6 +38,25 @@ export const BRAND_TAGLINE = "the open agent harness · by Kaidera";
 export const compactMark = (version: string): string =>
   `OpenKai ${version} · by Kaidera — /help for commands, Ctrl+K palette`;
 
+/**
+ * The boot capability row (droid's `Skills (60) ✓ MCPs (0) ✗` pattern):
+ * what this machine/session actually has, with ✓/✗ — computed live.
+ */
+export function capabilityRow(options: {
+  configuredProviders: number;
+  skills: number;
+  mcpServers: number;
+  agentsMdPresent: boolean;
+}): string {
+  const mark = (ok: boolean) => (ok ? "✓" : "✗");
+  return [
+    `providers (${options.configuredProviders}) ${mark(options.configuredProviders > 0)}`,
+    `skills (${options.skills}) ${mark(options.skills > 0)}`,
+    `mcp (${options.mcpServers}) ${mark(options.mcpServers > 0)}`,
+    `AGENTS.md ${mark(options.agentsMdPresent)}`,
+  ].join(" · ");
+}
+
 interface SplashState {
   splashSeen?: boolean;
   splashSeenVersion?: string;

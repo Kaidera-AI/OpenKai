@@ -38,11 +38,34 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
 import { ModelPicker } from "./model-picker.js";
 import { SettingsOverlay } from "./settings.js";
-import { runWelcome } from "./welcome.js";
+import { runWelcome, readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { setTheme, themeName, themeNames } from "./theme.js";
 import { changelogHead } from "./changelog.js";
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+
+/** Count installed skills (.agents/skills/, excluding the manifest). */
+function countSkills(): number {
+  try {
+    return readdirSync(path.join(process.cwd(), ".agents", "skills"), { withFileTypes: true })
+      .filter((e) => e.isDirectory()).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Count configured MCP servers (~/.openkai/config.json mcpServers map). */
+function countMcpServers(): number {
+  try {
+    const config = readConfig();
+    const servers = config["mcpServers"];
+    return servers && typeof servers === "object" ? Object.keys(servers).length : 0;
+  } catch {
+    return 0;
+  }
+}
 import { tipOfTheDay } from "./tips.js";
 import { Transcript } from "./transcript.js";
 import { Composer } from "./composer.js";
@@ -51,7 +74,7 @@ import { parseSlashCommand, helpText, buildPaletteItems } from "./commands.js";
 import { PermissionOverlay, type PermissionDecision } from "./permission.js";
 import { CommandPalette, type PaletteItem } from "./palette.js";
 import { PromptStash, FrecencyHistory } from "./stash.js";
-import { splashLines } from "./brand.js";
+import { splashLines, capabilityRow } from "./brand.js";
 import { CLI_VERSION } from "../version.js";
 import type { AttentionNotifier } from "./attention.js";
 
@@ -128,6 +151,15 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     // Brand moment: full splash exactly once, compact mark ever after
     // (droid bar; state is user-global, ~/.openkai/state.json).
     transcript.addNotice(splashLines(CLI_VERSION));
+    // The capability row (droid's boot pattern): what this setup actually has.
+    transcript.addNotice(
+      capabilityRow({
+        configuredProviders: configuredProviders().length,
+        skills: countSkills(),
+        mcpServers: countMcpServers(),
+        agentsMdPresent: existsSync(path.join(process.cwd(), "AGENTS.md")),
+      }),
+    );
     // The daily tip (disable via /features tips) — teaching, not noise.
     if (featureEnabled("tips")) {
       transcript.addNotice(tipOfTheDay());
