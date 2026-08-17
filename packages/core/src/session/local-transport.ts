@@ -341,6 +341,17 @@ export class InProcessTransport implements SessionTransport {
     }
   }
 
+  // ── Context management (E004) ──────────────────────────────────────────
+  getMessages(): AgentMessage[] {
+    return this.agent.state.messages;
+  }
+  setMessages(messages: AgentMessage[]): void {
+    this.agent.state.messages = messages;
+  }
+  getContextWindow(): number {
+    return this.agent.state.model?.contextWindow ?? 0;
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;

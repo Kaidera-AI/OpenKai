@@ -17,18 +17,17 @@ import { gradientLogo, introLogoFrame } from "./gradient.js";
  * status line glyph.
  */
 export const KAIDERA_MARK: readonly string[] = [
-  "       ╭────────╮       ",
-  "    ╭──╯        ╰──╮    ",
-  "   ╱        ●       ╲   ",
-  "  │        ╱ ╲       │  ",
-  "  │     ●───────●    │  ",
-  "   ╲                ╱   ",
-  "    ╰──╮        ╭──╯    ",
-  "       ╰────────╯       ",
+  "        ┌──────┐        ",
+  "     /            \\     ",
+  "   /      ●───●     \\   ",
+  "  /    ●───────●     \\  ",
+  "  /                  \\  ",
+  "   /                \\   ",
+  "     \\            /     ",
+  "        └──────┘        ",
 ];
 
-/** The one-cell status line glyph — the logo at footer scale. */
-export const KAIDERA_GLYPH = "⬢";
+export const KAIDERA_GLYPH = "⬣";
 
 /** The full splash — first run only. Unicode block wordmark. */
 export const OPENKAI_LOGO: readonly string[] = [

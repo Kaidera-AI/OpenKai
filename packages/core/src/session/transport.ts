@@ -23,6 +23,7 @@
  */
 
 import type { Usage } from "@earendil-works/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /** Session-scoped identifier for one delta stream (text or thinking). */
 export type DeltaField = "text" | "thinking";
@@ -168,7 +169,17 @@ export interface SessionTransport {
    * is a policy decision out of scope for this slice (scope §9).
    */
   respond(requestId: string, decision: "once" | "always" | "reject"): void;
-  /** Release transport resources (flush buffers, close streams). */
+  /**
+   * Context management (E004): the conversation messages. `/clear` resets
+   * these, `/compact` trims them, `/shake` strips heavy content, `/context`
+   * reads the count. An in-process transport returns the live agent state;
+   * a network transport returns its cached copy.
+   */
+  getMessages(): AgentMessage[];
+  /** Replace the conversation messages (the `/clear` context reset). */
+  setMessages(messages: AgentMessage[]): void;
+  /** The active model's context window (tokens), or 0 when unknown. */
+  getContextWindow(): number;
   close(): Promise<void>;
 }
 

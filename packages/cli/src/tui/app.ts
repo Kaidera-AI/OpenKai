@@ -437,8 +437,9 @@ export class TuiController {
         break;
       }
       case "clear":
+        this.transport.setMessages([]);
         this.transcript.clear();
-        this.transcript.addNotice("transcript cleared — the conversation history is untouched (use /new for a fresh session)");
+        this.transcript.addNotice("context cleared — the conversation history is reset; the session stays open");
         break;
       case "copy": {
         const what = argument.trim() || "code";
@@ -447,26 +448,44 @@ export class TuiController {
           this.transcript.addNotice("/copy — nothing to copy yet (no assistant text)");
           break;
         }
-        const fence = text.match(/```[^\n]*\n([\s\S]*?)```/g);
-        const payload = fence ? fence[fence.length - 1]!.replace(/```[^\n]*\n|```$/g, "") : text;
+        // /copy code → last fenced code block; /copy cmd → last shell/python
+        // command line; /copy text → the whole last assistant block.
+        let payload = text;
+        if (what === "code" || what === "cmd") {
+          const fences = text.match(/```[^\n]*\n([\s\S]*?)```/g);
+          if (fences) {
+            payload = fences[fences.length - 1]!.replace(/```[^\n]*\n|```$/g, "");
+            if (what === "cmd") {
+              // first non-empty, non-comment line
+              payload = payload.split("\n").find((l) => l.trim() && !l.trim().startsWith("#")) ?? payload;
+            }
+          } else if (what === "cmd") {
+            // no code block — look for a $ or > prefixed line
+            const cmdLine = text.match(/^\s*[$>]\s*(.+)$/m);
+            payload = cmdLine ? cmdLine[1]! : text.split("\n")[0] ?? text;
+          }
+        }
         try {
           const { execFileSync } = await import("node:child_process");
           const bin = process.platform === "darwin" ? "pbcopy" : "wl-copy";
           execFileSync(bin, { input: payload, stdio: ["pipe", "ignore", "ignore"] });
           this.transcript.addNotice(`/copy ${what} — copied to clipboard (${payload.length} chars)`);
         } catch {
-          this.transcript.addNotice(`/copy — clipboard unavailable (no pbcopy/wl-copy); the text is in the last assistant block`);
+          this.transcript.addNotice(`/copy — clipboard unavailable (no pbcopy/wl-copy)`);
         }
         break;
       }
       case "stats": {
         const counts = this.transcript.blockCounts();
         const usage = this.status.currentState.usage;
-        const tokens = usage ? `${usage.totalTokens} tokens` : "no usage yet";
+        const msgCount = this.transport.getMessages().length;
+        const ctxWindow = this.transport.getContextWindow();
+        const tokens = usage ? usage.totalTokens : 0;
+        const ctxPct = ctxWindow > 0 && tokens > 0 ? `${Math.round((tokens / ctxWindow) * 100)}% of ${Math.round(ctxWindow / 1000)}k ctx` : "—";
         this.transcript.addNotice([
           `/stats — session ${this.sessionId.slice(0, 8)}`,
-          `blocks: ${counts.user ?? 0} user · ${counts.assistant ?? 0} assistant · ${counts.tool ?? 0} tool · ${counts.notice ?? 0} notice`,
-          `model: ${this.modelId} (${this.provider ?? "?"}) · ${tokens}`,
+          `messages: ${msgCount} in context · blocks: ${counts.user ?? 0} user · ${counts.assistant ?? 0} assistant · ${counts.tool ?? 0} tool`,
+          `model: ${this.modelId} (${this.provider ?? "?"}) · ${tokens} tokens · ${ctxPct}`,
           `fusion partner: ${this.fusionPartner ? `${this.fusionPartner.modelId} (${this.fusionPartner.provider})` : "none (self-pair)"}`,
         ]);
         break;
@@ -474,8 +493,57 @@ export class TuiController {
       case "context": {
         const usage = this.status.currentState.usage;
         const tokens = usage?.totalTokens ?? 0;
+        const ctxWindow = this.transport.getContextWindow();
+        const msgCount = this.transport.getMessages().length;
+        if (ctxWindow > 0 && tokens > 0) {
+          const pct = Math.round((tokens / ctxWindow) * 100);
+          this.transcript.addNotice(
+            `/context — ${tokens} / ${ctxWindow} tokens (${pct}%) · ${msgCount} messages — ${pct > 70 ? "consider /compact" : "healthy"}`,
+          );
+        } else {
+          this.transcript.addNotice(`/context — ${tokens} tokens · ${msgCount} messages`);
+        }
+        break;
+      }
+      case "compact": {
+        // omp's /compact: summarise the conversation into a compact form,
+        // replacing the message history with a single system summary. We
+        // implement the elide variant: keep the system prompt + last
+        // user/assistant pair, drop everything in between into a summary.
+        const messages = this.transport.getMessages();
+        if (messages.length < 4) {
+          this.transcript.addNotice("/compact — not enough context to compact (need 4+ messages)");
+          break;
+        }
+        const before = messages.length;
+        // Keep the first system/user message and the last two messages;
+        // everything in between is dropped (the model loses the middle,
+        // keeps the ends — omp's elide compact mode).
+        const head = messages.slice(0, 1);
+        const tail = messages.slice(-2);
+        const compacted = [...head, ...tail];
+        this.transport.setMessages(compacted);
         this.transcript.addNotice(
-          `/context — ${tokens} tokens used this session${tokens > 0 ? " (compact with /compact when this grows)" : ""}`,
+          `/compact — ${before} → ${compacted.length} messages (elided the middle; system + last exchange kept)`,
+        );
+        break;
+      }
+      case "shake": {
+        // omp's /shake elide: strip heavy tool results from context to
+        // reclaim tokens without a full /compact. We replace tool_result
+        // content with a lightweight placeholder.
+        const messages = this.transport.getMessages();
+        let stripped = 0;
+        const shaken = messages.map((msg) => {
+          if (msg.role === "toolResult") {
+            stripped += 1;
+            return { ...msg, content: [{ type: "text", text: "[elided by /shake]" }] } as typeof msg;
+          }
+          return msg;
+        });
+        this.transport.setMessages(shaken);
+        this.transcript.addNotice(
+          `/shake — stripped ${stripped} tool result(s) from context (content replaced with placeholders)`,
         );
         break;
       }
