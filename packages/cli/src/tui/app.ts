@@ -37,13 +37,15 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
 import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, type StatuslineChip } from "../config.js";
+import { initAgentsMd } from "../init.js";
+import { appendLearning, initMemory, memoryStatus } from "../memory.js";
 
 /** Status line presets (mirror of settings.ts — the live chip sets). */
 const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
   default: [...DEFAULT_STATUSLINE_CHIPS],
-  minimal: ["provider", "state"],
-  compact: ["model", "tokens", "provider", "state"],
-  full: ["agent", "model", "session", "tokens", "persist", "provider", "state"],
+  minimal: ["brand", "state", "model"],
+  compact: ["brand", "provider", "state", "tokens", "model"],
+  full: ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"],
 };
 import { ModelPicker } from "./model-picker.js";
 import { SettingsOverlay } from "./settings.js";
@@ -175,6 +177,14 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     // The daily tip (disable via /features tips) — teaching, not noise.
     if (featureEnabled("tips")) {
       transcript.addNotice(tipOfTheDay());
+    }
+    // Project memory (E003): surface the shared learnings when they exist so
+    // every session in this folder sees what the others learned.
+    const memory = memoryStatus(process.cwd());
+    if (memory.initialized && memory.learnings > 0) {
+      transcript.addNotice(
+        `memory: ${memory.learnings} shared learning(s)${memory.agents.length > 0 ? ` across ${memory.agents.length} agent(s)` : ""} — /memory to view, /memory add to record`,
+      );
     }
   }
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
@@ -396,6 +406,36 @@ export class TuiController {
       case "settings":
         this.openSettings();
         break;
+      case "init": {
+        const result = initAgentsMd(process.cwd());
+        this.transcript.addNotice(`/init — ${result.message}`);
+        this.tui.requestRender();
+        break;
+      }
+      case "memory": {
+        const text = argument.trim();
+        if (text.startsWith("add ")) {
+          appendLearning(process.cwd(), this.status.currentState.agentName, this.sessionId, text.slice(4));
+          this.transcript.addNotice(`/memory — learning recorded ✓ (shared with every agent in this project)`);
+        } else {
+          const status = memoryStatus(process.cwd());
+          if (!status.initialized) {
+            initMemory(process.cwd());
+            this.transcript.addNotice([
+              `/memory — created .openkai/memory/ (learnings.md · agents/ · README.md)`,
+              `append-only + agent/session-tagged: safe across concurrent sessions in this folder`,
+            ]);
+          } else {
+            this.transcript.addNotice([
+              `/memory — ${status.learnings} learning(s) · ${status.agents.length} agent(s)${status.agents.length > 0 ? ` (${status.agents.join(", ")})` : ""}`,
+              ...(status.recent.length > 0 ? ["recent:", ...status.recent.map((r) => `  ${r}`)] : []),
+              `add one: /memory add <what you learned>`,
+            ]);
+          }
+        }
+        this.tui.requestRender();
+        break;
+      }
       case "undo":
         await this.undo();
         break;

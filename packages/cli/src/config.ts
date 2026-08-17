@@ -78,6 +78,7 @@ export function writeMcpServers(servers: Record<string, McpServerEntry>): void {
 
 /** All chip ids the status line knows about. */
 export const STATUSLINE_CHIPS = [
+  "brand",
   "agent",
   "model",
   "session",
@@ -89,15 +90,16 @@ export const STATUSLINE_CHIPS = [
 
 export type StatuslineChip = (typeof STATUSLINE_CHIPS)[number];
 
-/** Default chip order (matches the pre-Inc-05 chrome). */
+/** Default chip order (brand glyph leads; matches the omp two-sided chrome). */
 export const DEFAULT_STATUSLINE_CHIPS: StatuslineChip[] = [
+  "brand",
   "agent",
-  "model",
-  "session",
-  "tokens",
-  "persist",
   "provider",
+  "persist",
+  "session",
   "state",
+  "tokens",
+  "model",
 ];
 
 /** Read the statusline chip config (order + which chips to show). */

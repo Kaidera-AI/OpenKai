@@ -10,17 +10,25 @@ import path from "node:path";
 
 import { gradientLogo, introLogoFrame } from "./gradient.js";
 
-/** The Kaidera hex-node mark (from the Kaidera logo: hexagon + node graph). */
+/**
+ * The Kaidera hex-node mark — the logo's knowledge-graph motif: an outer
+ * hexagon holding a triangle of connected nodes. Double-line weight on the
+ * rim, the node triangle inside. Used by the splash, the boot card, and the
+ * status line glyph.
+ */
 export const KAIDERA_MARK: readonly string[] = [
-  "     ╭───────╮     ",
-  "   ╭─╯   ●   ╰─╮   ",
-  "  ╱  ●     ╲   ╲  ",
-  "  │   ╲     ╲  │  ",
-  "  │    ●───●   │  ",
-  "  ╲           ╱   ",
-  "   ╰─╮     ╭─╯    ",
-  "     ╰──────╯     ",
+  "       ╭────────╮       ",
+  "    ╭──╯        ╰──╮    ",
+  "   ╱        ●       ╲   ",
+  "  │        ╱ ╲       │  ",
+  "  │     ●───────●    │  ",
+  "   ╲                ╱   ",
+  "    ╰──╮        ╭──╯    ",
+  "       ╰────────╯       ",
 ];
+
+/** The one-cell status line glyph — the logo at footer scale. */
+export const KAIDERA_GLYPH = "⬢";
 
 /** The full splash — first run only. Unicode block wordmark. */
 export const OPENKAI_LOGO: readonly string[] = [

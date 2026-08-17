@@ -23,7 +23,7 @@
  * event stream (usage at `turn_end`, turn state from deltas/turn_end).
  */
 
-import { Text } from "@earendil-works/pi-tui";
+import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
 import type { UsageSnapshot } from "@kaidera/openkai-core";
@@ -31,6 +31,13 @@ import {
   type StatuslineChip,
   readStatuslineChips,
 } from "../config.js";
+import { KAIDERA_GLYPH } from "./brand.js";
+import { gradientEscape } from "./gradient.js";
+
+/** The logo at footer scale — the hex glyph in the brand gradient's violet. */
+function brandGlyph(): string {
+  return `${gradientEscape(0.35)}${KAIDERA_GLYPH}\x1b[0m`;
+}
 
 /** The chrome state — mutated by the controller as events arrive. */
 export interface StatusState {
@@ -116,14 +123,14 @@ export class StatusLine implements Component {
   constructor(state: StatusState) {
     this.state = state;
     this.chips = readStatuslineChips();
-    this.text = new Text(this.renderLine(), 1, 0, (line) => surface["3"](line));
+    this.text = new Text("", 1, 0, (line) => surface["3"](line));
   }
 
   /** Update state and re-render the line. */
   update(state: StatusState): void {
     this.state = state;
     this.chips = readStatuslineChips();
-    this.text.setText(this.renderLine());
+    this.text.setText(this.renderLine(this.lastWidth));
   }
 
   /** Current state (read for tests / controller bookkeeping). */
@@ -131,42 +138,56 @@ export class StatusLine implements Component {
     return this.state;
   }
 
-  /** Compose the chrome line from tokens (the only colour source). Compact so all
-   * chips (agent/model/session/tokens/persist) fit an 80-col line (scope §3.4). */
-  private renderLine(): string {
-    const model = this.state.modelId.length > 18 ? this.state.modelId.slice(0, 17) + "…" : this.state.modelId;
+  /** Compose the chrome line (omp's two-sided footer layout, droid colours):
+   * LEFT: brand glyph + agent + provider + persist + session + state;
+   * RIGHT: tokens + model. Chips listed in config decide what renders; model
+   * and tokens always sit on the right when present. */
+  private renderLine(width: number): string {
+    const model = this.state.modelId.length > 24 ? this.state.modelId.slice(0, 23) + "…" : this.state.modelId;
     const session = this.state.sessionId.slice(0, 8);
     const tokens = this.state.usage ? `${this.state.usage.totalTokens}t` : "—";
     const sep = textToken.muted("·");
 
-    // Build the configurable chip → string map.
     const chipRenderers: Record<StatuslineChip, string> = {
+      brand: brandGlyph(),
       agent: rolePill(this.state.agentName),
       model,
-      session,
-      tokens,
-      persist: `p:${this.state.persistMode}`,
-      provider: this.state.provider,
+      session: textToken.muted(session),
+      tokens: textToken.muted(tokens),
+      persist: textToken.muted(`p:${this.state.persistMode}`),
+      provider: this.state.provider ? highlight.base(this.state.provider) : "",
       state: spinnerChip(this.state),
     };
 
-    // Render only the configured chips, in order. Skip empty chips (e.g.
-    // provider when unset).
-    const chips: string[] = this.chips
-      .map((chip) => chipRenderers[chip])
-      .filter((s) => s.length > 0);
+    const active = this.chips
+      .map((chip) => [chip, chipRenderers[chip]] as const)
+      .filter(([, s]) => s.length > 0);
+
+    // omp's split: model + tokens right, everything else left.
+    const RIGHT_CHIPS: readonly StatuslineChip[] = ["tokens", "model"];
+    const left = active.filter(([chip]) => !RIGHT_CHIPS.includes(chip)).map(([, s]) => s);
+    const right = active.filter(([chip]) => RIGHT_CHIPS.includes(chip)).map(([, s]) => s);
 
     // Contextual chips (not configurable): bash mode + autonomy.
-    if (this.state.mode === "bash") chips.push(highlight.base("$"));
-    if (this.state.autonomy) chips.push(textToken.muted(`a:${this.state.autonomy}`));
+    if (this.state.mode === "bash") left.push(highlight.base("$"));
+    if (this.state.autonomy) left.push(textToken.muted(`a:${this.state.autonomy}`));
 
-    return chips.join(` ${sep} `);
+    const leftText = left.join(` ${sep} `);
+    const rightText = right.join(` ${sep} `);
+    if (rightText.length === 0) return leftText;
+
+    // Right-align the right side within the render width.
+    const pad = Math.max(1, width - visibleWidth(leftText) - visibleWidth(rightText) - 2);
+    return `${leftText}${" ".repeat(pad)}${rightText}`;
   }
 
   // ── Component ───────────────────────────────────────────────────────────
   render(width: number): string[] {
+    this.lastWidth = width;
+    this.text.setText(this.renderLine(width));
     return this.text.render(width);
   }
+  private lastWidth = 80;
   invalidate(): void {
     this.text.invalidate();
   }

@@ -129,7 +129,7 @@ test("statusline config: defaults to all chips in canonical order", () => {
   setupTempHome();
   const chips = readStatuslineChips();
   assert.deepEqual(chips, DEFAULT_STATUSLINE_CHIPS);
-  assert.deepEqual([...DEFAULT_STATUSLINE_CHIPS], ["agent", "model", "session", "tokens", "persist", "provider", "state"]);
+  assert.deepEqual([...DEFAULT_STATUSLINE_CHIPS], ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"]);
 });
 
 test("statusline config: set custom chip order round-trips", () => {
@@ -185,7 +185,7 @@ test("statusline config: empty chip list falls back to defaults", () => {
 });
 
 test("statusline config: STATUSLINE_CHIPS constant matches the spec set", () => {
-  assert.deepEqual([...STATUSLINE_CHIPS], ["agent", "model", "session", "tokens", "persist", "provider", "state"]);
+  assert.deepEqual([...STATUSLINE_CHIPS], ["brand", "agent", "model", "session", "tokens", "persist", "provider", "state"]);
 });
 
 // ── StatusLine TUI component reads chip config ───────────────────────────────
@@ -211,18 +211,18 @@ test("statusline TUI: renders all chips by default", () => {
   assert.ok(rendered.includes("idle"), "state chip");
 });
 
-test("statusline TUI: respects custom chip order", () => {
+test("statusline TUI: two-sided layout — model sits right, chips configurable", () => {
   setupTempHome();
   writeStatuslineChips(["model", "state", "agent"]);
   const state = defaultStatusState("my-model", "sess1234", "local");
   state.provider = "nvidia";
   const line = new StatusLine(state);
   const rendered = stripAnsi(line.render(120)[0] ?? "");
-  // model should appear before agent
+  // omp's two-sided contract: agent/state on the left, model right-aligned.
   const modelIdx = rendered.indexOf("my-model");
   const agentIdx = rendered.indexOf("OPENKAI");
   assert.ok(modelIdx >= 0 && agentIdx >= 0);
-  assert.ok(modelIdx < agentIdx, "model should come before agent");
+  assert.ok(modelIdx > agentIdx, "model should sit right of the left-side chips");
   // provider should NOT appear (not in custom config)
   assert.ok(!rendered.includes("nvidia"), "provider should be hidden");
   // session should NOT appear

@@ -32,10 +32,10 @@ type SettingsTab = (typeof TABS)[number];
 
 /** Status line presets (omp's statusLine.preset shape) over our chip sets. */
 const STATUSLINE_PRESETS: Record<string, { label: string; chips: StatuslineChip[] }> = {
-  default: { label: "agent · model · session · tokens · persist · provider · state", chips: [...DEFAULT_STATUSLINE_CHIPS] },
-  minimal: { label: "provider · state", chips: ["provider", "state"] },
-  compact: { label: "model · tokens · provider · state", chips: ["model", "tokens", "provider", "state"] },
-  full: { label: "every chip", chips: ["agent", "model", "session", "tokens", "persist", "provider", "state"] },
+  default: { label: "brand · agent · provider · persist · state | tokens · model", chips: [...DEFAULT_STATUSLINE_CHIPS] },
+  minimal: { label: "brand · state | model", chips: ["brand", "state", "model"] },
+  compact: { label: "brand · provider · state | tokens · model", chips: ["brand", "provider", "state", "tokens", "model"] },
+  full: { label: "every chip", chips: ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"] },
 };
 
 function currentPresetName(): string {
