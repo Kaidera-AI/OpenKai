@@ -39,6 +39,7 @@ import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders
 import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, type StatuslineChip } from "../config.js";
 import { initAgentsMd } from "../init.js";
 import { appendLearning, initMemory, memoryStatus } from "../memory.js";
+import { getGoal, setGoal, updateGoal, clearGoal } from "../goal.js";
 
 /** Status line presets (mirror of settings.ts — the live chip sets). */
 const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
@@ -186,6 +187,11 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
       transcript.addNotice(
         `memory: ${memory.learnings} shared learning(s)${memory.agents.length > 0 ? ` across ${memory.agents.length} agent(s)` : ""} — /memory to view, /memory add to record`,
       );
+    }
+    // Session goal (E006): keep the guiding objective visible on every boot.
+    const goal = getGoal();
+    if (goal && goal.status === "active") {
+      transcript.addNotice(`goal: ${goal.text} — /goal to manage`);
     }
   }
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
@@ -432,6 +438,34 @@ export class TuiController {
               `add one: /memory add <what you learned>`,
             ]);
           }
+        }
+        this.tui.requestRender();
+        break;
+      }
+      case "goal": {
+        const arg = argument.trim();
+        const verb = arg.split(/\s+/)[0] ?? "";
+        if (["show", "pause", "resume", "drop", "done"].includes(verb) || arg === "") {
+          const goal = getGoal();
+          if (arg === "" || verb === "show") {
+            this.transcript.addNotice(
+              goal
+                ? [`/goal — [${goal.status}] ${goal.text}`, `set: ${goal.createdAt.slice(0, 10)} · updated: ${goal.updatedAt.slice(0, 10)}`, `verbs: /goal pause · /goal resume · /goal done · /goal drop`]
+                : ["/goal — no goal set", "set one: /goal <what you're working towards>"],
+            );
+          } else if (verb === "drop") {
+            clearGoal();
+            this.transcript.addNotice("/goal — dropped");
+          } else if (verb === "pause") {
+            this.transcript.addNotice(updateGoal("paused") ? "/goal — paused" : "/goal — no goal to pause");
+          } else if (verb === "resume") {
+            this.transcript.addNotice(updateGoal("active") ? "/goal — resumed" : "/goal — no goal to resume");
+          } else {
+            this.transcript.addNotice(updateGoal("done") ? "/goal — marked done ✓" : "/goal — no goal to finish");
+          }
+        } else {
+          const goal = setGoal(arg);
+          this.transcript.addNotice(`/goal — [active] ${goal.text}`);
         }
         this.tui.requestRender();
         break;
