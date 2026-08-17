@@ -18,6 +18,7 @@ import { runFuse, type FuseCliOptions } from "./fuse.js";
 import { runFusionAdvise, runFusionReport } from "./fusion.js";
 import { runInfo } from "./info.js";
 import { helpIndex, helpTopic } from "./help.js";
+import { runLogin } from "./login.js";
 import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runTail } from "./tail.js";
@@ -68,6 +69,9 @@ Commands:
   undo [--history]       Restore the work tree to the previous shadow-git
                          snapshot (taken before every gated mutation);
                          --history lists snapshots newest-first.
+
+  login <provider>       Authenticate a subscription lane (openai-codex,
+                         github-copilot, anthropic) via OAuth device flow.
 
   tail [-f] [-n N]       Live activity feed: turn starts, tool calls, results,
                          tokens — what the agent is doing right now
@@ -426,6 +430,15 @@ async function main(argv: string[]): Promise<number> {
       lines = parsed;
     }
     return runTail({ follow: getBool("--follow") || getBool("-f"), lines });
+  }
+
+  // ── login: subscription OAuth flows ──────────────────────────────────────
+  if (command === "login") {
+    const provider = positional[0] ?? getString("--provider");
+    if (!provider) {
+      return fail("login requires a provider — e.g. openkai login openai-codex");
+    }
+    return runLogin({ provider });
   }
 
   // ── info (Inc 08) ────────────────────────────────────────────────────────
