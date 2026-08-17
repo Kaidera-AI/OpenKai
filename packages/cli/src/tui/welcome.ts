@@ -70,7 +70,7 @@ export async function runWelcome(): Promise<OpenKaiConfig> {
     process.stdout.write("\n  Welcome to OpenKai — the open agent harness, by Kaidera.\n");
     process.stdout.write("  First run: connect a provider, pick a model, choose memory. 60 seconds.\n\n");
 
-    // ── 1. Provider keys ────────────────────────────────────────────────
+    // ── 1. Provider keys (two lanes unlock real fusion) ────────────────
     const config = readConfig();
     let configured = 0;
     for (const [id, envVar] of KEY_PROVIDERS) {
@@ -88,6 +88,22 @@ export async function runWelcome(): Promise<OpenKaiConfig> {
     }
     if (configured === 0) {
       process.stdout.write("  No provider keys set — you can add them later in ~/.openkai/.env\n");
+    } else if (configured === 1) {
+      process.stdout.write(
+        "\n  One provider works, but fusion's real lift needs TWO independent lanes.\n" +
+          "  Easiest: one OpenRouter key covers 300+ models as the second lane\n" +
+          "  (Fireworks, NVIDIA, Anthropic, OpenAI keys work too). Add one now?\n",
+      );
+      for (const [id, envVar] of KEY_PROVIDERS) {
+        if (process.env[envVar]) continue;
+        const answer = await ask(`  ${PROVIDERS[id]?.label ?? id} key (${envVar}) [Enter to skip]: `);
+        if (answer.length > 0) {
+          appendFileSync(envPath(), `${envVar}=${answer}\n`, "utf-8");
+          process.env[envVar] = answer;
+          configured += 1;
+          break;
+        }
+      }
     }
 
     // ── 2. Default provider + model ─────────────────────────────────────

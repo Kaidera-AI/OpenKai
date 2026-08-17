@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { brandTint, BRAND_RAMP } from "./theme.js";
+import { introLogoFrame } from "./gradient.js";
 
 /** The Kaidera hex-node mark (from the Kaidera logo: hexagon + node graph). */
 export const KAIDERA_MARK: readonly string[] = [
@@ -120,10 +120,10 @@ const sleep = (ms: number): Promise<void> =>
  * Returns true when it played (so the transcript stays compact).
  */
 /**
- * The first-run brand moment (droid bar: animated logo exactly once): the
- * Kaidera hex mark + OpenKai wordmark with a colour SHIMMER sweeping
- * diagonally across the frame (per-column hue offset per step), ~1s, then
- * cleared for the app. TTY + first run only. Returns true when it played.
+ * The first-run brand moment (omp's choreography, droid's restraint): the
+ * Kaidera mark + OpenKai wordmark under a 5-stop diagonal gradient with the
+ * shine traversing three times, easing to rest in ~2.4s. Truecolour when
+ * available, 256-ramp otherwise. Once per version, TTY only.
  */
 export async function playBrandAnimation(
   version: string,
@@ -132,25 +132,19 @@ export async function playBrandAnimation(
   if (!process.stdout.isTTY || !shouldShowSplash(version)) return false;
 
   const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`];
-  const frames = BRAND_RAMP.length;
-  const frameMs = 75;
+  const totalMs = 2400;
+  const tickMs = 33;
+  const steps = Math.ceil(totalMs / tickMs);
   try {
     write("\x1b[?25l"); // hide cursor
-    for (let step = 0; step < frames + 4; step += 1) {
+    for (let step = 0; step <= steps; step += 1) {
+      const progress = Math.min(1, step / steps);
       write("\x1b[2J\x1b[H"); // clear + home
-      const lines = frame.map((line, row) => {
-        // Diagonal shimmer: hue offset slides across columns each frame.
-        let out = "";
-        for (let col = 0; col < line.length; col += 4) {
-          const chunk = line.slice(col, col + 4);
-          out += brandTint(chunk, step + Math.floor((col + row * 2) / 4));
-        }
-        return out;
-      });
-      write(lines.join("\n"));
-      await sleep(frameMs);
+      write(introLogoFrame(frame, progress).join("\n"));
+      if (progress < 1) await sleep(tickMs);
     }
-    write("\x1b[2J\x1b[H\x1b[?25h"); // clear + restore cursor
+    // settle: one clean gradient frame, then hand off
+    write("\x1b[2J\x1b[H\x1b[?25h");
   } catch {
     // animation is decorative — never block boot
   }

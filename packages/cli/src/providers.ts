@@ -6,6 +6,8 @@
  * stable industry conventions). OAuth subscription lanes carry no raw key.
  */
 
+import { listCasts } from "@kaidera/openkai-core";
+
 export interface ProviderInfo {
   /** Display label. */
   label: string;
@@ -87,34 +89,35 @@ export function configuredProviders(): string[] {
 }
 
 /**
- * Suggest a fusion partner for a just-picked model (E002: always bring the
- * suggestion). Fusion's lift comes from INDEPENDENT minds — the partner
- * should live on another provider family when one is configured. Returns the
- * suggestion line, or the one-provider nudge when only one lane is live.
+ * Suggest a fusion partner for a just-picked model (E002). The suggestion
+ * comes from the CAST data (the routing layer's curated role sets), never a
+ * hardcoded string: the best cast on a DIFFERENT provider lane wins, so the
+ * pairing is two independent providers by construction. One-lane setups get
+ * the honest aggregator nudge.
  */
 export function suggestFusionPartner(provider: string, modelId: string): string {
-  const configured = configuredProviders().filter((p) => p !== provider);
-  if (configured.length === 0) {
+  const others = configuredProviders().filter((p) => p !== provider);
+  if (others.length === 0) {
     return (
-      `fusion note: one provider (${provider}) — self-pairing works, but a second provider ` +
-      `(or the OpenRouter aggregator) lets two INDEPENDENT models fuse. Add one in ~/.openkai/.env`
+      `fusion note: one provider (${provider}) — self-pairing works, but a second lane ` +
+      `(OpenRouter as an aggregator covers 300+ models; Fireworks/NVIDIA work too) ` +
+      `lets two INDEPENDENT models fuse. Add one in ~/.openkai/.env`
     );
   }
-  // Prefer the first configured alternative; suggest its known-good default.
-  const partner = configured[0]!;
-  const partnerModel =
-    partner === "nvidia"
-      ? "meta/llama-3.1-70b-instruct"
-      : partner === "anthropic"
-        ? "claude-sonnet-4-5"
-        : partner === "openai"
-          ? "gpt-5"
-          : partner === "google"
-            ? "gemini-2.5-pro"
-            : partner === "openrouter"
-              ? "nvidia/nemotron-3-nano-30b-a3b:free"
-              : undefined;
-  return partnerModel
-    ? `fusion suggestion: pair ${modelId} with ${partnerModel} (${partner}) — /fuse uses the architect/builder split`
-    : `fusion suggestion: a second provider (${partner}) is configured — /fuse it`;
+  // The routing layer's curated casts decide the pairing: prefer a cast on
+  // another lane; balanced tier first, then anything.
+  const casts = listCasts().filter((c) => others.includes(c.provider));
+  const cast =
+    casts.find((c) => c.tier === "balanced") ?? casts[0];
+  if (cast) {
+    const partner =
+      cast.provider === provider && cast.builderModel === modelId
+        ? cast.architectModel
+        : cast.builderModel;
+    return (
+      `fusion suggestion (${cast.id} cast): pair ${modelId} with ${partner} ` +
+      `(${cast.provider}) — /fuse runs the architect/builder split across both`
+    );
+  }
+  return `fusion suggestion: a second lane (${others[0]}) is configured — /fuse it`;
 }
