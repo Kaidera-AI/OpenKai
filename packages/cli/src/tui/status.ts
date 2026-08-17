@@ -12,6 +12,13 @@
  * terminal was unfocused, the spinner chip shows an amber `◉ attention` glyph —
  * clean-by-default, the attention state lives in the status line, not a banner.
  *
+ * Inc 05: the chip order and visibility are configurable via
+ * `~/.openkai/config.json` (key `statusline.chips`). The StatusLine reads the
+ * config at construction and on each update so changes take effect on the next
+ * render. The configurable chips are: agent, model, session, tokens, persist,
+ * provider, state. The bash-mode `$` and autonomy `a:` chips are contextual
+ * and always shown when active (they are not in the configurable set).
+ *
  * Updates arrive via {@link StatusState} mutations driven by the transport
  * event stream (usage at `turn_end`, turn state from deltas/turn_end).
  */
@@ -20,6 +27,10 @@ import { Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
 import type { UsageSnapshot } from "@kaidera/openkai-core";
+import {
+  type StatuslineChip,
+  readStatuslineChips,
+} from "../config.js";
 
 /** The chrome state — mutated by the controller as events arrive. */
 export interface StatusState {
@@ -100,15 +111,18 @@ function spinnerChip(state: StatusState): string {
 export class StatusLine implements Component {
   private readonly text: Text;
   private state: StatusState;
+  private chips: StatuslineChip[];
 
   constructor(state: StatusState) {
     this.state = state;
+    this.chips = readStatuslineChips();
     this.text = new Text(this.renderLine(), 1, 0, (line) => surface["3"](line));
   }
 
   /** Update state and re-render the line. */
   update(state: StatusState): void {
     this.state = state;
+    this.chips = readStatuslineChips();
     this.text.setText(this.renderLine());
   }
 
@@ -124,17 +138,28 @@ export class StatusLine implements Component {
     const session = this.state.sessionId.slice(0, 8);
     const tokens = this.state.usage ? `${this.state.usage.totalTokens}t` : "—";
     const sep = textToken.muted("·");
-    const chips = [
-      rolePill(this.state.agentName),
+
+    // Build the configurable chip → string map.
+    const chipRenderers: Record<StatuslineChip, string> = {
+      agent: rolePill(this.state.agentName),
       model,
       session,
       tokens,
-      `p:${this.state.persistMode}`,
-    ];
+      persist: `p:${this.state.persistMode}`,
+      provider: this.state.provider,
+      state: spinnerChip(this.state),
+    };
+
+    // Render only the configured chips, in order. Skip empty chips (e.g.
+    // provider when unset).
+    const chips: string[] = this.chips
+      .map((chip) => chipRenderers[chip])
+      .filter((s) => s.length > 0);
+
+    // Contextual chips (not configurable): bash mode + autonomy.
     if (this.state.mode === "bash") chips.push(highlight.base("$"));
-    if (this.state.provider) chips.push(this.state.provider);
     if (this.state.autonomy) chips.push(textToken.muted(`a:${this.state.autonomy}`));
-    chips.push(spinnerChip(this.state));
+
     return chips.join(` ${sep} `);
   }
 

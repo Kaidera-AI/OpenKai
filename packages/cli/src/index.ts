@@ -22,6 +22,9 @@ import { runTui, type RunTuiOptions } from "./tui/runtime.js";
 import { runSessions, type SessionsOptions } from "./sessions.js";
 import { runTail } from "./tail.js";
 import { runUndo } from "./undo.js";
+import { runSkillsAdd, runSkillsBind, runSkillsList, runSkillsRemove } from "./skills.js";
+import { runMcpAdd, runMcpList, runMcpRemove, runMcpTest } from "./mcp.js";
+import { runStatusline } from "./statusline.js";
 import { CLI_VERSION } from "./version.js";
 
 // .env from the current directory loads before any command resolves config;
@@ -76,6 +79,21 @@ Commands:
 
   upgrade | update       Self-upgrade (standalone channel; rollback with
                          --rollback, check only with --check).
+
+  skills [list|add|remove|bind]   Manage skills (.agents/skills/ + Cortex
+                         registry). \`add <path>\` installs a local skill folder;
+                         \`remove <slug>\` deletes from registry + disk;
+                         \`bind <slug> --to <role>\` binds a skill to a subject.
+
+  mcp [list|add|remove|test]       Manage MCP servers in the harness config
+                         (~/.openkai/config.json mcpServers). \`add <name>
+                         --command <cmd>\` (stdio) or \`--url <url>\` (remote);
+                         \`test <name>\` spawns --help or probes the URL.
+
+  statusline             Show/configure status chrome chips:
+                         --set <a,b,c> | --hide <chip> | --show <chip> | --reset
+                         Chips: agent, model, session, tokens, persist,
+                         provider, state.
 
   events --print         Stream live Cortex team events (GET /events SSE) to
                          stdout, one TSV row per event:
@@ -465,6 +483,75 @@ async function main(argv: string[]): Promise<number> {
       options.pingSeconds = parsed;
     }
     return runEvents(options);
+  }
+
+  // ── skills (Inc 05) ──────────────────────────────────────────────────────
+  if (command === "skills") {
+    const sub = positional[0] ?? "";
+    const project = getString("--project");
+    const api = getString("--api");
+    const agent = getString("--agent");
+    if (sub === "list" || sub === "") {
+      return runSkillsList({ project, api, agent });
+    }
+    if (sub === "add") {
+      const source = positional[1];
+      if (!source) return fail("skills add requires <path>.");
+      return runSkillsAdd({ source, scope: getString("--scope"), project, api, agent });
+    }
+    if (sub === "remove") {
+      const slug = positional[1];
+      if (!slug) return fail("skills remove requires <slug>.");
+      return runSkillsRemove({ slug, project, api, agent });
+    }
+    if (sub === "bind") {
+      const slug = positional[1];
+      if (!slug) return fail("skills bind requires <slug>.");
+      const to = getString("--to");
+      if (!to) return fail("skills bind requires --to <agent-or-role>.");
+      return runSkillsBind({ slug, to, kind: getString("--kind"), project, api, agent });
+    }
+    return fail("skills requires a subcommand: list | add | remove | bind.");
+  }
+
+  // ── mcp (Inc 05) ──────────────────────────────────────────────────────────
+  if (command === "mcp") {
+    const sub = positional[0] ?? "";
+    if (sub === "list" || sub === "") {
+      return runMcpList();
+    }
+    if (sub === "add") {
+      const name = positional[1];
+      if (!name) return fail("mcp add requires <name>.");
+      return runMcpAdd({
+        name,
+        command: getString("--command"),
+        args: getString("--args"),
+        url: getString("--url"),
+        env: getString("--env"),
+      });
+    }
+    if (sub === "remove") {
+      const name = positional[1];
+      if (!name) return fail("mcp remove requires <name>.");
+      return runMcpRemove({ name });
+    }
+    if (sub === "test") {
+      const name = positional[1];
+      if (!name) return fail("mcp test requires <name>.");
+      return runMcpTest({ name });
+    }
+    return fail("mcp requires a subcommand: list | add | remove | test.");
+  }
+
+  // ── statusline (Inc 05) ───────────────────────────────────────────────────
+  if (command === "statusline") {
+    return runStatusline({
+      set: getString("--set"),
+      hide: getString("--hide"),
+      show: getString("--show"),
+      reset: getBool("--reset"),
+    });
   }
 
   return fail(`unknown command "${command}".`);
