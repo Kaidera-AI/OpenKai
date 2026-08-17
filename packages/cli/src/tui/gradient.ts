@@ -8,13 +8,14 @@
 
 import { brandTint, BRAND_RAMP } from "./theme.js";
 
-/** Multi-stop truecolour palette (omp's 5-stop, avoids the HSL valley). */
+
+/** Multi-stop truecolour palette — Kaidera brand: graphite → steel → mint → mint-hover → paper. */
 const GRADIENT_STOPS: ReadonlyArray<readonly [number, number, number]> = [
-  [255, 92, 200],
-  [200, 110, 255],
-  [120, 130, 255],
-  [60, 200, 255],
-  [120, 255, 220],
+  [48, 50, 52],     // graphite  #303234
+  [133, 138, 136],  // steel     #858A88
+  [176, 225, 205],  // mint      #B0E1CD
+  [147, 217, 187],  // mint hover #93D9BB
+  [241, 241, 237],  // paper     #F1F1ED
 ];
 
 const SHINE_HALF_WIDTH = 0.18;

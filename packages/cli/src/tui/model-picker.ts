@@ -1,12 +1,14 @@
 /**
- * Provider/model picker (`/model`) — two-level browse: providers (with their
- * configured state) → the provider's models from the bundled catalogue.
- * Fuzzy-filterable, canonical footer grammar, theme tokens only.
+ * Provider/model picker (`/model`) — a five-level browse:
+ *   provider → model → effort → partner-provider → partner-model
+ * The fusion partner uses the SAME provider-first interface as the primary
+ * pick, so the operator always knows which lane the second model lives on
+ * (CTO feedback 2026-08-18). Fuzzy-filterable, canonical footer grammar,
+ * theme tokens only.
  */
-
+import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken, opaquePanel } from "./theme.js";
 import { SelectList, fuzzyFilter } from "@earendil-works/pi-tui";
 import type { Component, SelectItem } from "@earendil-works/pi-tui";
-import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken } from "./theme.js";
 
 export interface ProviderEntry {
   id: string;
@@ -37,8 +39,6 @@ interface Row extends SelectItem {
   modelId?: string;
   effortLevel?: string;
   skip?: boolean;
-  partnerProvider?: string;
-  partnerModel?: string;
 }
 
 /** `200k` context window (omp's formatContext, abbreviated). */
@@ -61,14 +61,17 @@ function formatCost(cost?: { input?: number; output?: number }): string {
 
 const EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
 
-/** The four-level provider→model→effort→partner picker overlay. */
+type Level = "providers" | "models" | "effort" | "partnerProviders" | "partnerModels";
+
+/** The five-level provider→model→effort→partner picker overlay. */
 export class ModelPicker implements Component {
-  private level: "providers" | "models" | "effort" | "partner";
+  private level: Level = "providers";
   private query = "";
   private list: SelectList;
   private provider: string | undefined;
   private pickedModel: string | undefined;
   private effort: string = "off";
+  private partnerProvider: string | undefined;
   private allRows: Row[];
 
   constructor(
@@ -79,7 +82,6 @@ export class ModelPicker implements Component {
     private readonly onSelect: (selection: ModelPickerSelection) => void,
     private readonly onCancel: () => void,
   ) {
-    this.level = "providers";
     this.effort = current.effort ?? "off";
     this.allRows = this.providerRows();
     this.list = this.buildList(this.allRows);
@@ -89,7 +91,7 @@ export class ModelPicker implements Component {
     return this.providers.map((p) => ({
       value: p.id,
       label: `${p.id === this.current.provider ? "● " : "  "}${p.label}`,
-      description: p.oauth ? "subscription (OAuth)" : p.configured ? "key configured" : "no key",
+      description: p.oauth ? "subscription" : p.configured ? "key set" : "no key",
       providerId: p.id,
     }));
   }
@@ -112,33 +114,40 @@ export class ModelPicker implements Component {
     return EFFORT_LEVELS.map((level) => ({
       value: level,
       label: `${level === this.effort ? "● " : "  "}${level}`,
-      description:
-        level === "off" ? "fastest, no reasoning" : level === "high" ? "deepest reasoning" : "",
+      description: level === "off" ? "fastest" : level === "high" ? "deepest" : "",
       effortLevel: level,
     }));
   }
 
-  private partnerRows(): Row[] {
+  /** Partner provider list — same interface as the primary pick. */
+  private partnerProviderRows(): Row[] {
     const rows: Row[] = [
-      {
-        value: "_skip",
-        label: "  skip — self-pair (same model both roles)",
-        description: "works fine; two providers is the real lift",
-        skip: true,
-      },
+      { value: "_skip", label: "  skip — self-pair", description: "same model both roles", skip: true },
     ];
-    for (const providerId of this.configuredOthers(this.provider ?? "")) {
-      for (const m of this.modelsFor(providerId).slice(0, 12)) {
-        rows.push({
-          value: `${providerId}/${m.id}`,
-          label: `  ${m.name ?? m.id}`,
-          description: providerId,
-          partnerProvider: providerId,
-          partnerModel: m.id,
-        });
-      }
+    for (const id of this.configuredOthers(this.provider ?? "")) {
+      const p = this.providers.find((x) => x.id === id);
+      rows.push({
+        value: id,
+        label: `  ${p?.label ?? id}`,
+        description: p?.oauth ? "subscription" : "key set",
+        providerId: id,
+      });
     }
     return rows;
+  }
+
+  private partnerModelRows(provider: string): Row[] {
+    return this.modelsFor(provider).map((m) => {
+      const ctx = formatContext(m.contextWindow);
+      const cost = formatCost(m.cost);
+      const meta = [ctx, cost].filter((s) => s.length > 0).join(" · ");
+      return {
+        value: m.id,
+        label: `  ${m.name ?? m.id}`,
+        description: meta,
+        modelId: m.id,
+      };
+    });
   }
 
   private buildList(rows: Row[]): SelectList {
@@ -152,68 +161,77 @@ export class ModelPicker implements Component {
   }
 
   private handleSelect(row: Row): void {
-    if (this.level === "providers" && row.providerId) {
-      this.provider = row.providerId;
-      this.level = "models";
-      this.query = "";
-      this.allRows = this.modelRows(row.providerId);
-      this.list = this.buildList(this.allRows);
-      return;
+    switch (this.level) {
+      case "providers":
+        if (!row.providerId) return;
+        this.provider = row.providerId;
+        this.goto("models");
+        return;
+      case "models":
+        if (!row.modelId || !this.provider) return;
+        this.pickedModel = row.modelId;
+        this.goto("effort");
+        return;
+      case "effort":
+        if (!row.effortLevel) return;
+        this.effort = row.effortLevel;
+        this.goto("partnerProviders");
+        return;
+      case "partnerProviders":
+        if (row.skip) {
+          this.finish(undefined);
+          return;
+        }
+        if (!row.providerId) return;
+        this.partnerProvider = row.providerId;
+        this.goto("partnerModels");
+        return;
+      case "partnerModels":
+        if (!row.modelId || !this.partnerProvider) return;
+        this.finish({ provider: this.partnerProvider, modelId: row.modelId });
+        return;
     }
-    if (this.level === "models" && row.modelId && this.provider) {
-      this.pickedModel = row.modelId;
-      this.level = "effort";
-      this.query = "";
-      this.allRows = this.effortRows();
-      this.list = this.buildList(this.allRows);
-      return;
-    }
-    if (this.level === "effort" && row.effortLevel) {
-      this.effort = row.effortLevel;
-      this.level = "partner";
-      this.query = "";
-      this.allRows = this.partnerRows();
-      this.list = this.buildList(this.allRows);
-      return;
-    }
-    if (this.level === "partner" && this.provider && this.pickedModel) {
-      this.onSelect({
-        provider: this.provider,
-        modelId: this.pickedModel,
-        effort: this.effort,
-        partner: row.skip
-          ? undefined
-          : { provider: row.partnerProvider!, modelId: row.partnerModel! },
-      });
-    }
+  }
+
+  private goto(level: Level): void {
+    this.level = level;
+    this.query = "";
+    this.allRows =
+      level === "models" ? this.modelRows(this.provider!)
+      : level === "effort" ? this.effortRows()
+      : level === "partnerProviders" ? this.partnerProviderRows()
+      : level === "partnerModels" ? this.partnerModelRows(this.partnerProvider!)
+      : this.providerRows();
+    this.list = this.buildList(this.allRows);
+  }
+
+  private finish(partner: { provider: string; modelId: string } | undefined): void {
+    this.onSelect({
+      provider: this.provider!,
+      modelId: this.pickedModel!,
+      effort: this.effort,
+      partner,
+    });
   }
 
   private handleCancel(): void {
-    if (this.level === "partner") {
-      this.level = "effort";
-      this.query = "";
-      this.allRows = this.effortRows();
-      this.list = this.buildList(this.allRows);
-      return;
+    switch (this.level) {
+      case "partnerModels":
+        this.goto("partnerProviders");
+        return;
+      case "partnerProviders":
+        this.goto("effort");
+        return;
+      case "effort":
+        this.goto("models");
+        return;
+      case "models":
+        this.goto("providers");
+        return;
+      default:
+        this.onCancel();
     }
-    if (this.level === "effort") {
-      this.level = "models";
-      this.query = "";
-      this.allRows = this.modelRows(this.provider!);
-      this.list = this.buildList(this.allRows);
-      return;
-    }
-    if (this.level === "models") {
-      this.level = "providers";
-      this.query = "";
-      this.provider = undefined;
-      this.allRows = this.providerRows();
-      this.list = this.buildList(this.allRows);
-      return;
-    }
-    this.onCancel();
   }
-
   /** Text input feeds the fuzzy query; navigation keys go to the list. */
   handleInput(data: string): void {
     if (data === "\x7f") {
@@ -232,21 +250,26 @@ export class ModelPicker implements Component {
   render(width: number): string[] {
     const title =
       this.level === "providers"
-        ? `${highlight.base("providers")} ${textToken.dim("— Enter to browse models")}`
+        ? `${highlight.base("provider")} ${textToken.dim("— Enter to browse models")}`
         : this.level === "models"
           ? `${highlight.base(this.provider ?? "")} ${textToken.dim("— Enter to pick; Esc back")}`
           : this.level === "effort"
             ? `${highlight.base("effort")} ${textToken.dim(`— for ${this.pickedModel}; Esc back`)}`
-            : `${highlight.base("fusion partner")} ${textToken.dim("— the 2nd model (or skip); Esc back")}`;
+            : this.level === "partnerProviders"
+              ? `${highlight.base("fusion partner")} ${textToken.dim("— pick the 2nd provider (or skip); Esc back")}`
+              : `${highlight.base(this.partnerProvider ?? "")} ${textToken.dim("— the partner model; Esc back")}`;
     const filter = this.query ? `${textToken.dim("filter:")} ${this.query}` : textToken.dim("type to filter");
-    return [
-      ` ${title}`,
-      ` ${filter}`,
-      "",
-      ...this.list.render(width - 4),
-      "",
-      ` ${textToken.dim(renderOverlayFooter())}`,
-    ];
+    return opaquePanel(
+      [
+        ` ${title}`,
+        ` ${filter}`,
+        "",
+        ...this.list.render(width - 4),
+        "",
+        ` ${textToken.dim(renderOverlayFooter())}`,
+      ],
+      width,
+    );
   }
 
   invalidate(): void {

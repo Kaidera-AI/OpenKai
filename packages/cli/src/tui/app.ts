@@ -48,6 +48,7 @@ const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
   full: ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"],
 };
 import { ModelPicker } from "./model-picker.js";
+import { LevelPicker } from "./level-picker.js";
 import { SettingsOverlay } from "./settings.js";
 import { runWelcome, readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
@@ -389,7 +390,7 @@ export class TuiController {
         break;
       }
       case "autonomy":
-        this.cycleAutonomy(argument);
+        this.openAutonomyPicker(argument);
         break;
       case "theme": {
         const names = themeNames();
@@ -399,7 +400,6 @@ export class TuiController {
         this.tui.requestRender();
         break;
       }
-      case "welcome":
       case "setup":
         this.openSetup();
         break;
@@ -670,6 +670,34 @@ export class TuiController {
     }
     this.transcript.addNotice(`retrying: ${this.lastPrompt.slice(0, 80)}`);
     await this.submit(this.lastPrompt);
+  }
+
+  /** `/autonomy` — open the level picker (Enter applies). Direct arg still works. */
+  private openAutonomyPicker(argument: string): void {
+    if (!this.autonomySwitch) {
+      this.transcript.addNotice("autonomy: unavailable (permission gate off)");
+      this.tui.requestRender();
+      return;
+    }
+    if (argument) {
+      this.cycleAutonomy(argument);
+      return;
+    }
+    const entries = [
+      { id: "off", label: "off", description: "every mutation asks (default)" },
+      { id: "low", label: "low", description: "reads + in-cwd writes auto; bash gates" },
+      { id: "med", label: "med", description: "in-cwd writes auto; floor + bash gate" },
+      { id: "high", label: "high", description: "all auto except the deny floor" },
+    ];
+    const picker = new LevelPicker("autonomy", entries, this.autonomySwitch.current(), (id) => {
+      this.tui.hideOverlay();
+      this.cycleAutonomy(id);
+      this.refocusComposer();
+    }, () => {
+      this.tui.hideOverlay();
+      this.refocusComposer();
+    });
+    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "60%" });
   }
 
   /** `/autonomy [off|low|med|high]` — the coarse visible axis (droid). */

@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { Input, Text } from "@earendil-works/pi-tui";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { highlight, renderOverlayFooter, text as textToken } from "./theme.js";
+import { highlight, renderOverlayFooter, text as textToken, opaquePanel } from "./theme.js";
 
 const envFile = (): string => path.join(homedir(), ".openkai", ".env");
 
@@ -75,13 +75,13 @@ export class SignInOverlay implements Component {
   render(width: number): string[] {
     const body = this.text.render(width);
     const inputLine = this.input.render(width - 4);
-    return [
+    return opaquePanel([
       ...body.slice(0, 3),
       ` ${textToken.muted("key:")} ${inputLine.join("")}`,
       ...body.slice(3),
       "",
       ` ${textToken.dim(renderOverlayFooter())}`,
-    ];
+    ], width);
   }
 
   invalidate(): void {

@@ -1,0 +1,190 @@
+Metadata-Version: 2.4
+Name: dfindexeddb
+Version: 20260210
+Summary: dfindexeddb is an experimental Python tool for performing digital forensic analysis of IndexedDB and leveldb files.
+Author-email: Syd Pleno <sydp@google.com>
+Maintainer-email: dfIndexeddb Developers <dfindexeddb-dev@googlegroups.com>
+License-Expression: Apache-2.0
+Project-URL: Homepage, https://github.com/google/dfindexeddb
+Project-URL: Documentation, https://github.com/google/dfindexeddb/tree/main/docs
+Project-URL: Repository, https://github.com/google/dfindexeddb
+Project-URL: Bug Tracker, https://github.com/google/dfindexeddb/issues
+Classifier: Development Status :: 3 - Alpha
+Classifier: Programming Language :: Python
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: python-snappy==0.6.1
+Requires-Dist: zstd==1.5.5.1
+Provides-Extra: plugins
+Requires-Dist: protobuf; extra == "plugins"
+Requires-Dist: dfdatetime; extra == "plugins"
+Provides-Extra: dev
+Requires-Dist: pylint; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: pyink; extra == "dev"
+Requires-Dist: pre-commit; extra == "dev"
+Requires-Dist: coverage; extra == "dev"
+Dynamic: license-file
+
+# dfIndexeddb
+
+dfindexeddb is an experimental Python tool for performing digital forensic
+analysis of IndexedDB and LevelDB files.
+
+It parses LevelDB, IndexedDB and JavaScript structures from these files without
+requiring native libraries.  (Note: only a subset of IndexedDB key types and
+JavaScript types for Firefox, Safari and Chromium-based browsers are currently supported).
+
+The content of IndexedDB files is dependent on what a web application stores
+locally/offline using the web browser's
+[IndexedDB API](https://www.w3.org/TR/IndexedDB/).  Examples of content might
+include:
+* text from a text/source-code editor application,
+* emails and contact information from an e-mail application,
+* images and metadata from a photo gallery application
+
+
+## Installation
+
+1. [Linux] Install the snappy compression development package
+
+```
+    $ sudo apt install libsnappy-dev
+```
+
+2. Create a virtual environment and install the package
+
+```
+    $ python3 -m venv .venv
+    $ source .venv/bin/activate
+    $ pip install dfindexeddb
+```
+
+### Optional plugins
+
+To also install the dependencies for leveldb/indexeddb plugins, run
+```
+    $ pip install 'dfindexeddb[plugins]'
+```
+
+
+## Installation from source
+
+1. [Linux] Install the snappy compression development package
+
+```
+    $ sudo apt install libsnappy-dev
+```
+
+2. Clone or download/unzip the repository to your local machine.
+
+3. Create a virtual environment and install the package
+
+```
+    $ python3 -m venv .venv
+    $ source .venv/bin/activate
+    $ pip install .
+```
+
+### Optional plugins
+
+To also install the dependencies for leveldb/indexeddb plugins, run
+```
+    $ pip install '.[plugins]'
+```
+
+## Usage
+
+Two CLI tools for parsing IndexedDB/LevelDB files are available after
+installation:
+
+
+### IndexedDB
+
+```
+$ dfindexeddb -h
+usage: dfindexeddb [-h] {blink,gecko,db,ldb,log} ...
+
+A cli tool for parsing IndexedDB files
+
+positional arguments:
+  {blink,gecko,db,ldb,log}
+    blink               Parse a file as a blink-encoded value.
+    gecko               Parse a file as a gecko-encoded value.
+    db                  Parse a directory/file as IndexedDB.
+    ldb                 Parse a ldb file as IndexedDB.
+    log                 Parse a log file as IndexedDB.
+
+options:
+  -h, --help    show this help message and exit
+```
+
+#### Examples:
+
+| Platform / Source | Format | Command |
+| :--- | :--- | :--- |
+| **Firefox** (sqlite) | JSON | `dfindexeddb db -s SOURCE --format firefox -o json` |
+| **Safari** (sqlite) | JSON-L | `dfindexeddb db -s SOURCE --format safari -o jsonl` |
+| **Chrome** (LevelDB/sqlite) | JSON | `dfindexeddb db -s SOURCE --format chrome` |
+| **Chrome** (.ldb) | JSON-L | `dfindexeddb ldb -s SOURCE -o jsonl` |
+| **Chrome** (.log) | Python repr | `dfindexeddb log -s SOURCE -o repr` |
+| **Chrome** (Blink) | JSON | `dfindexeddb blink -s SOURCE` |
+
+
+#### Options:
+
+| Option | Description |
+| :--- | :--- |
+| `--filter_key [term]` | Performs a substring match on the string representation of the record's key.  |
+| `--filter_value [term]` | Performs a substring match on the string representation of the record's value. If `--load_blobs` is used, it also searches within any associated blob data. |
+| `--include_raw_data` | Include the raw key and value bytes in the record output. |
+| `--load_blobs` | For Firefox, Safari and Chromium-based browsers, attempt to find and read associated blob files. |
+
+> **Note**: Refer to source to understand the structure of the records and how
+> the filter options available in the CLI tool work. For more fine-grained
+> control over filtering, it is preferable to use `jq` to filter and transform
+> the JSON output.
+
+
+### LevelDB
+
+```
+$ dfleveldb -h
+usage: dfleveldb [-h] {db,log,ldb,descriptor} ...
+
+A cli tool for parsing leveldb files
+
+positional arguments:
+  {db,log,ldb,descriptor}
+    db                  Parse a directory as leveldb.
+    log                 Parse a leveldb log file.
+    ldb                 Parse a leveldb table (.ldb) file.
+    descriptor          Parse a leveldb descriptor (MANIFEST) file.
+
+options:
+  -h, --help            show this help message and exit
+```
+
+#### Examples
+
+| Source | Type | Command |
+| :--- | :--- | :--- |
+| **LevelDB Folder** | Records | `dfleveldb db -s SOURCE` |
+| **Log file** (.log) | Physical Records | `dfleveldb log -s SOURCE -t physical_records` |
+| **Log file** (.log) | Blocks | `dfleveldb log -s SOURCE -t blocks` |
+| **Log file** (.log) | Write Batches | `dfleveldb log -s SOURCE -t write_batches` |
+| **Log file** (.log) | Internal Key Records | `dfleveldb log -s SOURCE -t parsed_internal_key` |
+| **Table file** (.ldb) | Records | `dfleveldb ldb -s SOURCE -t record` |
+| **Table file** (.ldb) | Blocks | `dfleveldb ldb -s SOURCE -t blocks` |
+| **Descriptor** (MANIFEST) | Version Edits | `dfleveldb descriptor -s SOURCE -t versionedit` |
+
+#### Optional Plugins
+
+To apply a plugin parser for a leveldb file/folder, add the
+`--plugin [Plugin Name]` argument.  Currently, there is support for the
+following artifacts:
+
+| Plugin Name | Artifact Name |
+| -------- | ------- |
+| `ChromeNotificationRecord` | Chrome/Chromium Notifications |

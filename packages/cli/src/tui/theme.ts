@@ -138,12 +138,13 @@ export const highlight = {
 export const toolBorder = (t: string): string => fg256(t, C.toolBorder);
 
 /**
- * Brand ramp (first-run splash animation): a cyan→violet sweep used ONLY by
- * the boot animation. Kept here so the token rule ("theme is the only colour
- * source") covers the brand moment too.
+ * Brand ramp (first-run splash animation): a graphite → mint → paper sweep
+ * using the closest 256-colour matches for the Kaidera brand palette.
+ * Kept here so the token rule ("theme is the only colour source") covers
+ * the brand moment too.
  */
 export const BRAND_RAMP = [
-  51, 45, 39, 75, 111, 147, 183, 182, 176, 171, 165, 129,
+  235, 236, 240, 244, 115, 151, 115, 244, 240, 236, 235, 254,
 ] as const;
 
 /** Tint text with the ramp colour at `step` (wraps). */
@@ -160,6 +161,18 @@ export const OVERLAY_FOOTER = "↑/↓ Navigate · Enter Select · ESC Cancel";
 /** Render the footer with the muted token (the only colour source rule). */
 export function renderOverlayFooter(): string {
   return text.muted(OVERLAY_FOOTER);
+}
+
+/**
+ * Make an overlay opaque (droid's solid panels): pad every line to `width`
+ * and lay a surface background under it so the transcript never bleeds
+ * through the panel (CTO feedback 2026-08-18).
+ */
+export function opaquePanel(lines: string[], width: number): string[] {
+  return lines.map((line) => {
+    const pad = Math.max(0, width - visibleWidth(line));
+    return surface["2"](line + " ".repeat(pad));
+  });
 }
 
 // ── Per-agent visual identity (scope §1.2) ──────────────────────────────────
@@ -196,6 +209,7 @@ export function rolePill(role: string): string {
 
 // ── pi-tui theme adapters (compose tokens into component themes) ────────────
 
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { MarkdownTheme, EditorTheme, SelectListTheme } from "@earendil-works/pi-tui";
 
 /** Markdown theme built entirely from tokens. */

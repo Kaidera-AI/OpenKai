@@ -11,7 +11,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { Input, Text } from "@earendil-works/pi-tui";
-import { highlight, renderOverlayFooter, text as textToken } from "./theme.js";
+import { highlight, renderOverlayFooter, text as textToken, opaquePanel } from "./theme.js";
 
 function openBrowser(url: string): void {
   const opener = process.platform === "darwin" ? "open" : "xdg-open";
@@ -134,9 +134,9 @@ export class OAuthOverlay implements Component {
     const body = this.text.render(width);
     if (this.state.phase === "input") {
       const inputLine = this.input.render(width - 4);
-      return [...body, ` ${textToken.muted("answer:")} ${inputLine.join("")}`, "", ` ${textToken.dim(renderOverlayFooter())}`];
+      return opaquePanel([...body, ` ${textToken.muted("answer:")} ${inputLine.join("")}`, "", ` ${textToken.dim(renderOverlayFooter())}`], width);
     }
-    return [...body, "", ` ${textToken.dim(renderOverlayFooter())}`];
+    return opaquePanel([...body, "", ` ${textToken.dim(renderOverlayFooter())}`], width);
   }
 
   invalidate(): void {

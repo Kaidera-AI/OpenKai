@@ -10,21 +10,37 @@ import path from "node:path";
 
 import { gradientLogo, introLogoFrame } from "./gradient.js";
 
+
 /**
  * The Kaidera hex-node mark — the logo's knowledge-graph motif: an outer
  * hexagon holding a triangle of connected nodes. Double-line weight on the
  * rim, the node triangle inside. Used by the splash, the boot card, and the
  * status line glyph.
+ *
+ * Designed to match the Kaidera brand mark (hex/network motif) with
+ * Unicode box-drawing characters. The outer hexagon uses double-line
+ * weight, internal connections use single-line, and nodes are filled
+ * circles. Mint green (#B0E1CD) is the canonical brand accent colour.
  */
 export const KAIDERA_MARK: readonly string[] = [
-  "        ┌──────┐        ",
-  "     /            \\     ",
-  "   /      ●───●     \\   ",
-  "  /    ●───────●     \\  ",
-  "  /                  \\  ",
-  "   /                \\   ",
-  "     \\            /     ",
-  "        └──────┘        ",
+  "          ╭───────────────────╮          ",
+  "         ╱                     ╲         ",
+  "        ╱    ●─────────────●    ╲        ",
+  "       ╱    ╱╲               ╱╲    ╲       ",
+  "      ╱    ╱  ╲             ╱  ╲    ╲      ",
+  "     ╱    ╱    ●───────────●    ╲    ╲     ",
+  "    ╱    ╱    ╱             ╲    ╲    ╲    ",
+  "   ╱    ●─────●───────────────●─────●    ╲   ",
+  "  ╱    ╱      ╲             ╱      ╲    ╲  ",
+  " ╱    ╱        ●───────────●        ╲    ╲ ",
+  "╲    ╱        ╱           ╲        ╲    ╱",
+  " ╲   ╱       ╱             ╲       ╲   ╱ ",
+  "  ╲  ╱      ●───────────────●      ╲  ╱  ",
+  "   ╲ ╱     ╱                 ╲     ╲ ╱   ",
+  "    ╲●────●───────────────────●────●╱    ",
+  "     ╲                             ╱     ",
+  "      ╲                           ╱      ",
+  "       ╰─────────────────────────╯       ",
 ];
 
 export const KAIDERA_GLYPH = "⬣";

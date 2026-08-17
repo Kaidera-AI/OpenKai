@@ -6,7 +6,7 @@
 
 import { SelectList, fuzzyFilter } from "@earendil-works/pi-tui";
 import type { Component, SelectItem } from "@earendil-works/pi-tui";
-import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken } from "./theme.js";
+import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken, opaquePanel } from "./theme.js";
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
@@ -210,7 +210,7 @@ export class SettingsOverlay implements Component {
     ];
     if (this.outcome) out.push("", ` ${highlight.base("→")} ${this.outcome}`);
     out.push("", ` ${textToken.dim(renderOverlayFooter())}`);
-    return out;
+    return opaquePanel(out, width);
   }
 
   invalidate(): void {

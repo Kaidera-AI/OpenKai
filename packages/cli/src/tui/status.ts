@@ -34,9 +34,9 @@ import {
 import { KAIDERA_GLYPH } from "./brand.js";
 import { gradientEscape } from "./gradient.js";
 
-/** The logo at footer scale — the hex glyph in the brand gradient's violet. */
+/** The logo at footer scale — the hex glyph in the Kaidera brand mint. */
 function brandGlyph(): string {
-  return `${gradientEscape(0.35)}${KAIDERA_GLYPH}\x1b[0m`;
+  return `${gradientEscape(0.55)}${KAIDERA_GLYPH}\x1b[0m`;
 }
 
 /** The chrome state — mutated by the controller as events arrive. */

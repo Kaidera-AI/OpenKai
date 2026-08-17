@@ -1,0 +1,3 @@
+[console_scripts]
+dfindexeddb = dfindexeddb.indexeddb.cli:App
+dfleveldb = dfindexeddb.leveldb.cli:App
