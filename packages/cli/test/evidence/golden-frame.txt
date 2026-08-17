@@ -3,15 +3,7 @@
 # Block kinds: notice -> notice -> notice -> user -> thinking -> assistant -> tool -> thinking -> assistant
 # Chrome usage: {"input":64,"output":2,"cacheRead":37,"cacheWrite":65,"totalTokens":168,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
 
- ▎  ██████╗ ██████╗ ███████╗███╗   ██╗██╗  ██╗ █████╗ ██╗                       
- ▎ ██╔═══██╗██╔══██╗██╔════╝████╗  ██║██║ ██╔╝██╔══██╗██║                       
- ▎ ██║   ██║██████╔╝█████╗  ██╔██╗ ██║█████╔╝ ███████║██║                       
- ▎ ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔═██╗ ██╔══██║██║                       
- ▎ ╚██████╔╝██║     ███████╗██║ ╚████║██║  ██╗██║  ██║██║                       
- ▎  ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝                       
- ▎                                                                              
- ▎ the open agent harness · by Kaidera · 0.1.5                                  
- ▎                                                                              
+ ▎ OpenKai 0.1.5 · by Kaidera — /help for commands, Ctrl+K palette              
 
  ▎ providers (2) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
 
