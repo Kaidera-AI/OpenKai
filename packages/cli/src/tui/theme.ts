@@ -17,6 +17,8 @@
  *  - `rolePill` / `roleColour` — stable per-agent identity colours.
  */
 
+import { THEME_PACKS } from "./theme-packs.js";
+
 // ── 256-colour palette (stable, no truecolour dependency) ──────────────────
 const DARK = {
   surface1: 234, // near-black panel background
@@ -44,12 +46,26 @@ const LIGHT: Record<keyof typeof DARK, number> = {
 
 let C: Record<keyof typeof DARK, number> = { ...DARK };
 
-/** The active theme name. */
-export let themeName: "dark" | "light" = "dark";
+/** The active theme name (a built-in, or a pack name from THEME_PACKS). */
+export let themeName = "dark";
 
-/** Switch the theme (dark | light). Every renderer reads C at call time. */
-export function setTheme(name: "dark" | "light"): void {
-  C = { ...(name === "light" ? LIGHT : DARK) };
+/** All available theme names: the two built-ins + the industry pack. */
+export function themeNames(): string[] {
+  return ["dark", "light", ...Object.keys(THEME_PACKS)];
+}
+
+/** Switch the theme (dark | light | any pack name). Unknown names no-op. */
+export function setTheme(name: string): void {
+  if (name === "dark") {
+    C = { ...DARK };
+  } else if (name === "light") {
+    C = { ...LIGHT };
+  } else {
+    const pack = THEME_PACKS[name];
+    const variant = pack?.dark ?? pack?.light;
+    if (!variant) return;
+    C = { ...DARK, ...variant } as Record<keyof typeof DARK, number>;
+  }
   themeName = name;
 }
 

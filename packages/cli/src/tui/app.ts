@@ -40,7 +40,7 @@ import { ModelPicker } from "./model-picker.js";
 import { runWelcome } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
-import { setTheme, themeName } from "./theme.js";
+import { setTheme, themeName, themeNames } from "./theme.js";
 import { changelogHead } from "./changelog.js";
 import { tipOfTheDay } from "./tips.js";
 import { Transcript } from "./transcript.js";
@@ -335,9 +335,10 @@ export class TuiController {
         this.cycleAutonomy(argument);
         break;
       case "theme": {
-        const next = themeName === "dark" ? "light" : "dark";
+        const names = themeNames();
+        const next = names[(names.indexOf(themeName) + 1) % names.length]!;
         setTheme(next);
-        this.transcript.addNotice(`theme: ${next} (restart paints every surface)`);
+        this.transcript.addNotice(`theme: ${next} (restart paints every surface; ${names.length} themes cycle with /theme)`);
         this.tui.requestRender();
         break;
       }
