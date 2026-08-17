@@ -80,3 +80,41 @@ export function providerKeyStatus(provider: string): ProviderKeyStatus {
     oauth: info.oauth,
   };
 }
+
+/** Every configured provider id (env key present or OAuth lane). */
+export function configuredProviders(): string[] {
+  return Object.keys(PROVIDERS).filter((id) => providerKeyStatus(id).configured);
+}
+
+/**
+ * Suggest a fusion partner for a just-picked model (E002: always bring the
+ * suggestion). Fusion's lift comes from INDEPENDENT minds — the partner
+ * should live on another provider family when one is configured. Returns the
+ * suggestion line, or the one-provider nudge when only one lane is live.
+ */
+export function suggestFusionPartner(provider: string, modelId: string): string {
+  const configured = configuredProviders().filter((p) => p !== provider);
+  if (configured.length === 0) {
+    return (
+      `fusion note: one provider (${provider}) — self-pairing works, but a second provider ` +
+      `(or the OpenRouter aggregator) lets two INDEPENDENT models fuse. Add one in ~/.openkai/.env`
+    );
+  }
+  // Prefer the first configured alternative; suggest its known-good default.
+  const partner = configured[0]!;
+  const partnerModel =
+    partner === "nvidia"
+      ? "meta/llama-3.1-70b-instruct"
+      : partner === "anthropic"
+        ? "claude-sonnet-4-5"
+        : partner === "openai"
+          ? "gpt-5"
+          : partner === "google"
+            ? "gemini-2.5-pro"
+            : partner === "openrouter"
+              ? "nvidia/nemotron-3-nano-30b-a3b:free"
+              : undefined;
+  return partnerModel
+    ? `fusion suggestion: pair ${modelId} with ${partnerModel} (${partner}) — /fuse uses the architect/builder split`
+    : `fusion suggestion: a second provider (${partner}) is configured — /fuse it`;
+}

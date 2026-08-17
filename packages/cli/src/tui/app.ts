@@ -35,7 +35,7 @@ import {
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { PROVIDERS, providerKeyStatus } from "../providers.js";
+import { PROVIDERS, providerKeyStatus, suggestFusionPartner } from "../providers.js";
 import { ModelPicker } from "./model-picker.js";
 import { runWelcome } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
@@ -343,7 +343,8 @@ export class TuiController {
         break;
       }
       case "welcome":
-        this.transcript.addNotice("welcome: exiting to re-run setup — relaunch with `openkai`");
+      case "setup":
+        this.transcript.addNotice("setup: exiting to re-run the setup wizard — relaunch with `openkai` after");
         this.tui.requestRender();
         this.onExit?.({ kind: "quit" });
         await runWelcome();
@@ -555,6 +556,8 @@ export class TuiController {
     this.modelSwitch(model);
     this.status.update({ ...this.status.currentState, modelId });
     this.transcript.addNotice(`model: ${modelId} (${provider})`);
+    // Fusion-first (E002): always surface the pairing suggestion.
+    this.transcript.addNotice(suggestFusionPartner(provider, modelId));
     this.tui.requestRender();
   }
 

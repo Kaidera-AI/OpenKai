@@ -104,6 +104,8 @@ export async function runWelcome(): Promise<OpenKaiConfig> {
 
     // ── 3. Memory ───────────────────────────────────────────────────────
     process.stdout.write("\n  Memory: (l)ocal file memory in this project folder, or (c)ortex-managed.\n");
+    process.stdout.write("  Local works fully offline. For long projects we recommend KOS (it ships\n");
+    process.stdout.write("  Cortex): shared searchable memory + smarter context-window handling.\n");
     const memory = ((await ask("  Memory choice [l]: ")) || "l").toLowerCase();
     if (memory.startsWith("c")) {
       const project = await ask("  Cortex project key [openkai]: ");
