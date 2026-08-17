@@ -23,29 +23,42 @@ export interface ModelEntry {
 export interface ModelPickerSelection {
   provider: string;
   modelId: string;
+  effort: string;
+  /** The fusion partner (builder model) — the picker's second selection. */
+  partner?: { provider: string; modelId: string };
 }
 
 interface Row extends SelectItem {
   providerId?: string;
   modelId?: string;
+  effortLevel?: string;
+  skip?: boolean;
+  partnerProvider?: string;
+  partnerModel?: string;
 }
 
-/** The two-level provider→model picker overlay. */
+const EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
+
+/** The four-level provider→model→effort→partner picker overlay. */
 export class ModelPicker implements Component {
-  private level: "providers" | "models";
+  private level: "providers" | "models" | "effort" | "partner";
   private query = "";
   private list: SelectList;
   private provider: string | undefined;
+  private pickedModel: string | undefined;
+  private effort: string = "off";
   private allRows: Row[];
 
   constructor(
     private readonly providers: ProviderEntry[],
     private readonly modelsFor: (provider: string) => ModelEntry[],
-    private readonly current: { provider: string; modelId: string },
+    private readonly current: { provider: string; modelId: string; effort?: string },
+    private readonly configuredOthers: (provider: string) => string[],
     private readonly onSelect: (selection: ModelPickerSelection) => void,
     private readonly onCancel: () => void,
   ) {
     this.level = "providers";
+    this.effort = current.effort ?? "off";
     this.allRows = this.providerRows();
     this.list = this.buildList(this.allRows);
   }
@@ -68,6 +81,39 @@ export class ModelPicker implements Component {
     }));
   }
 
+  private effortRows(): Row[] {
+    return EFFORT_LEVELS.map((level) => ({
+      value: level,
+      label: `${level === this.effort ? "● " : "  "}${level}`,
+      description:
+        level === "off" ? "fastest, no reasoning" : level === "high" ? "deepest reasoning" : "",
+      effortLevel: level,
+    }));
+  }
+
+  private partnerRows(): Row[] {
+    const rows: Row[] = [
+      {
+        value: "_skip",
+        label: "  skip — self-pair (same model both roles)",
+        description: "works fine; two providers is the real lift",
+        skip: true,
+      },
+    ];
+    for (const providerId of this.configuredOthers(this.provider ?? "")) {
+      for (const m of this.modelsFor(providerId).slice(0, 12)) {
+        rows.push({
+          value: `${providerId}/${m.id}`,
+          label: `  ${m.name ?? m.id}`,
+          description: providerId,
+          partnerProvider: providerId,
+          partnerModel: m.id,
+        });
+      }
+    }
+    return rows;
+  }
+
   private buildList(rows: Row[]): SelectList {
     const filtered = this.query
       ? fuzzyFilter(rows, this.query, (r) => `${r.label} ${r.value}`)
@@ -88,13 +134,49 @@ export class ModelPicker implements Component {
       return;
     }
     if (this.level === "models" && row.modelId && this.provider) {
-      this.onSelect({ provider: this.provider, modelId: row.modelId });
+      this.pickedModel = row.modelId;
+      this.level = "effort";
+      this.query = "";
+      this.allRows = this.effortRows();
+      this.list = this.buildList(this.allRows);
+      return;
+    }
+    if (this.level === "effort" && row.effortLevel) {
+      this.effort = row.effortLevel;
+      this.level = "partner";
+      this.query = "";
+      this.allRows = this.partnerRows();
+      this.list = this.buildList(this.allRows);
+      return;
+    }
+    if (this.level === "partner" && this.provider && this.pickedModel) {
+      this.onSelect({
+        provider: this.provider,
+        modelId: this.pickedModel,
+        effort: this.effort,
+        partner: row.skip
+          ? undefined
+          : { provider: row.partnerProvider!, modelId: row.partnerModel! },
+      });
     }
   }
 
   private handleCancel(): void {
+    if (this.level === "partner") {
+      this.level = "effort";
+      this.query = "";
+      this.allRows = this.effortRows();
+      this.list = this.buildList(this.allRows);
+      return;
+    }
+    if (this.level === "effort") {
+      this.level = "models";
+      this.query = "";
+      this.allRows = this.modelRows(this.provider!);
+      this.list = this.buildList(this.allRows);
+      return;
+    }
     if (this.level === "models") {
-      // First Esc steps back to providers; second cancels (drill-down grammar).
       this.level = "providers";
       this.query = "";
       this.provider = undefined;
@@ -124,7 +206,11 @@ export class ModelPicker implements Component {
     const title =
       this.level === "providers"
         ? `${highlight.base("providers")} ${textToken.dim("— Enter to browse models")}`
-        : `${highlight.base(this.provider ?? "")} ${textToken.dim("— Enter to switch; Esc back")}`;
+        : this.level === "models"
+          ? `${highlight.base(this.provider ?? "")} ${textToken.dim("— Enter to pick; Esc back")}`
+          : this.level === "effort"
+            ? `${highlight.base("effort")} ${textToken.dim(`— for ${this.pickedModel}; Esc back`)}`
+            : `${highlight.base("fusion partner")} ${textToken.dim("— the 2nd model (or skip); Esc back")}`;
     const filter = this.query ? `${textToken.dim("filter:")} ${this.query}` : textToken.dim("type to filter");
     return [
       ` ${title}`,

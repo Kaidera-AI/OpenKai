@@ -27,6 +27,16 @@ import { Markdown, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, markdownTheme, rolePill, text as textToken, toolBorder } from "./theme.js";
 import { sanitizeTerminalText } from "./sanitize.js";
+import { renderMermaidBlocks, type MermaidTheme } from "./mermaid.js";
+
+const mermaidTheme: MermaidTheme = {
+  borderMuted: (t) => textToken.muted(t),
+  text: (t) => t,
+  accent: (t) => highlight.base(t),
+  muted: (t) => textToken.muted(t),
+  bold: (t) => textToken.strong(t),
+  warning: (t) => highlight.attention(t),
+};
 
 /** One rendered line's max length for previews (kept short for cards). */
 const PREVIEW_LEN = 120;
@@ -136,6 +146,9 @@ export class Transcript implements Component {
   constructor(agentName = "openkai") {
     this.agentName = agentName;
   }
+
+  /** Render width hint for mermaid fitting (updated on render). */
+  private width = 80;
 
   /** Add a user message block at the top of a turn. */
   addUserMessage(text: string): void {
@@ -329,7 +342,11 @@ export class Transcript implements Component {
     const block = this.blocks[this.liveAssistant!]!;
     if (block.kind !== "assistant") return;
     block.text += clean;
-    block.comp.setText(block.text.length > 0 ? `${rolePill(this.agentName)}\n\n${block.text}` : "");
+    block.comp.setText(
+      block.text.length > 0
+        ? `${rolePill(this.agentName)}\n\n${renderMermaidBlocks(block.text, this.width, mermaidTheme)}`
+        : "",
+    );
   }
 
   /** Append a thinking delta to the live thinking block (suppressed in btw mode). */
@@ -411,6 +428,7 @@ export class Transcript implements Component {
 
   // ── Component ───────────────────────────────────────────────────────────
   render(width: number): string[] {
+    this.width = width;
     const lines: string[] = [];
     for (const block of this.blocks) {
       const rendered = block.comp.render(width);

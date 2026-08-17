@@ -260,17 +260,23 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       set: (level) => transport.setAutonomy(level),
       current: () => transport.autonomyLevel,
     },
-    // `/fuse` (OK-7): run the panel on the session's provider; self-pairing
-    // default (same model both roles), the E016-replicated first step.
-    runFusion: (task) =>
-      fuse(
+    // `/fuse` (OK-7): run the panel on the session's provider; the picker's
+    // fusion partner becomes the builder when set (cross-provider duet),
+    // otherwise self-pairing (E016's replicated first step).
+    runFusion: (task) => {
+      const partner = app.controller.fusionPartner;
+      const builder = partner
+        ? fusionModels.getModel(partner.provider, partner.modelId) ?? fusionModel
+        : fusionModel;
+      return fuse(
         (m, ctx, opts) => builtinModels().streamSimple(m, ctx, opts),
         {
           task,
           architectModel: fusionModel,
-          builderModel: fusionModel,
+          builderModel: builder,
         },
-      ),
+      );
+    },
     // `/undo` (scope §1.6): trust boundary is InProcessTransport (§2);
     // undoLastMutation() throws cleanly when the gate is off / nothing to undo.
     onUndo: () => transport.undoLastMutation(),

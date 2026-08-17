@@ -35,8 +35,9 @@ import {
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { PROVIDERS, providerKeyStatus, suggestFusionPartner } from "../providers.js";
+import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
 import { ModelPicker } from "./model-picker.js";
+import { SettingsOverlay } from "./settings.js";
 import { runWelcome } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
@@ -194,6 +195,8 @@ export class TuiController {
   private readonly runFusion?: (task: string) => Promise<FuseResult>;
   private provider?: string;
   private modelId: string;
+  /** The picker's fusion partner (builder model for /fuse), or undefined for self-pairing. */
+  fusionPartner?: { provider: string; modelId: string };
   private modelSwitch?: (model: Model<Api>) => void;
   private effortSwitch?: { set: (level: "off" | "minimal" | "low" | "medium" | "high") => void; current: () => string };
   private autonomySwitch?: { set: (level: "off" | "low" | "med" | "high") => void; current: () => string };
@@ -344,12 +347,9 @@ export class TuiController {
       }
       case "welcome":
       case "setup":
-        this.transcript.addNotice("setup: exiting to re-run the setup wizard — relaunch with `openkai` after");
-        this.tui.requestRender();
-        this.onExit?.({ kind: "quit" });
-        await runWelcome();
-        process.stdout.write("  Setup saved. Relaunch with: openkai\n");
-        return;
+      case "settings":
+        this.openSettings();
+        break;
       case "undo":
         await this.undo();
         break;
@@ -506,6 +506,31 @@ export class TuiController {
     this.tui.requestRender();
   }
 
+  /** `/setup` `/settings` — the in-TUI settings panel. Never exits the app. */
+  openSettings(): void {
+    const overlay = new SettingsOverlay(
+      {
+        pickModel: () => this.openModelPicker(),
+        toggleTheme: () => {
+          const names = themeNames();
+          const next = names[(names.indexOf(themeName) + 1) % names.length]!;
+          setTheme(next);
+          return `theme: ${next}`;
+        },
+        setMemory: (mode, project) => {
+          if (mode === "cortex") process.env.CORTEX_PROJECT = project;
+          else delete process.env.CORTEX_PROJECT;
+        },
+        currentProject: process.env.CORTEX_PROJECT,
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(overlay, { anchor: "center", width: "64%", maxHeight: "80%" });
+  }
+
   /** `/model` — the two-level provider→model picker (world-class floor). */
   openModelPicker(): void {
     if (!this.modelSwitch) {
@@ -530,10 +555,24 @@ export class TuiController {
           .getModels(providerId)
           .map((m) => ({ id: m.id, name: m.name }))
           .sort((a, b) => a.id.localeCompare(b.id)),
-      { provider: this.provider ?? "openrouter", modelId: this.modelId },
+      { provider: this.provider ?? "openrouter", modelId: this.modelId, effort: this.effortSwitch?.current() },
+      (pickedProvider) =>
+        configuredProviders().filter((id) => id !== pickedProvider),
       (selection) => {
         this.tui.hideOverlay();
         this.applyModelSelection(selection.provider, selection.modelId);
+        if (this.effortSwitch && selection.effort) {
+          this.effortSwitch.set(selection.effort as "off" | "minimal" | "low" | "medium" | "high");
+          this.transcript.addNotice(`effort: ${selection.effort}`);
+        }
+        if (selection.partner) {
+          this.fusionPartner = selection.partner;
+          this.transcript.addNotice(
+            `fusion partner: ${selection.partner.modelId} (${selection.partner.provider}) — /fuse uses it as the builder`,
+          );
+        } else {
+          this.fusionPartner = undefined;
+        }
         this.refocusComposer();
       },
       () => {

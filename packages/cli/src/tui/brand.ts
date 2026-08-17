@@ -53,7 +53,9 @@ export function shouldShowSplash(version: string): boolean {
     if (!existsSync(statePath())) return true;
     const state = JSON.parse(readFileSync(statePath(), "utf-8")) as SplashState;
     if (state.splashSeenVersion !== undefined) return state.splashSeenVersion !== version;
-    return state.splashSeen !== true;
+    // Legacy state (pre-version-keyed splash): no version recorded means it
+    // has not played for THIS version — replay once, then record it.
+    return true;
   } catch {
     return true; // unreadable state: show the splash, it's harmless
   }
