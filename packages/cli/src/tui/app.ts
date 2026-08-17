@@ -353,7 +353,8 @@ export class TuiController {
       case "undo":
         await this.undo();
         break;
-      case "quit":
+      case "exit":
+      case "quit": // legacy alias — /exit is the name from v0.1.005
         this.onExit?.({ kind: "quit" });
         break;
       default:

@@ -48,7 +48,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "setup", description: "Alias of /welcome — the setup wizard again." },
   { name: "features", description: "List or toggle optional features (all on by default).", argumentHint: "[feature-key]" },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },
-  { name: "quit", description: "Exit the TUI (also Ctrl+C)." },
+  { name: "exit", description: "Exit the TUI (also Ctrl+C)." },
 ];
 
 /** Autocomplete items derived from the slash set (for the Editor surface). */
@@ -70,7 +70,7 @@ export function helpText(): string[] {
     "  /features [key]  list / toggle optional features (all on by default)",
     "  /welcome         re-run first-run setup (providers, model, memory)",
     "  /undo            undo the last gated mutation",
-    "  /quit            exit (also Ctrl+C)",
+    "  /exit            exit (also Ctrl+C)",
     "",
     "Keybindings",
     "  Enter            submit prompt",

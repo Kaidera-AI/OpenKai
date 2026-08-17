@@ -40,25 +40,26 @@ export const compactMark = (version: string): string =>
 
 interface SplashState {
   splashSeen?: boolean;
+  splashSeenVersion?: string;
   [key: string]: unknown;
 }
 
 const statePath = (): string =>
   path.join(homedir(), ".openkai", "state.json");
 
-/** Splash state is user-global (~/.openkai/state.json), never per-project. */
-export function shouldShowSplash(now: () => Date = () => new Date()): boolean {
-  void now;
+/** The splash plays once per VERSION — every upgrade earns the brand moment. */
+export function shouldShowSplash(version: string): boolean {
   try {
     if (!existsSync(statePath())) return true;
     const state = JSON.parse(readFileSync(statePath(), "utf-8")) as SplashState;
+    if (state.splashSeenVersion !== undefined) return state.splashSeenVersion !== version;
     return state.splashSeen !== true;
   } catch {
     return true; // unreadable state: show the splash, it's harmless
   }
 }
 
-export function markSplashSeen(): void {
+export function markSplashSeen(version: string): void {
   try {
     const file = statePath();
     mkdirSync(path.dirname(file), { recursive: true });
@@ -71,6 +72,7 @@ export function markSplashSeen(): void {
       }
     }
     state.splashSeen = true;
+    state.splashSeenVersion = version;
     writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
   } catch {
     // branding state must never break the app
@@ -79,8 +81,8 @@ export function markSplashSeen(): void {
 
 /** The lines to render into a fresh transcript, per the once-rule. */
 export function splashLines(version: string): string[] {
-  if (shouldShowSplash()) {
-    markSplashSeen();
+  if (shouldShowSplash(version)) {
+    markSplashSeen(version);
     return [...OPENKAI_LOGO, "", `${BRAND_TAGLINE} · ${version}`, ""];
   }
   return [compactMark(version)];
@@ -106,7 +108,7 @@ export async function playBrandAnimation(
   version: string,
   write: (text: string) => void = (t) => process.stdout.write(t),
 ): Promise<boolean> {
-  if (!process.stdout.isTTY || !shouldShowSplash()) return false;
+  if (!process.stdout.isTTY || !shouldShowSplash(version)) return false;
 
   const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`];
   const frames = BRAND_RAMP.length;
@@ -131,6 +133,6 @@ export async function playBrandAnimation(
   } catch {
     // animation is decorative — never block boot
   }
-  markSplashSeen();
+  markSplashSeen(version);
   return true;
 }
