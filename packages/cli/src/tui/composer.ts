@@ -42,10 +42,12 @@ export class Composer {
       new CombinedAutocompleteProvider(SLASH_COMMANDS, options.cwd ?? process.cwd()),
     );
     editor.onSubmit = (text: string): void => {
-      const trimmed = text.trim();
+      let trimmed = text.trim();
       if (trimmed.length === 0) return;
+      // omp's `.` shortcut: a lone dot means "keep going".
+      if (trimmed === ".") trimmed = "keep going";
       this.history.push(trimmed);
-      editor.addToHistory(text);
+      editor.addToHistory(trimmed);
       this.onSubmitCb(trimmed);
     };
     this.editor = editor;

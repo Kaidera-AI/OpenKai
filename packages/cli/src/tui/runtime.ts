@@ -38,6 +38,7 @@ import {
   isQuit,
   isOpenPalette,
   isStash,
+  isHistorySearch,
   isChangelog,
   DoubleEscDetector,
   RewindEscDetector,
@@ -325,6 +326,10 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     }
     if (isStash(data, manager)) {
       controller.stashOrPop();
+      return { consume: true };
+    }
+    if (isHistorySearch(data, manager)) {
+      controller.openHistorySearch();
       return { consume: true };
     }
     if (isToggleThinking(data, manager)) {

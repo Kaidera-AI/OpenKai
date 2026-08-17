@@ -50,6 +50,7 @@ const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
 };
 import { ModelPicker } from "./model-picker.js";
 import { LevelPicker } from "./level-picker.js";
+import { HistorySearch } from "./history-search.js";
 import { SettingsOverlay } from "./settings.js";
 import { runWelcome, readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
@@ -669,6 +670,29 @@ export class TuiController {
       this.transcript.addNotice(`undo: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.tui.requestRender();
+  }
+
+  /** Ctrl+R — search the prompt history and reuse a match. */
+  openHistorySearch(): void {
+    const history = this.composer?.promptHistory ?? [];
+    if (history.length === 0) {
+      this.transcript.addNotice("history: no prompts yet");
+      this.tui.requestRender();
+      return;
+    }
+    const search = new HistorySearch(
+      history,
+      (text) => {
+        this.tui.hideOverlay();
+        this.composer?.prefill(text);
+        this.refocusComposer();
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(search, { anchor: "center", width: "60%", maxHeight: "60%" });
   }
 
   /** Bare `/fuse` — ask what to fuse instead of erroring (CTO feedback). */
