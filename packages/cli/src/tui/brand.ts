@@ -23,24 +23,33 @@ import { gradientLogo, introLogoFrame } from "./gradient.js";
  * circles. Mint green (#B0E1CD) is the canonical brand accent colour.
  */
 export const KAIDERA_MARK: readonly string[] = [
-  "          ╭───────────────────╮          ",
-  "         ╱                     ╲         ",
-  "        ╱    ●─────────────●    ╲        ",
-  "       ╱    ╱╲               ╱╲    ╲       ",
-  "      ╱    ╱  ╲             ╱  ╲    ╲      ",
-  "     ╱    ╱    ●───────────●    ╲    ╲     ",
-  "    ╱    ╱    ╱             ╲    ╲    ╲    ",
-  "   ╱    ●─────●───────────────●─────●    ╲   ",
-  "  ╱    ╱      ╲             ╱      ╲    ╲  ",
-  " ╱    ╱        ●───────────●        ╲    ╲ ",
-  "╲    ╱        ╱           ╲        ╲    ╱",
-  " ╲   ╱       ╱             ╲       ╲   ╱ ",
-  "  ╲  ╱      ●───────────────●      ╲  ╱  ",
-  "   ╲ ╱     ╱                 ╲     ╲ ╱   ",
-  "    ╲●────●───────────────────●────●╱    ",
-  "     ╲                             ╱     ",
-  "      ╲                           ╱      ",
-  "       ╰─────────────────────────╯       ",
+  "              ╭────────────╮",
+  "             ╱              ╲",
+  "            ╱                ╲",
+  "           ╱     ●    ●       ╲",
+  "          ╱       ╲    ╲       ╲",
+  "         ╱    ●    ╲    ╲       ╲",
+  "        ╱      ╲    ╲    ●       ╲",
+  "       ╱       ●╲    ●    ╲       ╲",
+  "       ╲       ╱ ╲        ╱       ╱",
+  "       ╲     ╱   ●      ╱       ╱",
+  "        ╲   ╱    ╱     ╱       ╱",
+  "         ╲ ●    ╱      ╲      ╱",
+  "          ╲    ╱        ╲    ╱",
+  "           ╲  ●          ●  ╱",
+  "            ╰──────────────╯",
+];
+
+/** Compact boot-mark variant (ren's note): same triangle motif, sharp, 8 lines. */
+export const KAIDERA_MARK_COMPACT: readonly string[] = [
+  "   ┌────────┐   ",
+  "  /  ●    ●  \\  ",
+  " /  ●  \\ /  ●  \\ ",
+  "/    \\   ●   /    \\",
+  "\\    /   ●   \\    /",
+  " \\  ●  / \\  ●  / ",
+  "  \\  ●    ●  /  ",
+  "   └────────┘   ",
 ];
 
 export const KAIDERA_GLYPH = "⬣";
@@ -139,8 +148,8 @@ export function splashLines(version: string): string[] {
  * this is the fixture.
  */
 export function bootMark(version: string): string[] {
-  const tinted = gradientLogo([...KAIDERA_MARK], 0);
-  const info = ["", ` OpenKai ${version}`, ` by Kaidera`, ` /help for commands · Ctrl+K palette`];
+  const tinted = gradientLogo([...KAIDERA_MARK_COMPACT], 0);
+  const info = ["", ` OpenKai ${version}`, ` by Kaidera`, ` /help · Ctrl+K palette`];
   return tinted.map((row, index) => row.replace(/\s+$/, "") + (info[index] ?? "")).concat([""]);
 }
 

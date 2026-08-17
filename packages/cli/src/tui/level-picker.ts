@@ -1,7 +1,7 @@
 /**
- * Level picker overlay (`/autonomy`) — a SelectList of levels with a short
- * description each, Enter applies. Same interaction grammar as the model
- * picker so switching autonomy feels like picking effort (CTO feedback).
+ * Level picker overlay — a SelectList of entries with a short description
+ * each, Enter applies. Shared by `/autonomy` and the bare `/fuse` menu so
+ * every "pick one" interaction has the same grammar (CTO feedback).
  */
 
 import { SelectList } from "@earendil-works/pi-tui";
@@ -18,7 +18,7 @@ export class LevelPicker implements Component {
   private list: SelectList;
 
   constructor(
-    title: string,
+    private readonly title: string,
     entries: LevelEntry[],
     current: string,
     private readonly onSelect: (id: string) => void,
@@ -32,7 +32,6 @@ export class LevelPicker implements Component {
     this.list = new SelectList(items, entries.length + 2, paletteSelectTheme);
     this.list.onSelect = (item) => this.onSelect((item as SelectItem).value);
     this.list.onCancel = () => this.onCancel();
-    void title;
   }
 
   handleInput(data: string): void {
@@ -40,13 +39,16 @@ export class LevelPicker implements Component {
   }
 
   render(width: number): string[] {
-    return opaquePanel([
-      ` ${highlight.base("autonomy")} ${textToken.dim("— how much runs without asking; Esc back")}`,
-      "",
-      ...this.list.render(width - 4),
-      "",
-      ` ${textToken.dim(renderOverlayFooter())}`,
-    ], width);
+    return opaquePanel(
+      [
+        ` ${highlight.base(this.title)} ${textToken.dim("— Enter to pick; Esc back")}`,
+        "",
+        ...this.list.render(width - 4),
+        "",
+        ` ${textToken.dim(renderOverlayFooter())}`,
+      ],
+      width,
+    );
   }
 
   invalidate(): void {

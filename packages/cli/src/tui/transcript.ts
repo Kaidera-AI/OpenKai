@@ -445,7 +445,15 @@ export class Transcript implements Component {
     for (const block of this.blocks) block.comp.invalidate();
   }
 
-  /** Clear all blocks (the `/clear` command). Keeps the agent name. */
+  /** The last user block's text (for `/fuse` to reuse the last prompt). */
+  lastUserText(): string {
+    for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+      const block = this.blocks[i]!;
+      if (block.kind === "user") return block.text;
+    }
+    return "";
+  }
+
   clear(): void {
     this.blocks = [];
     this.liveAssistant = null;

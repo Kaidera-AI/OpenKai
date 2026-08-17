@@ -365,11 +365,11 @@ export class TuiController {
         await this.btw(argument);
         break;
       case "fuse":
-        if (argument.length === 0) {
-          this.transcript.addNotice("fuse: needs a task — /fuse <task>");
-          break;
+        if (argument.length > 0) {
+          await this.fuse(argument);
+        } else {
+          this.openFuseMenu();
         }
-        await this.fuse(argument);
         break;
       case "retry":
         await this.retry(argument);
@@ -669,6 +669,31 @@ export class TuiController {
       this.transcript.addNotice(`undo: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.tui.requestRender();
+  }
+
+  /** Bare `/fuse` — ask what to fuse instead of erroring (CTO feedback). */
+  private openFuseMenu(): void {
+    const last = this.transcript.lastUserText();
+    const entries = [
+      ...(last ? [{ id: "last", label: "fuse the last prompt", description: last.slice(0, 40) }] : []),
+      { id: "type", label: "type a task", description: "drops /fuse <task> into the composer" },
+      { id: "cancel", label: "cancel", description: "back to the app" },
+    ];
+    const picker = new LevelPicker("fuse", entries, "", (id) => {
+      this.tui.hideOverlay();
+      if (id === "last" && last) {
+        void this.fuse(last);
+      } else if (id === "type") {
+        this.composer?.editor.setText("/fuse ");
+        this.refocusComposer();
+      } else {
+        this.refocusComposer();
+      }
+    }, () => {
+      this.tui.hideOverlay();
+      this.refocusComposer();
+    });
+    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "60%" });
   }
 
   /** Bash-mode turn: run the command through the gated tool; render the outcome. */
