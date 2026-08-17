@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { introLogoFrame } from "./gradient.js";
+import { gradientLogo, introLogoFrame } from "./gradient.js";
 
 /** The Kaidera hex-node mark (from the Kaidera logo: hexagon + node graph). */
 export const KAIDERA_MARK: readonly string[] = [
@@ -109,6 +109,18 @@ export function splashLines(version: string): string[] {
   return [compactMark(version)];
 }
 
+/**
+ * The persistent boot logo (droid's boot-card pattern): the Kaidera hex mark
+ * under the resting gradient, with the wordmark info beside it. Rendered at
+ * the top of every fresh transcript — the splash animation is the moment,
+ * this is the fixture.
+ */
+export function bootMark(version: string): string[] {
+  const tinted = gradientLogo([...KAIDERA_MARK], 0);
+  const info = ["", ` OpenKai ${version}`, ` by Kaidera`, ` /help for commands · Ctrl+K palette`];
+  return tinted.map((row, index) => row.replace(/\s+$/, "") + (info[index] ?? "")).concat([""]);
+}
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -120,26 +132,35 @@ const sleep = (ms: number): Promise<void> =>
  * Returns true when it played (so the transcript stays compact).
  */
 /**
- * The first-run brand moment (omp's choreography, droid's restraint): the
- * Kaidera mark + OpenKai wordmark under a 5-stop diagonal gradient with the
- * shine traversing three times, easing to rest in ~2.4s. Truecolour when
- * available, 256-ramp otherwise. Once per version, TTY only.
+ * The brand moment on every launch (omp's choreography, droid's restraint):
+ * the Kaidera mark + OpenKai wordmark under a 5-stop diagonal gradient with
+ * the shine traversing three times, easing to rest in ~2.6s. Truecolour when
+ * available, 256-ramp otherwise. Any key skips. TTY only.
  */
 export async function playBrandAnimation(
   version: string,
   write: (text: string) => void = (t) => process.stdout.write(t),
   options: { force?: boolean } = {},
 ): Promise<boolean> {
+  void options;
   if (!process.stdout.isTTY) return false;
-  if (!options.force && !shouldShowSplash(version)) return false;
 
-  const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`];
-  const totalMs = 2400;
+  const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`, "", `  press any key to skip`];
+  const totalMs = 2600;
   const tickMs = 33;
   const steps = Math.ceil(totalMs / tickMs);
+
+  // Any key skips (omp's setup splash pattern).
+  let skipped = false;
+  const stdin = process.stdin;
+  const onKey = (): void => { skipped = true; };
+  const hadRaw = stdin.isRaw;
   try {
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onKey);
     write("\x1b[?25l"); // hide cursor
-    for (let step = 0; step <= steps; step += 1) {
+    for (let step = 0; step <= steps && !skipped; step += 1) {
       const progress = Math.min(1, step / steps);
       write("\x1b[2J\x1b[H"); // clear + home
       write(introLogoFrame(frame, progress).join("\n"));
@@ -149,6 +170,10 @@ export async function playBrandAnimation(
     write("\x1b[2J\x1b[H\x1b[?25h");
   } catch {
     // animation is decorative — never block boot
+  } finally {
+    stdin.off("data", onKey);
+    stdin.setRawMode(hadRaw ?? false);
+    stdin.pause();
   }
   markSplashSeen(version);
   return true;

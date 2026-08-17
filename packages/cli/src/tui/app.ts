@@ -76,7 +76,7 @@ import { SignInOverlay } from "./signin.js";
 import { OAuthOverlay } from "./oauth.js";
 import { CommandPalette, type PaletteItem } from "./palette.js";
 import { PromptStash, FrecencyHistory } from "./stash.js";
-import { splashLines, capabilityRow } from "./brand.js";
+import { bootMark, capabilityRow } from "./brand.js";
 import { CLI_VERSION } from "../version.js";
 import type { AttentionNotifier } from "./attention.js";
 
@@ -150,9 +150,10 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
       else if (role === "assistant") transcript.replayAssistant(text);
     }
   } else {
-    // Brand moment: full splash exactly once, compact mark ever after
-    // (droid bar; state is user-global, ~/.openkai/state.json).
-    transcript.addNotice(splashLines(CLI_VERSION));
+    // Brand fixture: the gradient hex mark + wordmark at the top of every
+    // fresh transcript (droid's boot card; the animation is the moment,
+    // this is the fixture). State is user-global, ~/.openkai/state.json.
+    transcript.addNotice(bootMark(CLI_VERSION));
     // The capability row (droid's boot pattern): what this setup actually has.
     transcript.addNotice(
       capabilityRow({
