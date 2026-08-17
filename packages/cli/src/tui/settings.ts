@@ -10,6 +10,7 @@ import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken }
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
+import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, type StatuslineChip } from "../config.js";
 
 export interface SettingsActions {
   pickModel: () => void;
@@ -18,30 +19,75 @@ export interface SettingsActions {
   currentProject?: string;
   /** Open the in-TUI sign-in flow for a provider (key entry or OAuth). */
   signIn: (providerId: string) => void;
+  /** Apply a status line preset live + persist it. */
+  setStatusline: (preset: string) => void;
 }
 
 interface Row extends SelectItem {
   action?: () => string | undefined;
 }
 
-const TABS = ["providers", "model", "memory", "features"] as const;
+const TABS = ["appearance", "providers", "model", "memory", "features"] as const;
 type SettingsTab = (typeof TABS)[number];
 
-/** The settings panel (omp's tabbed shape): providers/model/memory/features. */
+/** Status line presets (omp's statusLine.preset shape) over our chip sets. */
+const STATUSLINE_PRESETS: Record<string, { label: string; chips: StatuslineChip[] }> = {
+  default: { label: "agent · model · session · tokens · persist · provider · state", chips: [...DEFAULT_STATUSLINE_CHIPS] },
+  minimal: { label: "provider · state", chips: ["provider", "state"] },
+  compact: { label: "model · tokens · provider · state", chips: ["model", "tokens", "provider", "state"] },
+  full: { label: "every chip", chips: ["agent", "model", "session", "tokens", "persist", "provider", "state"] },
+};
+
+function currentPresetName(): string {
+  const active = readStatuslineChips().join(",");
+  for (const [name, preset] of Object.entries(STATUSLINE_PRESETS)) {
+    if (preset.chips.join(",") === active) return name;
+  }
+  return "custom";
+}
+
+/** The settings panel (omp's tabbed shape): appearance/providers/model/memory/features. */
 export class SettingsOverlay implements Component {
-  private tab: SettingsTab = "providers";
+  private tab: SettingsTab;
   private query = "";
   private list: SelectList;
   private rows: Row[];
   private outcome: string | undefined;
 
-  constructor(private readonly actions: SettingsActions, private readonly onClose: () => void) {
+  constructor(
+    private readonly actions: SettingsActions,
+    private readonly onClose: () => void,
+    initialTab: SettingsTab = "appearance",
+  ) {
+    this.tab = initialTab;
     this.rows = this.buildRows();
     this.list = this.buildList(this.rows);
   }
 
   private buildRows(): Row[] {
     switch (this.tab) {
+      case "appearance": {
+        const preset = currentPresetName();
+        return [
+          {
+            value: "theme",
+            label: "theme",
+            description: `now: ${themeName} — Enter to cycle (${themeNames().join(" / ")})`,
+            action: () => this.actions.toggleTheme(),
+          },
+          {
+            value: "statusline",
+            label: "status line",
+            description: `now: ${preset} — Enter to cycle (default → minimal → compact → full)`,
+            action: () => {
+              const names = Object.keys(STATUSLINE_PRESETS);
+              const next = names[(names.indexOf(preset) + 1) % names.length]!;
+              this.actions.setStatusline(next);
+              return `status line: ${next} (${STATUSLINE_PRESETS[next]!.label})`;
+            },
+          },
+        ];
+      }
       case "providers":
         return Object.entries(PROVIDERS).map(([id, info]) => {
           const status = providerKeyStatus(id);
@@ -70,12 +116,6 @@ export class SettingsOverlay implements Component {
               this.actions.pickModel();
               return undefined;
             },
-          },
-          {
-            value: "theme",
-            label: "theme",
-            description: `now: ${themeName} — Enter to cycle`,
-            action: () => this.actions.toggleTheme(),
           },
         ];
       case "memory":

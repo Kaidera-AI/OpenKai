@@ -36,6 +36,15 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
+import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, type StatuslineChip } from "../config.js";
+
+/** Status line presets (mirror of settings.ts — the live chip sets). */
+const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
+  default: [...DEFAULT_STATUSLINE_CHIPS],
+  minimal: ["provider", "state"],
+  compact: ["model", "tokens", "provider", "state"],
+  full: ["agent", "model", "session", "tokens", "persist", "provider", "state"],
+};
 import { ModelPicker } from "./model-picker.js";
 import { SettingsOverlay } from "./settings.js";
 import { runWelcome, readConfig } from "./welcome.js";
@@ -382,6 +391,8 @@ export class TuiController {
       }
       case "welcome":
       case "setup":
+        this.openSetup();
+        break;
       case "settings":
         this.openSettings();
         break;
@@ -541,8 +552,17 @@ export class TuiController {
     this.tui.requestRender();
   }
 
-  /** `/setup` `/settings` — the in-TUI settings panel. Never exits the app. */
+  /** `/settings` — the configuration panel (opens on appearance). */
   openSettings(): void {
+    this.openSettingsAt("appearance");
+  }
+
+  /** `/setup` — the onboarding panel: providers (sign-in) then model. */
+  openSetup(): void {
+    this.openSettingsAt("providers");
+  }
+
+  private openSettingsAt(tab: "appearance" | "providers"): void {
     const overlay = new SettingsOverlay(
       {
         pickModel: () => this.openModelPicker(),
@@ -558,11 +578,16 @@ export class TuiController {
         },
         currentProject: process.env.CORTEX_PROJECT,
         signIn: (providerId) => this.openSignIn(providerId),
+        setStatusline: (preset) => {
+          writeStatuslineChips(STATUSLINE_PRESET_CHIPS[preset] ?? [...DEFAULT_STATUSLINE_CHIPS]);
+          this.status.update({ ...this.status.currentState }); // live re-render of the chips
+        },
       },
       () => {
         this.tui.hideOverlay();
         this.refocusComposer();
       },
+      tab,
     );
     this.tui.showOverlay(overlay, { anchor: "center", width: "64%", maxHeight: "80%" });
   }
