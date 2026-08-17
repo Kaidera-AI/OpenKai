@@ -688,10 +688,15 @@ export class TuiController {
       (providerId) =>
         catalogue
           .getModels(providerId)
-          .map((m) => ({ id: m.id, name: m.name }))
+          .map((m) => ({
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow,
+            cost: m.cost ? { input: m.cost.input, output: m.cost.output } : undefined,
+          }))
           .sort((a, b) => a.id.localeCompare(b.id)),
       { provider: this.provider ?? "openrouter", modelId: this.modelId, effort: this.effortSwitch?.current() },
-      (pickedProvider) =>
+      (pickedProvider: string) =>
         configuredProviders().filter((id) => id !== pickedProvider),
       (selection) => {
         this.tui.hideOverlay();

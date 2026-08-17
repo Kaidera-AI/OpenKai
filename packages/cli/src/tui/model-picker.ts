@@ -18,6 +18,10 @@ export interface ProviderEntry {
 export interface ModelEntry {
   id: string;
   name?: string;
+  /** Context window in tokens (omp's metadata column). */
+  contextWindow?: number;
+  /** Per-million USD cost pair, input/output (omp's cost column). */
+  cost?: { input?: number; output?: number };
 }
 
 export interface ModelPickerSelection {
@@ -35,6 +39,24 @@ interface Row extends SelectItem {
   skip?: boolean;
   partnerProvider?: string;
   partnerModel?: string;
+}
+
+/** `200k` context window (omp's formatContext, abbreviated). */
+function formatContext(ctx?: number): string {
+  if (!ctx || ctx <= 0) return "";
+  if (ctx >= 1_000_000) return `${(ctx / 1_000_000).toFixed(ctx % 1_000_000 === 0 ? 0 : 1)}m`;
+  if (ctx >= 1000) return `${Math.round(ctx / 1000)}k`;
+  return String(ctx);
+}
+
+/** `$1/5` per-million cost pair; `free` when both legs are zero (omp's shape). */
+function formatCost(cost?: { input?: number; output?: number }): string {
+  if (!cost) return "";
+  const inCost = cost.input ?? 0;
+  const outCost = cost.output ?? 0;
+  if (inCost <= 0 && outCost <= 0) return "free";
+  const fmt = (n: number) => (n < 1 ? n.toString() : String(Math.round(n)));
+  return `$${fmt(inCost)}/${fmt(outCost)}`;
 }
 
 const EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
@@ -73,12 +95,17 @@ export class ModelPicker implements Component {
   }
 
   private modelRows(provider: string): Row[] {
-    return this.modelsFor(provider).map((m) => ({
-      value: m.id,
-      label: `${m.id === this.current.modelId && provider === this.current.provider ? "● " : "  "}${m.name ?? m.id}`,
-      description: m.name ? m.id : "",
-      modelId: m.id,
-    }));
+    return this.modelsFor(provider).map((m) => {
+      const ctx = formatContext(m.contextWindow);
+      const cost = formatCost(m.cost);
+      const meta = [ctx, cost].filter((s) => s.length > 0).join(" · ");
+      return {
+        value: m.id,
+        label: `${m.id === this.current.modelId && provider === this.current.provider ? "● " : "  "}${m.name ?? m.id}`,
+        description: [m.name ? m.id : "", meta].filter((s) => s.length > 0).join(" · "),
+        modelId: m.id,
+      };
+    });
   }
 
   private effortRows(): Row[] {
