@@ -432,6 +432,13 @@ async function main(argv: string[]): Promise<number> {
     return runTail({ follow: getBool("--follow") || getBool("-f"), lines });
   }
 
+  // ── splash: replay the brand animation on demand ─────────────────────────
+  if (command === "splash") {
+    const { playBrandAnimation } = await import("./tui/brand.js");
+    await playBrandAnimation(CLI_VERSION, undefined, { force: true });
+    return 0;
+  }
+
   // ── login: subscription OAuth flows ──────────────────────────────────────
   if (command === "login") {
     const provider = positional[0] ?? getString("--provider");

@@ -19,13 +19,13 @@ export interface ProviderInfo {
 
 export const PROVIDERS: Record<string, ProviderInfo> = {
   openrouter: { label: "OpenRouter (aggregator)", envKeys: ["OPENROUTER_API_KEY"] },
-  anthropic: { label: "Anthropic (Claude)", envKeys: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"] },
+  anthropic: { label: "Anthropic (Claude)", envKeys: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"], oauth: true },
   openai: { label: "OpenAI", envKeys: ["OPENAI_API_KEY"] },
   "openai-codex": { label: "OpenAI Codex (subscription)", envKeys: [], oauth: true },
   google: { label: "Google (Gemini)", envKeys: ["GEMINI_API_KEY"] },
   "github-copilot": { label: "GitHub Copilot (subscription)", envKeys: [], oauth: true },
   deepseek: { label: "DeepSeek", envKeys: ["DEEPSEEK_API_KEY"] },
-  "kimi-coding": { label: "Kimi Code", envKeys: ["KIMI_API_KEY"] },
+  "kimi-coding": { label: "Kimi Code", envKeys: ["KIMI_API_KEY"], oauth: true },
   moonshotai: { label: "Moonshot AI", envKeys: ["MOONSHOT_API_KEY"] },
   "qwen-token-plan": { label: "Alibaba Qwen (subscription)", envKeys: ["QWEN_TOKEN_PLAN_API_KEY"] },
   xai: { label: "xAI (Grok)", envKeys: ["XAI_API_KEY"] },

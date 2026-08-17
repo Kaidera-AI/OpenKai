@@ -128,8 +128,10 @@ const sleep = (ms: number): Promise<void> =>
 export async function playBrandAnimation(
   version: string,
   write: (text: string) => void = (t) => process.stdout.write(t),
+  options: { force?: boolean } = {},
 ): Promise<boolean> {
-  if (!process.stdout.isTTY || !shouldShowSplash(version)) return false;
+  if (!process.stdout.isTTY) return false;
+  if (!options.force && !shouldShowSplash(version)) return false;
 
   const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`];
   const totalMs = 2400;

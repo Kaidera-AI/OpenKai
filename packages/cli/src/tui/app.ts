@@ -72,6 +72,8 @@ import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
 import { parseSlashCommand, helpText, buildPaletteItems } from "./commands.js";
 import { PermissionOverlay, type PermissionDecision } from "./permission.js";
+import { SignInOverlay } from "./signin.js";
+import { OAuthOverlay } from "./oauth.js";
 import { CommandPalette, type PaletteItem } from "./palette.js";
 import { PromptStash, FrecencyHistory } from "./stash.js";
 import { splashLines, capabilityRow } from "./brand.js";
@@ -554,6 +556,7 @@ export class TuiController {
           else delete process.env.CORTEX_PROJECT;
         },
         currentProject: process.env.CORTEX_PROJECT,
+        signIn: (providerId) => this.openSignIn(providerId),
       },
       () => {
         this.tui.hideOverlay();
@@ -561,6 +564,40 @@ export class TuiController {
       },
     );
     this.tui.showOverlay(overlay, { anchor: "center", width: "64%", maxHeight: "80%" });
+  }
+
+  /** In-TUI provider sign-in: OAuth lanes run the device flow; key lanes prompt inline. */
+  private openSignIn(providerId: string): void {
+    const info = PROVIDERS[providerId];
+    const status = providerKeyStatus(providerId);
+    const done = (message: string): void => {
+      this.tui.hideOverlay();
+      this.transcript.addNotice(`Sign-in: ${message}`);
+      this.tui.requestRender();
+      this.openSettings(); // back to the list with fresh status
+    };
+    if (info?.oauth && !status.configured) {
+      this.tui.showOverlay(
+        new OAuthOverlay(this.tui, { providerId, providerLabel: info.label, onDone: done }),
+        { anchor: "center", width: "64%", maxHeight: "80%" },
+      );
+      return;
+    }
+    const envKey = status.needsKey ?? info?.envKeys[0];
+    if (!envKey) {
+      this.transcript.addNotice(`${providerId}: already signed in`);
+      this.tui.requestRender();
+      return;
+    }
+    this.tui.showOverlay(
+      new SignInOverlay(this.tui, {
+        providerId,
+        providerLabel: info?.label ?? providerId,
+        envKey,
+        onDone: done,
+      }),
+      { anchor: "center", width: "64%", maxHeight: "80%" },
+    );
   }
 
   /** `/model` — the two-level provider→model picker (world-class floor). */

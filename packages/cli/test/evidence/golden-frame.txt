@@ -5,7 +5,7 @@
 
  ▎ OpenKai 0.1.5 · by Kaidera — /help for commands, Ctrl+K palette              
 
- ▎ providers (2) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
+ ▎ providers (4) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
 
  ▎ tip: /fast toggles fast mode — reasoning off, answers quicker.               
 

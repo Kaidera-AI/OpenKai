@@ -16,6 +16,8 @@ export interface SettingsActions {
   toggleTheme: () => string;
   setMemory: (mode: "local" | "cortex", project?: string) => void;
   currentProject?: string;
+  /** Open the in-TUI sign-in flow for a provider (key entry or OAuth). */
+  signIn: (providerId: string) => void;
 }
 
 interface Row extends SelectItem {
@@ -52,7 +54,10 @@ export class SettingsOverlay implements Component {
             value: `provider:${id}`,
             label: info.label,
             description: state,
-            action: () => `add the key to ~/.openkai/.env as ${status.needsKey ?? "the provider credentials"} (env wins)`,
+            action: () => {
+              this.actions.signIn(id);
+              return undefined;
+            },
           };
         });
       case "model":
