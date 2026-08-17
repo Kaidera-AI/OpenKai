@@ -436,6 +436,67 @@ export class TuiController {
         this.tui.requestRender();
         break;
       }
+      case "clear":
+        this.transcript.clear();
+        this.transcript.addNotice("transcript cleared — the conversation history is untouched (use /new for a fresh session)");
+        break;
+      case "copy": {
+        const what = argument.trim() || "code";
+        const text = this.transcript.lastAssistantText();
+        if (text.length === 0) {
+          this.transcript.addNotice("/copy — nothing to copy yet (no assistant text)");
+          break;
+        }
+        const fence = text.match(/```[^\n]*\n([\s\S]*?)```/g);
+        const payload = fence ? fence[fence.length - 1]!.replace(/```[^\n]*\n|```$/g, "") : text;
+        try {
+          const { execFileSync } = await import("node:child_process");
+          const bin = process.platform === "darwin" ? "pbcopy" : "wl-copy";
+          execFileSync(bin, { input: payload, stdio: ["pipe", "ignore", "ignore"] });
+          this.transcript.addNotice(`/copy ${what} — copied to clipboard (${payload.length} chars)`);
+        } catch {
+          this.transcript.addNotice(`/copy — clipboard unavailable (no pbcopy/wl-copy); the text is in the last assistant block`);
+        }
+        break;
+      }
+      case "stats": {
+        const counts = this.transcript.blockCounts();
+        const usage = this.status.currentState.usage;
+        const tokens = usage ? `${usage.totalTokens} tokens` : "no usage yet";
+        this.transcript.addNotice([
+          `/stats — session ${this.sessionId.slice(0, 8)}`,
+          `blocks: ${counts.user ?? 0} user · ${counts.assistant ?? 0} assistant · ${counts.tool ?? 0} tool · ${counts.notice ?? 0} notice`,
+          `model: ${this.modelId} (${this.provider ?? "?"}) · ${tokens}`,
+          `fusion partner: ${this.fusionPartner ? `${this.fusionPartner.modelId} (${this.fusionPartner.provider})` : "none (self-pair)"}`,
+        ]);
+        break;
+      }
+      case "context": {
+        const usage = this.status.currentState.usage;
+        const tokens = usage?.totalTokens ?? 0;
+        this.transcript.addNotice(
+          `/context — ${tokens} tokens used this session${tokens > 0 ? " (compact with /compact when this grows)" : ""}`,
+        );
+        break;
+      }
+      case "login":
+        this.openSetup();
+        break;
+      case "logout": {
+        const arg = argument.trim();
+        if (!arg) {
+          this.transcript.addNotice("/logout — specify a provider: /logout <provider>");
+          break;
+        }
+        try {
+          const models = builtinModels();
+          await models.logout(arg);
+          this.transcript.addNotice(`/logout — ${arg} signed out ✓`);
+        } catch {
+          this.transcript.addNotice(`/logout — ${arg} has no stored OAuth credential (key-based providers: remove the env var)`);
+        }
+        break;
+      }
       case "undo":
         await this.undo();
         break;

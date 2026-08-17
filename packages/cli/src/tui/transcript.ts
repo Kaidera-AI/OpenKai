@@ -445,6 +445,22 @@ export class Transcript implements Component {
     for (const block of this.blocks) block.comp.invalidate();
   }
 
+  /** Clear all blocks (the `/clear` command). Keeps the agent name. */
+  clear(): void {
+    this.blocks = [];
+    this.liveAssistant = null;
+    this.liveThinking = null;
+    this.liveBtw = null;
+    this.openTools.clear();
+  }
+
+  /** Count of blocks by kind (for `/stats`). */
+  blockCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const b of this.blocks) counts[b.kind] = (counts[b.kind] ?? 0) + 1;
+    return counts;
+  }
+
   /** Test accessor: block kinds in order (for event-mapping assertions). */
   blockKinds(): string[] {
     return this.blocks.map((b) => b.kind);
