@@ -18,6 +18,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { InProcessTransport } from "./local-transport.js";
+import { resolveCast } from "../fusion/casts.js";
 
 /** Default child-run wall-clock limit: 5 minutes. */
 const DEFAULT_TIMEOUT_SECONDS = 300;
@@ -32,6 +33,12 @@ const TaskParams = Type.Object({
     Type.String({
       description:
         "Optional JSON contract for the child's answer. The child is instructed to return ONLY a JSON object with these keys; the parent extracts and validates it (required keys present) and returns the parsed JSON as text.",
+    }),
+  ),
+  stage: Type.Optional(
+    Type.Union([Type.Literal("plan"), Type.Literal("build"), Type.Literal("review")], {
+      description:
+        "Dynamic model selection (K3 #6 / OK-9.3): when set and modelId is absent, the child model resolves from the active cast by stage (plan→architect, build→builder, review→judge).",
     }),
   ),
 });
@@ -88,9 +95,19 @@ export function taskTool(cwd: string, parentModelId: string): AgentTool<typeof T
       params: Static<typeof TaskParams>,
       signal?: AbortSignal,
     ): Promise<AgentToolResult<unknown>> {
+      // K3 #6 / OK-9.3: dynamic selection — stage resolves the child model
+      // from the active cast (plan→architect, build→builder, review→judge);
+      // an explicit modelId always wins; else the parent's model.
+      const cast = resolveCast();
+      const stageModel =
+        params.stage === "plan" ? cast?.architectModel
+        : params.stage === "build" ? cast?.builderModel
+        : params.stage === "review" ? (cast?.judgeModel ?? cast?.architectModel)
+        : undefined;
+      const childModelId = params.modelId ?? stageModel ?? parentModelId;
       const transport = new InProcessTransport({
         sessionId: `task-${uuidv7()}`,
-        modelId: params.modelId ?? parentModelId,
+        modelId: childModelId,
         cwd,
       });
 
@@ -159,13 +176,13 @@ export function taskTool(cwd: string, parentModelId: string): AgentTool<typeof T
           if (result.error) {
             return textResult(`subagent output failed the schema: ${result.error}\n\nraw answer:\n${answer.slice(0, 2000)}`, {
               error: true,
-              model: params.modelId ?? parentModelId,
+              model: childModelId,
             });
           }
-          return textResult(result.json!, { model: params.modelId ?? parentModelId, schema: true });
+          return textResult(result.json!, { model: childModelId, schema: true });
         }
         return textResult(answer.length > 0 ? answer : "(subagent produced no text)", {
-          model: params.modelId ?? parentModelId,
+          model: childModelId,
         });
       } catch (error) {
         return textResult(`subagent failed: ${error instanceof Error ? error.message : String(error)}`, { error: true });
