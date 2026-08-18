@@ -112,3 +112,16 @@ to reach the published channel (stale binaries, unmerged branches).
 11. Local-binary hygiene: refresh ~/.local/bin/openkai + openkai-next;
     `which -a openkai` reports the released version everywhere.
 12. CTO explicit consent recorded for THIS version in THIS session.
+
+## Homebrew tap trust (added 2026-08-18)
+
+Homebrew refuses to load formulae from a third-party tap until it is trusted
+(flagged by the K3 review): `Error: Refusing to load formula ... from untrusted
+tap`. This is a local security policy, not a formula bug.
+
+First-time installers must run:
+- `brew trust kaidera-ai/tap`   (or `brew trust --formula kaidera-ai/tap/openkai`)
+then `brew install openkai`.
+
+Document this in the release notes / README install section so users are not
+surprised.
