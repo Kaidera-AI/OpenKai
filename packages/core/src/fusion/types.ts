@@ -16,6 +16,8 @@ export type FusionRole = "architect" | "builder";
 export interface RoleOutput {
   role: FusionRole;
   modelId: string;
+  /** Provider lane the role ran on (K3: dashboard pair keys are provider-qualified). */
+  provider?: string;
   text: string;
   usage: Usage | undefined;
   latencyMs: number;

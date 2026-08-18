@@ -62,7 +62,15 @@ export async function recordFusionRun(
     const text = await fs.readFile(logPath, "utf-8").catch(() => "");
     const lines = text.split("\n").filter((line) => line.trim().length > 0);
     if (lines.length > MAX_LINES) {
-      await fs.writeFile(logPath, `${lines.slice(-KEEP_LINES).join("\n")}\n`, "utf-8");
+      // Re-read immediately before the rewrite and merge lines appended since
+      // the snapshot — the read-modify-write window used to truncate a
+      // concurrent writer's record (K3). tmp+rename keeps readers atomic.
+      const freshText = await fs.readFile(logPath, "utf-8").catch(() => "");
+      const freshLines = freshText.split("\n").filter((line) => line.trim().length > 0);
+      const merged = [...new Set([...lines, ...freshLines])];
+      const tmp = `${logPath}.tmp-${process.pid}`;
+      await fs.writeFile(tmp, `${merged.slice(-KEEP_LINES).join("\n")}\n`, "utf-8");
+      await fs.rename(tmp, logPath);
     }
   } catch {
     // telemetry is a by-product, never a failure mode
@@ -71,7 +79,9 @@ export async function recordFusionRun(
 
 /**
  * Read every record (for the report command). One corrupt line is skipped,
- * never fatal: a torn write or a hand-edit must not zero the history.
+ * never fatal: a torn write, a hand-edit, or a schema-drifting line must not
+ * zero the history (K3: a parseable-but-wrong-shape line used to crash the
+ * dashboard aggregation downstream).
  */
 export async function readFusionRuns(
   logPath: string = defaultFusionLogPath(),
@@ -86,12 +96,24 @@ export async function readFusionRuns(
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     try {
-      records.push(JSON.parse(line) as FusionRunRecord);
+      const parsed: unknown = JSON.parse(line);
+      if (isFusionRunRecord(parsed)) records.push(parsed);
     } catch {
       // skip the corrupt line, keep the rest of the history
     }
   }
   return records;
+}
+
+/** Minimal shape check — the dashboard folds these fields blindly. */
+function isFusionRunRecord(value: unknown): value is FusionRunRecord {
+  if (value === null || typeof value !== "object") return false;
+  const r = value as Record<string, unknown>;
+  if (!Array.isArray(r["roles"])) return false;
+  const gate = r["gate"];
+  if (gate === null || typeof gate !== "object") return false;
+  if (typeof (gate as Record<string, unknown>)["outcome"] !== "string") return false;
+  return true;
 }
 
 /**
@@ -192,7 +214,7 @@ export function summariseFusionRuns(records: FusionRunRecord[]): FusionPairStats
  * per-pair A/B stats + gate-outcome distribution. Pure over the records.
  */
 export interface PairStats {
-  /** "providerA/modelA + providerB/modelB" (sorted, deduped). */
+  /** "providerA/modelA + providerB/modelB" (sorted; self-pairs keep both). */
   pair: string;
   runs: number;
   pass: number;
@@ -209,18 +231,24 @@ export interface FusionDashboard {
 
 export function aggregateFusionRuns(records: FusionRunRecord[]): FusionDashboard {
   const byPair = new Map<string, { runs: number; pass: number; wall: number; tokens: number }>();
-  const gateOutcomes: Record<string, number> = {};
+  // Map, not a plain object: a magic outcome key ('__proto__') must count,
+  // not walk the prototype chain (K3).
+  const gateOutcomes = new Map<string, number>();
   for (const r of records) {
-    const models = r.roles.map((role) => role.modelId).sort();
-    const pair = [...new Set(models)].join(" + ") || "(unknown)";
+    // Provider-qualified pair key (K3: bare modelIds merged cross-provider
+    // runs — the exact A/B the dashboard exists to distinguish). Self-pairs
+    // keep both entries ('X + X') — dedupe made them indistinguishable from
+    // single-role records.
+    const models = r.roles.map((role) => (role.provider ? `${role.provider}/${role.modelId}` : role.modelId)).sort();
+    const pair = models.join(" + ") || "(unknown)";
     const acc = byPair.get(pair) ?? { runs: 0, pass: 0, wall: 0, tokens: 0 };
     acc.runs += 1;
     if (r.gate.outcome === "pass") acc.pass += 1;
-    acc.wall += r.wallMs;
+    acc.wall += r.wallMs ?? 0;
     for (const role of r.roles) acc.tokens += role.usage?.totalTokens ?? 0;
     acc.tokens += r.synthesis?.usage?.totalTokens ?? 0;
     byPair.set(pair, acc);
-    gateOutcomes[r.gate.outcome] = (gateOutcomes[r.gate.outcome] ?? 0) + 1;
+    gateOutcomes.set(r.gate.outcome, (gateOutcomes.get(r.gate.outcome) ?? 0) + 1);
   }
   const pairs: PairStats[] = [...byPair.entries()]
     .map(([pair, a]) => ({
@@ -232,19 +260,25 @@ export function aggregateFusionRuns(records: FusionRunRecord[]): FusionDashboard
       totalTokens: a.tokens,
     }))
     .sort((x, y) => y.runs - x.runs);
-  return { totalRuns: records.length, pairs, gateOutcomes };
+  return { totalRuns: records.length, pairs, gateOutcomes: Object.fromEntries(gateOutcomes) };
+}
+
+/** Strip terminal control characters from log-sourced strings (K3). */
+function cleanCell(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
 }
 
 /** Render the dashboard as plain lines (the CLI prints them). */
 export function renderFusionDashboard(d: FusionDashboard): string[] {
   const lines: string[] = [`fusion telemetry — ${d.totalRuns} run(s)`];
   const gates = Object.entries(d.gateOutcomes)
-    .map(([k, v]) => `${k}=${v}`)
+    .map(([k, v]) => `${cleanCell(k)}=${v}`)
     .join(" · ");
   lines.push(`gate outcomes: ${gates || "(none)"}`);
   for (const p of d.pairs) {
     lines.push(
-      `  ${p.pair} — ${p.runs} run(s), ${(p.passRate * 100).toFixed(0)}% pass, avg ${(p.avgWallMs / 1000).toFixed(1)}s, ${p.totalTokens} tokens`,
+      `  ${cleanCell(p.pair)} — ${p.runs} run(s), ${(p.passRate * 100).toFixed(0)}% pass, avg ${(p.avgWallMs / 1000).toFixed(1)}s, ${p.totalTokens} tokens`,
     );
   }
   return lines;

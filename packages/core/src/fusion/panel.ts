@@ -61,6 +61,7 @@ export async function runPanel(
       return {
         role,
         modelId: model.id,
+        provider: model.provider,
         text: result.text,
         usage: result.usage,
         latencyMs: result.latencyMs,
@@ -69,6 +70,7 @@ export async function runPanel(
       return {
         role,
         modelId: model.id,
+        provider: model.provider,
         text: "",
         usage: undefined,
         latencyMs: Date.now() - startedRole,
