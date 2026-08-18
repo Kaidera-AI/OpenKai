@@ -223,9 +223,166 @@ async function walkGrep(
   }
 }
 
+// ── E008 lifted tools: glob / web_fetch / todo (ren's OMP research) ────────
+
+const GlobParams = Type.Object({
+  pattern: Type.String({ description: "Glob pattern, e.g. 'src/**/*.ts'." }),
+  path: Type.Optional(Type.String({ description: "Root directory relative to cwd (default: cwd)." })),
+  maxResults: Type.Optional(Type.Integer({ description: "Cap results (default 100).", minimum: 1 })),
+});
+
+/** glob: match files under a directory by glob pattern (no new deps). */
+export const globTool = (cwd: string): AgentTool<typeof GlobParams, unknown> => ({
+  name: "glob",
+  label: "Glob",
+  description: "Find files matching a glob pattern (e.g. 'src/**/*.ts'). Returns matching paths.",
+  parameters: GlobParams,
+  async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
+    const max = params.maxResults ?? 100;
+    const guard = guardPath(cwd, params.path ?? ".");
+    if (guard.refusal !== undefined) return textResult(`Error: ${guard.refusal}`, { denied: true });
+    const regex = globToRegex(params.pattern);
+    const out: string[] = [];
+    try {
+      await walkGlob(guard.target!, regex, max, out, cwd);
+    } catch (error) {
+      return textResult(`Error globbing: ${error instanceof Error ? error.message : String(error)}`, params.pattern);
+    }
+    if (out.length === 0) return textResult("(no matches)", { pattern: params.pattern, matches: 0 });
+    return textResult(out.join("\n"), { pattern: params.pattern, matches: out.length });
+  },
+});
+
+/** Convert a glob to a RegExp: ** → any depth, * → segment, ? → one char. */
+function globToRegex(pattern: string): RegExp {
+  let re = "";
+  for (let i = 0; i < pattern.length; i += 1) {
+    const c = pattern[i]!;
+    if (c === "*") {
+      if (pattern[i + 1] === "*") {
+        re += ".*";
+        i += 1;
+        if (pattern[i + 1] === "/") i += 1;
+      } else {
+        re += "[^/]*";
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+    } else if ("\\^$.|+()[]{}".includes(c)) {
+      re += `\\${c}`;
+    } else {
+      re += c;
+    }
+  }
+  return new RegExp(`(^|/)${re}$`);
+}
+
+async function walkGlob(target: string, regex: RegExp, max: number, out: string[], cwd: string): Promise<void> {
+  if (out.length >= max) return;
+  const stat = await fs.stat(target);
+  if (stat.isFile()) {
+    const rel = path.relative(cwd, target);
+    if (regex.test(rel) || regex.test(path.basename(target))) out.push(rel);
+    return;
+  }
+  if (stat.isDirectory()) {
+    const base = path.basename(target);
+    if (base === "node_modules" || base === ".git" || base === "dist") return;
+    const entries = await fs.readdir(target, { withFileTypes: true });
+    for (const entry of entries) {
+      if (out.length >= max) return;
+      const child = path.join(target, entry.name);
+      const guard = guardPath(cwd, child);
+      if (guard.refusal !== undefined) continue;
+      await walkGlob(child, regex, max, out, cwd);
+    }
+  }
+}
+
+const WebFetchParams = Type.Object({
+  url: Type.String({ description: "Absolute http(s) URL to fetch." }),
+  maxBytes: Type.Optional(Type.Integer({ description: "Cap body size in bytes (default 65536).", minimum: 1 })),
+});
+
+/** web_fetch: GET a URL and return the body as text (read-only). */
+export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unknown> => ({
+  name: "web_fetch",
+  label: "Web Fetch",
+  description: "Fetch a URL over HTTP(S) and return the response body as text (truncated to maxBytes).",
+  parameters: WebFetchParams,
+  async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
+    void cwd;
+    const max = params.maxBytes ?? 65536;
+    let url: URL;
+    try {
+      url = new URL(params.url);
+    } catch {
+      return textResult(`Error: invalid URL: ${params.url}`, params.url);
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return textResult("Error: only http(s) URLs are supported", params.url);
+    }
+    try {
+      const res = await fetch(url, { redirect: "follow" });
+      const body = await res.text();
+      const truncated = body.length > max ? body.slice(0, max) + `\n…[truncated ${body.length - max} chars]` : body;
+      return textResult(truncated, { url: params.url, status: res.status, bytes: body.length });
+    } catch (error) {
+      return textResult(`Error fetching ${params.url}: ${error instanceof Error ? error.message : String(error)}`, params.url);
+    }
+  },
+});
+
+const TodoParams = Type.Object({
+  op: Type.Union([Type.Literal("add"), Type.Literal("done"), Type.Literal("list"), Type.Literal("clear")], {
+    description: "add | done | list | clear",
+  }),
+  text: Type.Optional(Type.String({ description: "Todo text (for add) or index (for done)." })),
+});
+
+/** todo: a shared per-project task list in .openkai/memory/todo.md (multi-instance aware). */
+export const todoTool = (cwd: string): AgentTool<typeof TodoParams, unknown> => ({
+  name: "todo",
+  label: "Todo",
+  description: "Manage a shared project task list (add/done/list/clear) in .openkai/memory/todo.md.",
+  parameters: TodoParams,
+  async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
+    const file = path.join(cwd, ".openkai", "memory", "todo.md");
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const read = async (): Promise<string[]> => {
+      try {
+        return (await fs.readFile(file, "utf-8")).split("\n").filter((l) => l.startsWith("- ["));
+      } catch {
+        return [];
+      }
+    };
+    if (params.op === "list") {
+      const items = await read();
+      return textResult(items.length ? items.join("\n") : "(no todos)", { count: items.length });
+    }
+    if (params.op === "clear") {
+      await fs.writeFile(file, "# Todos\n", "utf-8");
+      return textResult("todos cleared", { count: 0 });
+    }
+    if (params.op === "add") {
+      if (!params.text) return textResult("Error: add needs text", params.op);
+      await fs.appendFile(file, `- [ ] ${params.text.replace(/\s+/g, " ").trim()}\n`, "utf-8");
+      return textResult(`added: ${params.text}`, { op: "add" });
+    }
+    const items = await read();
+    const idx = parseInt(params.text ?? "", 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= items.length) {
+      return textResult(`Error: done needs a valid index 0..${items.length - 1}`, params.op);
+    }
+    items[idx] = items[idx]!.replace("- [ ]", "- [x]");
+    await fs.writeFile(file, `# Todos\n${items.join("\n")}\n`, "utf-8");
+    return textResult(`done: ${items[idx]}`, { op: "done" });
+  },
+});
+
 /** The P2 read-only tool set, bound to a cwd (v1-compat path for `openkai chat`). */
 export function readOnlyTools(cwd: string): AgentTool<any>[] {
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd)];
 }
 
 // ── P4b gated tools: write_file / edit_file / bash (scope §4) ───────────────
@@ -437,5 +594,5 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
  * {@link readOnlyTools} (v1-compat — no approval channel in print mode).
  */
 export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks): AgentTool<any>[] {
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }
