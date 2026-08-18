@@ -89,6 +89,10 @@ export interface PermissionRule {
  * denies every path beneath it — there is no need for a trailing contents-only form,
  * and a contents-only form alone would NOT match the bare node (the F10 gap).
  * Every entry here was checked to match its node, not just its leaves.
+ *
+ * E012 (ren's review, ST-10): modern key material the original floor missed —
+ * ed25519/ecdsa keys OUTSIDE a `.ssh` dir, registry tokens (.npmrc/.pypirc),
+ * .netrc, cloud CLI credential dirs, and container/keystore formats.
  */
 const DENY_FLOOR: readonly string[] = [
   ".env",
@@ -96,8 +100,23 @@ const DENY_FLOOR: readonly string[] = [
   "**/*.pem",
   "**/*.key",
   "**/id_rsa*",
+  "**/id_ed25519*",
+  "**/id_ecdsa*",
+  "**/id_dsa*",
   ".git/config",
+  ".git-credentials",
   "**/.ssh",
+  "**/.gnupg",
+  "**/.aws",
+  "**/.azure",
+  "**/.kube",
+  ".npmrc",
+  ".pypirc",
+  ".netrc",
+  "**/*.p12",
+  "**/*.pfx",
+  "**/*.keystore",
+  "**/*.jks",
 ];
 
 /**

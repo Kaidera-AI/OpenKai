@@ -32,6 +32,7 @@ import path from "node:path";
 
 import {
   gatedTools,
+  readOnlyTools,
   SessionPermissionGate,
   SessionStore,
   ShadowGit,
@@ -406,6 +407,22 @@ test("config.json is written 0600 and pre-existing loose files are tightened", a
     if (savedOpenkaiHome === undefined) delete process.env.OPENKAI_HOME;
     else process.env.OPENKAI_HOME = savedOpenkaiHome;
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+// ── ST-10: the floor covers modern key material ─────────────────────────────
+
+test("ST-10: read tools refuse modern secret files (ed25519, .npmrc, .aws)", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "openkai-e012-floor-"));
+  try {
+    const tools = readOnlyTools(dir);
+    const reader = toolByName(tools, "read_file");
+    for (const p of ["id_ed25519", "deploy/id_ecdsa", ".npmrc", ".aws/credentials", "keys/store.p12"]) {
+      const out = resultText(await reader.execute("tf", { path: p }));
+      assert.match(out, /denied|protected/i, `${p} must hit the deny floor`);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

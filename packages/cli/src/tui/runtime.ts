@@ -55,6 +55,7 @@ import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
 import { needsWelcome, readConfig, runWelcome } from "./welcome.js";
 import { detectThemeAsync, setTheme } from "./theme.js";
+import { featureEnabled } from "./features.js";
 import { appendActivity } from "../tail.js";
 import { CLI_VERSION } from "../version.js";
 import { providerKeyStatus, resolveProvider } from "../providers.js";
@@ -226,8 +227,20 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   const terminal = new ProcessTerminal();
   // First-run brand moment: animated Kaidera mark + OpenKai wordmark, once
   // ever, before the alt-screen app takes over (droid bar).
-  await playBrandAnimation(CLI_VERSION);
-  const tui = new TuiAltScreen(terminal, true);
+  const tui = new TuiAltScreen(terminal, true, undefined, {
+    // Claude Code-style mouse (E012): wheel scrolls the transcript, drag
+    // selects (copied to the clipboard), scrollbar drags, and OSC 8 URLs open
+    // on click. Feature-gated; the bash tool never inherits the TUI stdin so
+    // subprocesses can't flood SGR coordinates.
+    mouse: featureEnabled("mouse"),
+    wheelScrollLines: 3,
+    openUrl: (url) => {
+      void import("node:child_process").then(({ execFile }) => {
+        const opener = process.platform === "darwin" ? "open" : "xdg-open";
+        execFile(opener, [url], () => undefined);
+      });
+    },
+  });
   const manager = installKeymap();
 
   // P4b: focus-aware attention notifier (scope §1.1). DEC 1004 focus reporting

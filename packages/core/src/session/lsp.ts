@@ -75,7 +75,14 @@ interface LspClientState {
   openFiles: Set<string>;
 }
 
-let _client: LspClientState | null = null;
+/**
+ * Active LSP clients, keyed by resolved session cwd. A singleton bound every
+ * session to the FIRST client's root (E012 follow-up): two sessions in
+ * different directories share one process, so the second silently queried the
+ * wrong project root. Values are promises so concurrent first-use calls for
+ * one cwd share a single spawn instead of racing two servers up.
+ */
+const _clients = new Map<string, Promise<LspClientState>>();
 
 /** Detect the language server binary for the current project. */
 function detectServer(cwd: string): { command: string; args: string[] } | null {
@@ -150,24 +157,44 @@ function sendNotification(client: LspClientState, method: string, params?: unkno
 
 /** Start the LSP client, initialise the server, and open the file. */
 async function ensureClient(cwd: string, filePath: string): Promise<LspClientState> {
-  if (_client) {
+  const key = path.resolve(cwd);
+  const existing = _clients.get(key);
+  if (existing) {
+    const client = await existing;
     // Open the file if not already open
-    if (!_client.openFiles.has(filePath)) {
-      const uri = fileToUri(filePath);
-      const content = readFileSync(filePath, "utf-8");
-      sendNotification(_client, "textDocument/didOpen", {
-        textDocument: {
-          uri,
-          languageId: detectLanguage(filePath),
-          version: 1,
-          text: content,
-        },
-      });
-      _client.openFiles.add(filePath);
+    if (!client.openFiles.has(filePath)) {
+      openFile(client, filePath);
     }
-    return _client;
+    return client;
   }
 
+  const starting = startClient(key, filePath);
+  _clients.set(key, starting);
+  try {
+    return await starting;
+  } catch (error) {
+    _clients.delete(key);
+    throw error;
+  }
+}
+
+/** Notify a running server that a file is open. */
+function openFile(client: LspClientState, filePath: string): void {
+  const uri = fileToUri(filePath);
+  const content = readFileSync(filePath, "utf-8");
+  sendNotification(client, "textDocument/didOpen", {
+    textDocument: {
+      uri,
+      languageId: detectLanguage(filePath),
+      version: 1,
+      text: content,
+    },
+  });
+  client.openFiles.add(filePath);
+}
+
+/** Spawn + initialise a server rooted at `cwd`, with `filePath` pre-opened. */
+async function startClient(cwd: string, filePath: string): Promise<LspClientState> {
   const server = detectServer(cwd);
   if (!server) {
     throw new Error(`No language server detected for ${cwd}. Install typescript-language-server, gopls, or pyright.`);
@@ -238,23 +265,13 @@ async function ensureClient(cwd: string, filePath: string): Promise<LspClientSta
   sendNotification(client, "initialized", {});
   client.initialized = true;
 
-  // Open the file
-  const uri = fileToUri(filePath);
-  const content = readFileSync(filePath, "utf-8");
-  sendNotification(client, "textDocument/didOpen", {
-    textDocument: {
-      uri,
-      languageId: detectLanguage(filePath),
-      version: 1,
-      text: content,
-    },
-  });
-  client.openFiles.add(filePath);
+  openFile(client, filePath);
 
-  // Wait briefly for server to process didOpen
-  await new Promise((r) => setTimeout(r, 300));
+  // Wait briefly for the server to process didOpen
+  const { promise: settled, resolve: settle } = Promise.withResolvers<void>();
+  setTimeout(settle, 300);
+  await settled;
 
-  _client = client;
   return client;
 }
 
@@ -279,19 +296,32 @@ function detectLanguage(filePath: string): string {
 }
 
 /**
- * Shut down the active LSP client. Exported as the session-teardown seam —
+ * Shut down ALL active LSP clients. Exported as the session-teardown seam —
  * the transport's close() calls it so a closed session never leaves a
  * language server running.
  */
 export function shutdownLspClient(): void {
-  if (!_client) return;
+  for (const starting of _clients.values()) {
+    void starting.then(killClient, () => undefined);
+  }
+  _clients.clear();
+}
+
+/** Shut down one cwd's client (the tool's reload op). */
+function shutdownClientFor(cwd: string): void {
+  const starting = _clients.get(path.resolve(cwd));
+  if (!starting) return;
+  _clients.delete(path.resolve(cwd));
+  void starting.then(killClient, () => undefined);
+}
+
+function killClient(client: LspClientState): void {
   try {
-    sendNotification(_client, "exit", {});
-    _client.process.kill();
+    sendNotification(client, "exit", {});
+    client.process.kill();
   } catch {
     // best effort
   }
-  _client = null;
 }
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
@@ -438,14 +468,16 @@ export const lspTool = (cwd: string): AgentTool<typeof LspParams, unknown> => ({
     try {
       // Status and reload don't need a file
       if (action === "status") {
-        if (_client) {
-          return textResult(`LSP server: active (${_client.initialized ? "initialized" : "starting"}), ${_client.openFiles.size} files open, root ${_client.rootUri}`);
+        const starting = _clients.get(path.resolve(cwd));
+        if (starting) {
+          const client = await starting;
+          return textResult(`LSP server: active (${client.initialized ? "initialized" : "starting"}), ${client.openFiles.size} files open, root ${client.rootUri}`);
         }
         return textResult("LSP server: not started. Run an LSP operation on a file to auto-start.");
       }
 
       if (action === "reload") {
-        shutdownLspClient();
+        shutdownClientFor(cwd);
         return textResult("LSP server shut down. Next operation will auto-start.");
       }
 

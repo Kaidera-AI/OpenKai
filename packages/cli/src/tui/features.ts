@@ -23,6 +23,7 @@ export const FEATURES: readonly FeatureDef[] = [
   { key: "autoUpdate", label: "Auto-update", description: "standalone channel self-upgrade (rollback stays)" },
   { key: "telemetry", label: "Fusion telemetry", description: "run records to .openkai/fusion + Cortex artifacts" },
   { key: "autoCompact", label: "Auto-compact", description: "elide the middle when context crosses 80% (OpenCode)" },
+  { key: "mouse", label: "Mouse support", description: "wheel scroll, drag-select copy, scrollbar, clickable URLs (Claude Code)" },
 ];
 
 const configFile = (): string => path.join(homedir(), ".openkai", "config.json");
