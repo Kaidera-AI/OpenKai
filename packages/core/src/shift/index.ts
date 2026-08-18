@@ -19,6 +19,8 @@ export {
   type BudgetConfig,
   FallbackExhaustedError,
   BudgetExceededError,
+  routeWithTier,
+  type TierRouteResult,
 } from "./router.js";
 
 export {

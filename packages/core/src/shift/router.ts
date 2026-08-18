@@ -21,6 +21,7 @@ import {
   type ShiftInput,
   type StageConfig,
 } from "./stages.js";
+import { decideTier } from "./tier.js";
 import {
   createRedactingSink,
   type ActivitySink,
@@ -423,4 +424,55 @@ export function shiftRoute(
   const stage = router.classify(input);
   const result = router.route(stage);
   return { stage, result };
+}
+
+/**
+ * OK-9.1 — tier-aware routing: classify the stage, then let the Switchyard
+ * tier scorer move the turn between an (efficient, capable) model pair.
+ * The decision carries its `source` (override | tests_passed | dimensions |
+ * fall_open) onto the activity feed — Switchyard's observability discipline.
+ * Pure over the provided signals; no model call on the hot path.
+ */
+export interface TierRouteResult {
+  stage: Stage;
+  tier: "efficient" | "capable";
+  model: string;
+  provider: string;
+  source: string;
+  score: number;
+  reason: string;
+}
+
+export interface TierRouteOptions {
+  stageConfig?: StageConfig;
+  onActivity?: ActivitySink;
+}
+
+export function routeWithTier(
+  input: ShiftInput,
+  signals: import("./tier.js").TierInput,
+  options: TierRouteOptions,
+  tiers: { efficient: FallbackTarget; capable: FallbackTarget },
+): TierRouteResult {
+  const stage = classifyStage(input, options.stageConfig);
+  const decision = decideTier(signals, "efficient");
+  const pick = decision.tier === "capable" ? tiers.capable : tiers.efficient;
+  const sink = options.onActivity ? createRedactingSink(options.onActivity) : undefined;
+  sink?.({
+    kind: "routing",
+    stage,
+    model: pick.model,
+    provider: pick.provider,
+    attempt: 0,
+    reason: `tier=${decision.tier} source=${decision.source} score=${decision.score.toFixed(3)} :: ${decision.reason}`,
+  });
+  return {
+    stage,
+    tier: decision.tier,
+    model: pick.model,
+    provider: pick.provider,
+    source: decision.source,
+    score: decision.score,
+    reason: decision.reason,
+  };
 }

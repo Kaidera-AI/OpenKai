@@ -1059,3 +1059,34 @@ test("tier: spinning deep run escalates via dimensions", () => {
   assert.equal(d.tier, "capable");
   assert.equal(d.source, "dimensions");
 });
+
+// ── OK-9.1 routeWithTier wiring ─────────────────────────────────────────────
+
+import { routeWithTier } from "@kaidera/openkai-core";
+
+test("routeWithTier: critical signal escalates to the capable pair member", () => {
+  const events: Array<{ reason?: string }> = [];
+  const r = routeWithTier(
+    { prompt: "fix the build" },
+    { signals: [{ tool: "bash", resultText: "FATAL: out of memory" }], turnDepth: 2, compacted: false },
+    { onActivity: (e) => events.push(e as never) },
+    { efficient: { provider: "nvidia", model: "cheap" }, capable: { provider: "anthropic", model: "opus" } },
+  );
+  assert.equal(r.tier, "capable");
+  assert.equal(r.model, "opus");
+  assert.equal(r.source, "override");
+  assert.equal(events.length, 1);
+  assert.match(events[0]!.reason ?? "", /source=override/);
+});
+
+test("routeWithTier: clean settled run stays efficient", () => {
+  const r = routeWithTier(
+    { prompt: "fix the build" },
+    { signals: [{ tool: "edit_file", resultText: "ok" }, { tool: "bash", resultText: "3 passed, 0 failed" }], turnDepth: 3, compacted: false },
+    {},
+    { efficient: { provider: "nvidia", model: "cheap" }, capable: { provider: "anthropic", model: "opus" } },
+  );
+  assert.equal(r.tier, "efficient");
+  assert.equal(r.model, "cheap");
+  assert.equal(r.source, "tests_passed");
+});
