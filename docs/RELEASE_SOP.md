@@ -77,3 +77,38 @@ After every release, refresh ALL local copies so UAT matches what ships:
 - `cp packages/cli/bin/openkai-darwin-arm64 ~/.local/bin/openkai`
 - `cp packages/cli/bin/openkai-darwin-arm64 ~/.local/bin/openkai-next`
 - verify `which -a openkai` and that each reports the released version.
+
+## Pre-publish consolidation checklist (added 2026-08-18)
+
+Before ANY version is published, every item must be checked. This exists
+because features validated on the `openkai-next` candidate repeatedly failed
+to reach the published channel (stale binaries, unmerged branches).
+
+**Fold-in gate — the candidate IS the release:**
+1. `openkai-next` (the UAT candidate) is rebuilt from the SAME commit that
+   will be published. Never publish a commit the candidate wasn't built from.
+2. Diff the candidate's feature surface against the release commit:
+   `git log --oneline <candidate-build-commit>..HEAD` must be empty (or every
+   delta intentionally listed).
+3. Every feature the CTO tested on `openkai-next` (brand, mouse, panels,
+   commands) is present in the published tarball — verify by unpacking:
+   `npm pack @kaidera/openkai@<v> && tar -xzf` and grep the dist for the
+   feature markers.
+4. All research/handoff work intended for the release is MERGED to main
+   (check `git branch --contains` for feature branches).
+
+**Quality gate:**
+5. `npm test` full suite green on the release commit.
+6. `scripts/security-audit.sh` PASSED on the release commit.
+7. CHANGELOG entry for the version exists and lists every folded increment.
+
+**Channel gate (after consent):**
+8. npm core→cli lockstep publish; version strings bumped in all five places.
+9. GitHub release created with 4 binaries + sha256 sidecars + `latest.json`
+   (asset MUST be named latest.json); manifest `version` == npm version;
+   `curl -sL .../releases/latest/download/latest.json` serves it.
+10. `install.sh` default + Homebrew formula repointed with recomputed sha256;
+    both pushed; `brew info` shows the new stable.
+11. Local-binary hygiene: refresh ~/.local/bin/openkai + openkai-next;
+    `which -a openkai` reports the released version everywhere.
+12. CTO explicit consent recorded for THIS version in THIS session.
