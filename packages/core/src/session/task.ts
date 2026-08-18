@@ -28,7 +28,47 @@ const TaskParams = Type.Object({
   timeoutSeconds: Type.Optional(
     Type.Integer({ description: "Wall-clock limit for the child run (default 300s). On expiry the child is aborted.", minimum: 1 }),
   ),
+  outputSchema: Type.Optional(
+    Type.String({
+      description:
+        "Optional JSON contract for the child's answer. The child is instructed to return ONLY a JSON object with these keys; the parent extracts and validates it (required keys present) and returns the parsed JSON as text.",
+    }),
+  ),
 });
+
+/**
+ * Extract a JSON object from the child's answer (fenced ```json block first,
+ * else the first balanced {...} span) and check every required key exists.
+ * Returns the pretty-printed JSON or an error string.
+ */
+export function extractAndValidateJson(answer: string, schema: string): { json?: string; error?: string } {
+  let candidate: string | undefined;
+  const fenced = answer.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidate = fenced[1]!.trim();
+  if (!candidate) {
+    const start = answer.indexOf("{");
+    const end = answer.lastIndexOf("}");
+    if (start >= 0 && end > start) candidate = answer.slice(start, end + 1);
+  }
+  if (!candidate) return { error: "no JSON object found in the subagent's answer" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch (error) {
+    return { error: `child JSON did not parse: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { error: "child returned JSON that is not an object" };
+  }
+  // Required keys come from the schema text: "key": patterns.
+  const required = [...schema.matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"\s*:/g)].map((m) => m[1]!);
+  const record = parsed as Record<string, unknown>;
+  const missing = required.filter((k) => !(k in record));
+  if (missing.length > 0) {
+    return { error: `child JSON missing required keys: ${missing.join(", ")}` };
+  }
+  return { json: JSON.stringify(parsed, null, 2) };
+}
 
 /** task: run a read-only subagent and return its settled answer. */
 export function taskTool(cwd: string, parentModelId: string): AgentTool<typeof TaskParams, unknown> {
@@ -54,6 +94,12 @@ export function taskTool(cwd: string, parentModelId: string): AgentTool<typeof T
         cwd,
       });
 
+      // outputSchema (subagent steering): append a JSON-contract instruction
+      // so the child's settled answer is machine-readable.
+      const childPrompt = params.outputSchema
+        ? `${params.prompt}\n\nRespond with ONLY a JSON object (no prose) matching exactly this contract:\n${params.outputSchema}`
+        : params.prompt;
+
       // Teardown: on timeout or parent-abort, abort the child run and close
       // the transport — close() ends the event queue, which unblocks the
       // `for await` below (the queue's pending next() resolves "done").
@@ -75,7 +121,7 @@ export function taskTool(cwd: string, parentModelId: string): AgentTool<typeof T
       let answer = "";
       try {
         const events = transport.events();
-        await transport.prompt(params.prompt);
+        await transport.prompt(childPrompt);
 
         for await (const event of events) {
           if (event.kind === "session_end") break;
@@ -107,6 +153,16 @@ export function taskTool(cwd: string, parentModelId: string): AgentTool<typeof T
           }
           answer = parts.join("\n");
           break;
+        }
+        if (params.outputSchema) {
+          const result = extractAndValidateJson(answer, params.outputSchema);
+          if (result.error) {
+            return textResult(`subagent output failed the schema: ${result.error}\n\nraw answer:\n${answer.slice(0, 2000)}`, {
+              error: true,
+              model: params.modelId ?? parentModelId,
+            });
+          }
+          return textResult(result.json!, { model: params.modelId ?? parentModelId, schema: true });
         }
         return textResult(answer.length > 0 ? answer : "(subagent produced no text)", {
           model: params.modelId ?? parentModelId,
