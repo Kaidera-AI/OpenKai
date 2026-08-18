@@ -47,14 +47,45 @@ CLI and core bump to 0.1.5 in lockstep.
 
 ### Hub & connectors
 - **`openkai serve`**: loopback-only HTTP hub (refuses non-loopback hosts and
-  starts only with `OPENKAI_HUB_TOKEN`); `POST /prompt` bearer-gated, read
-  endpoints token-free on loopback. **`openkai bridge`**: pipe-line chat
-  connector relaying into the hub.
+  starts only with `OPENKAI_HUB_TOKEN`); `POST /prompt`, `/sessions` and
+  `/memory` bearer-gated; only `/health` is token-free. **`openkai bridge`**:
+  pipe-line chat connector relaying into the hub.
 
-### Security posture (ahead of the K3 adversarial pass)
-- Verified invariants: cwd containment, `.env`/`.ssh` deny floor on read AND
-  write, hashline stale-tag refusal, `bash` never auto-allowed, hub read-only
-  by construction. 225/225 green.
+### Security posture (E012 adversarial pass — ren@openkai)
+- Full deep review (six parallel slices, every finding source-verified) followed
+  by a same-release fix programme. Headline closures:
+  - **`hashline_edit` is now gated**: approval round-trip, deny floor, canonical
+    containment (sibling-prefix + symlink escapes closed), shadow snapshot —
+    same posture as `write_file`/`edit_file`. Previously it wrote ungated.
+  - **MCP tools merge, never replace** the built-in set, execute **through the
+    permission gate**, and spawn with a **secret-scrubbed environment**
+    (`procenv.ts`; `mcp test` probes with a minimal env).
+  - **Upgrade trust root hardened**: project `.env` can no longer set
+    `OPENKAI_*`/`CORTEX_*` knobs (credential-names-only allowlist), release-key
+    pinning seam (`OPENKAI_RELEASE_KEY` build define, fail-closed when pinned),
+    loud warning when unsigned; `install.sh` now performs the sha256 check its
+    header always claimed.
+  - **Hub**: bearer required on `/sessions` + `/memory`, Host-header allowlist,
+    timing-safe token compare, IPv6 bind fixed, 1 MiB body cap; `bridge --port`
+    validated (userinfo-injection token leak closed).
+  - **Plan mode enforced at the gate** (in-flight turns included), single
+    source of truth on the transport; abort/close settle pending approvals
+    (`rejectAll`) and kill gated `bash` children; control events can no longer
+    be dropped by the bounded event queue.
+  - **Session resume** rehydrates header/seq/parent chain (no more duplicate
+    headers); corrupt JSONL tails tolerated; per-session advisory locks.
+  - **Fusion**: gate timeouts no longer masquerade as exit 127 (spurious
+    repairs), repaired gates re-pass operator consent, telemetry redacts before
+    persist/export, corrupt log lines can't zero bandit history.
+  - **Shadow git** strips ambient `GIT_*` (a poisoned `GIT_INDEX_FILE` no longer
+    touches the real index) and snapshots gitignored files (`add -A -f`).
+  - **TUI**: every model/tool render path sanitised (status chip, notices,
+    previews, attention notifications), `submit()` busy guard, Ctrl+K palette
+    key bound, error turns render.
+  - **Auth**: OAuth credentials persist to `~/.openkai/auth.json` (0600) via a
+    shared file-backed `CredentialStore` — `login` survives restarts.
+- Regression coverage: `test/security-repro-e012.test.ts` pins the fixed
+  contracts. 238/238 green.
 
 ### Packaging
 - npm: `@kaidera/openkai@0.1.5` + `@kaidera/openkai-core@0.1.5` (dist-tag

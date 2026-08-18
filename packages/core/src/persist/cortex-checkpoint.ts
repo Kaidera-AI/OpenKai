@@ -8,6 +8,14 @@
  * `source_path` so the Cortex dedup-by-session applies. We only checkpoint at
  * turn settlement (after `turn_end`/`session_end`), never mid-stream.
  *
+ * Failure semantics (ren review): pending entries are only spliced and
+ * `lastFlushHash` only advanced AFTER a successful POST — a failed flush
+ * leaves the queue intact so the next settlement re-sends it. An explicit
+ * `flushNow()` retries with bounded backoff (1s/2s/4s) before giving up.
+ * `record()` dedups by seq watermark: the transport re-reads the whole JSONL
+ * file each turn, and only entries newer than the last recorded seq are
+ * appended, so recording stays O(new) instead of O(n²) over the session.
+ *
  * Lifecycle events (`POST /log`) mark `started`/`stopped` so the run is
  * visible on the team_events feed (`openkai events --print`).
  */
@@ -137,14 +145,23 @@ export class CortexCheckpoint {
   private pendingMessages: SessionIngestMessage[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushHash = "";
+  /** Seq watermark: entries at or below this were already recorded. */
+  private lastRecordedSeq = 0;
 
   constructor(options: CortexCheckpointOptions) {
     this.options = options;
   }
 
-  /** Record settled entries (called by the transport loop after a turn ends). */
+  /**
+   * Record settled entries (called by the transport loop after a turn ends).
+   * The caller re-reads the whole session file each turn, so only entries
+   * newer than the seq watermark are appended — re-recording the full tree
+   * every turn would be O(n²) over the session.
+   */
   record(entries: Entry[]): void {
-    const messages = entries
+    const fresh = entries.filter((e) => e.seq > this.lastRecordedSeq);
+    if (fresh.length === 0) return;
+    const messages = fresh
       .filter((e): e is MessageEntry => e.type === "message")
       .map((e) => ({
         role: mapRole(e.message.role),
@@ -152,7 +169,10 @@ export class CortexCheckpoint {
         ts: new Date(e.timestamp).toISOString(),
         metadata: { seq: e.seq, entryId: e.id, parentId: e.parentId },
       }));
-    this.pendingEntries.push(...entries);
+    for (const e of fresh) {
+      if (e.seq > this.lastRecordedSeq) this.lastRecordedSeq = e.seq;
+    }
+    this.pendingEntries.push(...fresh);
     this.pendingMessages.push(...messages);
     this.schedule();
   }
@@ -182,16 +202,28 @@ export class CortexCheckpoint {
     }
   }
 
-  /** Flush the checkpoint now (debounce-bypass). */
+  /** Flush the checkpoint now (debounce-bypass, bounded retry on failure). */
   async flushNow(): Promise<SessionIngestResult | undefined> {
+    return this.flush(true);
+  }
+
+  /**
+   * Flush pending entries. State only advances on success: the pending queue
+   * is spliced and `lastFlushHash` set AFTER the POST lands, so a failure
+   * leaves everything queued for the next settlement. An explicit flush
+   * (`withRetry`) retries with 1s/2s/4s backoff before giving up; a debounced
+   * flush fails once and relies on the next `record()` to re-send.
+   */
+  private async flush(withRetry: boolean): Promise<SessionIngestResult | undefined> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
     if (this.pendingMessages.length === 0) return undefined;
 
-    const messages = this.pendingMessages.splice(0);
-    this.pendingEntries = [];
+    // Snapshot — the queues stay intact until the POST succeeds.
+    const messages = [...this.pendingMessages];
+    const entryCount = this.pendingEntries.length;
 
     const payload: SessionIngestPayload = {
       session_uuid: this.options.sessionId,
@@ -222,25 +254,47 @@ export class CortexCheckpoint {
       lastTs: messages.at(-1)?.ts,
     });
     if (hash === this.lastFlushHash) return undefined;
-    this.lastFlushHash = hash;
 
-    try {
-      const result = await this.options.client.postJson<SessionIngestResult>(
-        "/sessions/ingest",
-        payload,
-        { agent: this.options.agent },
-      );
-      return result;
-    } catch (error) {
-      if (error instanceof CortexApiError && error.status === 409) {
-        // Already ingested — idempotent no-op.
-        return undefined;
+    // Initial attempt plus three backoff retries (1s/2s/4s) for explicit
+    // flushes; debounced flushes get the initial attempt only.
+    const waits = withRetry ? [0, 1000, 2000, 4000] : [0];
+    for (let attempt = 0; attempt < waits.length; attempt += 1) {
+      const wait = waits[attempt] ?? 0;
+      if (wait > 0) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        setTimeout(resolve, wait);
+        await promise;
       }
-      console.error(
-        `[openkai] POST /sessions/ingest failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return undefined;
+      try {
+        const result = await this.options.client.postJson<SessionIngestResult>(
+          "/sessions/ingest",
+          payload,
+          { agent: this.options.agent },
+        );
+        this.commitFlush(messages.length, entryCount, hash);
+        return result;
+      } catch (error) {
+        if (error instanceof CortexApiError && error.status === 409) {
+          // Already ingested — idempotent no-op; count as delivered.
+          this.commitFlush(messages.length, entryCount, hash);
+          return undefined;
+        }
+        if (attempt === waits.length - 1) {
+          console.error(
+            `[openkai] POST /sessions/ingest failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return undefined;
+        }
+      }
     }
+    return undefined;
+  }
+
+  /** Advance state after a successful POST: drop the delivered prefix. */
+  private commitFlush(messageCount: number, entryCount: number, hash: string): void {
+    this.pendingMessages.splice(0, messageCount);
+    this.pendingEntries.splice(0, entryCount);
+    this.lastFlushHash = hash;
   }
 
   /** Schedule a debounced flush. */
@@ -249,7 +303,7 @@ export class CortexCheckpoint {
     const delay = this.options.debounceMs ?? 1500;
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.flushNow();
+      void this.flush(false);
     }, delay);
   }
 }

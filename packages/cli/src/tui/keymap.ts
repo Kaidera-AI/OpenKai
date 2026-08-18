@@ -49,6 +49,7 @@ export const OPENKAI_KEYBINDINGS: KeybindingDefinitions = {
   ...TUI_KEYBINDINGS,
   "openkai.toggleThinking": { defaultKeys: "ctrl+o", description: "Toggle thinking density" },
   "openkai.quit": { defaultKeys: "ctrl+c", description: "Quit the TUI (with confirm)" },
+  "openkai.openPalette": { defaultKeys: "ctrl+k", description: "Open the command palette" },
   "openkai.stash": { defaultKeys: "ctrl+s", description: "Stash / pop the prompt draft" },
   "openkai.historySearch": { defaultKeys: "ctrl+r", description: "Search prompt history" },
   "openkai.changelog": { defaultKeys: "ctrl+j", description: "What changed (in-product changelog)" },

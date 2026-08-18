@@ -12,6 +12,15 @@
  * (object sharing, no duplication), full-tree snapshot commits. Differences:
  * no 2 MiB file cap and no 7-day prune yet (recorded as follow-ups; the
  * shadow dir is local state the operator can delete).
+ *
+ * Two hard-won boundary rules:
+ *  1. The child env strips every inherited GIT_* variable before applying
+ *     the shadow identity — an inherited GIT_INDEX_FILE/GIT_DIR would
+ *     redirect shadow ops into the operator's real repo.
+ *  2. Snapshots use `git add -A -f` with an explicit `.openkai` pathspec
+ *     exclude, so GITIGNORED mutations (.env, dist/) are captured and
+ *     undo() can restore them — undo that silently skips the very files a
+ *     gated run is most likely to touch is not undo.
  */
 
 import { execFile } from "node:child_process";
@@ -47,11 +56,21 @@ export class ShadowGit {
   }
 
   private async git(args: string[]): Promise<string> {
+    // The child env is the operator's MINUS every GIT_* variable, plus the
+    // shadow identity. An inherited GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE
+    // (a parent git hook, a `git -c …` wrapper, direnv) would silently
+    // redirect shadow operations into the operator's real repository — the
+    // one thing this class exists to never touch.
+    const env: NodeJS.ProcessEnv = {};
+    for (const [name, value] of Object.entries(process.env)) {
+      if (name.startsWith("GIT_")) continue;
+      env[name] = value;
+    }
     try {
       const { stdout } = await execFileAsync(
         "git",
         ["--git-dir", this.gitDir, "--work-tree", this.cwd, ...args],
-        { env: { ...process.env, ...SHADOW_ENV }, maxBuffer: 16 * 1024 * 1024 },
+        { env: { ...env, ...SHADOW_ENV }, maxBuffer: 16 * 1024 * 1024 },
       );
       return stdout.trim();
     } catch (error) {
@@ -113,10 +132,17 @@ export class ShadowGit {
   /**
    * Commit the full current tree. Returns the snapshot sha, or the current
    * HEAD unchanged when the tree is clean (snapshots are idempotent).
+   *
+   * `add -A -f` is deliberate: undo must restore what a gated mutation
+   * changed, and mutations do not respect .gitignore — a builder that edits
+   * `.env` or writes into `dist/` must be undoable. The pathspec exclude on
+   * `.openkai` replaces the protection -f strips from the info/exclude rule
+   * (verified: -f overrides BOTH .gitignore and info/exclude, so without the
+   * pathspec the shadow would snapshot its own object store).
    */
   async snapshot(message: string): Promise<ShadowSnapshot> {
     await this.init();
-    await this.git(["add", "-A"]);
+    await this.git(["add", "-A", "-f", "--", ".", ":(exclude).openkai"]);
     const head = await this.head();
     const dirty = await this.git(["status", "--porcelain"]).then((s) => s.length > 0);
     if (!dirty && head) return { sha: head, message: "unchanged" };

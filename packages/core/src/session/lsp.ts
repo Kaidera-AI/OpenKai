@@ -10,6 +10,12 @@
  *
  * Pattern: omp's LSP tool (MIT, can1357/oh-my-pi), adapted for OpenKai's
  * AgentTool + TypeBox parameter surface.
+ *
+ * Confinement (ren's adversarial review): every `file` argument is routed
+ * through the same canonical containment + deny-floor check as the file tools
+ * ({@link guardPath}) — no absolute paths outside the session cwd, no floor
+ * hits, and relative paths resolve against the tool's cwd, not process.cwd().
+ * Semantics stay read-only: rename/code_actions only LIST proposed edits.
  */
 import { spawn as cpSpawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -17,6 +23,7 @@ import path from "node:path";
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
+import { guardPath } from "./tools.js";
 
 // ── JSON-RPC 2.0 helpers ────────────────────────────────────────────────────
 
@@ -271,8 +278,12 @@ function detectLanguage(filePath: string): string {
   return map[ext] ?? "plaintext";
 }
 
-/** Shut down the active LSP client. */
-function shutdownClient(): void {
+/**
+ * Shut down the active LSP client. Exported as the session-teardown seam —
+ * the transport's close() calls it so a closed session never leaves a
+ * language server running.
+ */
+export function shutdownLspClient(): void {
   if (!_client) return;
   try {
     sendNotification(_client, "exit", {});
@@ -434,7 +445,7 @@ export const lspTool = (cwd: string): AgentTool<typeof LspParams, unknown> => ({
       }
 
       if (action === "reload") {
-        shutdownClient();
+        shutdownLspClient();
         return textResult("LSP server shut down. Next operation will auto-start.");
       }
 
@@ -442,8 +453,18 @@ export const lspTool = (cwd: string): AgentTool<typeof LspParams, unknown> => ({
         return textResult("Error: file parameter required for this operation.");
       }
 
-      const client = await ensureClient(cwd, file);
-      const uri = fileToUri(file);
+      // Confinement: every file arg is routed through the shared canonical
+      // containment check (guardPath — same boundary as the file tools). No
+      // absolute paths outside cwd, no deny-floor hits; relative paths resolve
+      // against the TOOL's cwd, not process.cwd().
+      const guard = guardPath(cwd, file);
+      if (guard.refusal !== undefined) {
+        return textResult(`Error: ${guard.refusal}`);
+      }
+      const target = guard.target!;
+
+      const client = await ensureClient(cwd, target);
+      const uri = fileToUri(target);
       const l = (line ?? 1) - 1; // convert to 0-indexed
       const pos = { line: l, character: symbol ? 0 : 0 };
 
@@ -451,7 +472,7 @@ export const lspTool = (cwd: string): AgentTool<typeof LspParams, unknown> => ({
       let actualPos = pos;
       if (symbol && line) {
         try {
-          const fileContent = readFileSync(file, "utf-8");
+          const fileContent = readFileSync(target, "utf-8");
           const lines = fileContent.split("\n");
           const targetLine = lines[l];
           if (targetLine) {

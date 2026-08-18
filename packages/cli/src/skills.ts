@@ -210,18 +210,37 @@ export async function runSkillsAdd(options: SkillsAddOptions): Promise<number> {
   const name = fm["name"] ?? "";
   const description = fm["description"] ?? "";
   const fmScope = fm["scope"] ?? "";
-  const scope = options.scope ?? fmScope ?? "global";
+  const scope = options.scope ?? (fmScope || "global");
   const slug = slugify(name || path.basename(skillFolder));
 
   // Body hash + body ref.
   const bodyHash = await sha256File(skillMdPath);
 
   // Copy skill folder → .agents/skills/<slug>/.
-  const dest = path.join(skillsDir(), slug);
-  await fs.mkdir(skillsDir(), { recursive: true });
+  const skillsRoot = path.resolve(skillsDir());
+  const dest = path.resolve(skillsRoot, slug);
+  const sourceResolved = path.resolve(skillFolder);
+  // A dest inside (or equal to) the source makes copyDir self-recursive —
+  // copying a folder into itself until the path blows up.
+  if (dest === sourceResolved || dest.startsWith(sourceResolved + path.sep)) {
+    process.stderr.write(
+      `ERROR: destination ${dest} is inside the source ${sourceResolved} — refusing a self-recursive copy.\n`,
+    );
+    return 2;
+  }
+  await fs.mkdir(skillsRoot, { recursive: true });
   await fs.rm(dest, { recursive: true, force: true });
   await fs.mkdir(dest, { recursive: true });
-  await copyDir(skillFolder, dest);
+  try {
+    await copyDir(skillFolder, dest);
+  } catch (error) {
+    // Clean up the partial dest so a failed add never leaves half a skill.
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => undefined);
+    process.stderr.write(
+      `ERROR: copy failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return 1;
+  }
 
   const bodyRef = `${SKILLS_REL}/${slug}/SKILL.md`;
 
@@ -264,7 +283,25 @@ async function copyDir(src: string, dest: string): Promise<void> {
 
 // ── remove ───────────────────────────────────────────────────────────────────
 
+/** Slugs are lowercase DNS-ish labels; anything else never reaches the registry. */
+const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
 export async function runSkillsRemove(options: SkillsRemoveOptions): Promise<number> {
+  // Validate BEFORE the registry call: the slug is embedded in the Cortex
+  // DELETE path and in a local filesystem path below.
+  if (!SLUG_PATTERN.test(options.slug)) {
+    process.stderr.write(`ERROR: invalid skill slug "${options.slug}" (expected ${SLUG_PATTERN}).\n`);
+    return 2;
+  }
+
+  // Defence in depth: the resolved dest must stay inside .agents/skills/.
+  const skillsRoot = path.resolve(skillsDir());
+  const dest = path.resolve(skillsRoot, options.slug);
+  if (!dest.startsWith(skillsRoot + path.sep)) {
+    process.stderr.write(`ERROR: slug "${options.slug}" escapes the skills directory.\n`);
+    return 2;
+  }
+
   const client = makeClient(options);
   try {
     await client.deleteSkill(options.slug);
@@ -274,7 +311,6 @@ export async function runSkillsRemove(options: SkillsRemoveOptions): Promise<num
   }
 
   // Remove from .agents/skills/<slug>/.
-  const dest = path.join(skillsDir(), options.slug);
   try {
     await fs.rm(dest, { recursive: true, force: true });
   } catch {

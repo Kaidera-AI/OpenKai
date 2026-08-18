@@ -158,7 +158,7 @@ export class FallbackExhaustedError extends Error {
     super(
       `all fallback models exhausted for stage "${stage}" ` +
         `(tried ${chain.length}: ${chain.map((c) => `${c.provider}/${c.model}`).join(" → ")}); ` +
-        `last error was 429/5xx — increase the retry cap or add fallback casts.`,
+        `last error was 429/5xx/transient-network — increase the retry cap or add fallback casts.`,
     );
     this.stage = stage;
     this.chain = chain;
@@ -177,8 +177,9 @@ export class BudgetExceededError extends Error {
 }
 
 /**
- * The Shift router — stateful (tracks per-stage retry counts and cumulative
- * budget). One instance per task; discard after the task completes.
+ * The Shift router — stateful (tracks the current invocation's attempt
+ * counter, the per-task total fallback count, and cumulative budget).
+ * One instance per task; discard after the task completes.
  */
 export class ShiftRouter {
   private readonly cast: Cast;
@@ -187,11 +188,20 @@ export class ShiftRouter {
   private readonly maxRetries: number;
   private readonly budget: Required<BudgetConfig>;
   private readonly sink: ActivitySink | undefined;
-  private readonly retryCount: Record<Stage, number> = {
-    plan: 0,
-    build: 0,
-    review: 0,
-  };
+  /**
+   * Fallback attempts within the CURRENT invocation (one route() → next()*
+   * sequence). Reset by {@link route} so a fresh call never inherits an
+   * earlier call's attempts — the previous per-stage accumulation meant the
+   * second invocation of a stage started partway down its own chain.
+   */
+  private invocationAttempt = 0;
+  /**
+   * Total fallback attempts across the whole task — the per-task bound that
+   * `maxRetries` caps. Separate from the per-invocation counter on purpose:
+   * one invocation's retries must not exhaust another's, but a task must not
+   * retry forever across many invocations either.
+   */
+  private totalRetries = 0;
   private tokensUsed = 0;
   private costUsed = 0;
 
@@ -241,6 +251,9 @@ export class ShiftRouter {
    */
   route(stage: Stage): RouteResult {
     this.checkBudget();
+    // A route() call opens a new invocation: its fallback attempts count
+    // from zero (the per-task totalRetries cap still applies in next()).
+    this.invocationAttempt = 0;
     const chain = fallbackChain(stage, this.cast, this.fallbackCasts);
     const target = chain[0]!;
     const result: RouteResult = {
@@ -263,8 +276,10 @@ export class ShiftRouter {
   /**
    * Report an error for the current stage and get the next fallback target.
    *
-   * Only 429 (rate limit) and 5xx (server error) trigger a fallback — other
-   * errors (4xx auth, network) are terminal and throw immediately.
+   * Fallback-eligible errors: 429 (rate limit), 5xx (server error), and
+   * STATUSLESS transient network failures — ECONNRESET, ETIMEDOUT,
+   * ENOTFOUND, ECONNREFUSED, "fetch failed". A genuine 4xx (auth, bad
+   * request) is terminal: retrying it on another model changes nothing.
    *
    * Returns the next {@link RouteResult} in the fallback
    * chain, or throws {@link FallbackExhaustedError} when the chain or retry
@@ -273,7 +288,13 @@ export class ShiftRouter {
    */
   next(stage: Stage, error: { status?: number; message: string }): RouteResult {
     const status = error.status ?? 0;
-    const isFallbackEligible = status === 429 || (status >= 500 && status < 600);
+    // Statusless means no HTTP response ever arrived — a transient network
+    // failure. Match the well-known errno names and undici's "fetch failed".
+    const isTransientNetwork =
+      status === 0 &&
+      /ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|fetch failed/i.test(error.message);
+    const isFallbackEligible =
+      status === 429 || (status >= 500 && status < 600) || isTransientNetwork;
 
     if (!isFallbackEligible) {
       // Non-retryable error — do not fall back, surface immediately.
@@ -288,17 +309,19 @@ export class ShiftRouter {
       );
     }
 
-    this.retryCount[stage] += 1;
+    this.invocationAttempt += 1;
+    this.totalRetries += 1;
     const chain = fallbackChain(stage, this.cast, this.fallbackCasts);
-    const attempt = this.retryCount[stage];
+    const attempt = this.invocationAttempt;
 
-    // Capped-retry bound: stop after maxRetries fallback attempts OR when
-    // the chain is exhausted — whichever comes first.
-    if (attempt > this.maxRetries || attempt >= chain.length) {
+    // Two bounds: the invocation walks its own chain from the front
+    // (attempt indexes the chain), and the task as a whole stops after
+    // maxRetries total fallbacks — whichever comes first.
+    if (this.totalRetries > this.maxRetries || attempt >= chain.length) {
       this.emit({
         kind: "routing_error",
         stage,
-        reason: `retried ${attempt} time(s); chain exhausted or cap reached`,
+        reason: `retried ${this.totalRetries} time(s) this task; chain exhausted or cap reached`,
       });
       throw new FallbackExhaustedError(stage, chain);
     }

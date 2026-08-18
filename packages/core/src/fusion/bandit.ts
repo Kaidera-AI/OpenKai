@@ -41,7 +41,10 @@ export function xorshift32(seed: number): () => number {
     state ^= state >>> 17;
     state ^= state << 5;
     state >>>= 0;
-    return state / 0xffffffff;
+    // Divide by 2^32, not 2^32−1: state tops out at 0xffffffff, so the old
+    // divisor could return exactly 1.0 — outside the half-open [0, 1) range
+    // every consumer of a uniform sampler is entitled to assume.
+    return state / 0x100000000;
   };
 }
 

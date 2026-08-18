@@ -7,6 +7,8 @@ export {
   type MessageEntry,
   type SessionHeader,
   type SessionStoreOptions,
+  SessionFormatError,
+  SessionLockError,
   SessionStore,
   defaultRoot,
   forkSession,

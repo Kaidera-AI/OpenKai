@@ -3,6 +3,16 @@
  * input. Records are local-first (ren A1: standalone mode writes the same
  * file). When a Cortex project is attached (managed mode), each record is
  * also exported as a Cortex artifact — the queryable, embeddable store.
+ *
+ * Two boundaries are redacted before anything leaves the process: the task
+ * text and each role's output pass through redactSecrets (../secrets.js) on
+ * BOTH the local append and the Cortex export. The in-memory FuseResult is
+ * never redacted — the operator sees their own run verbatim; the persistent
+ * stores get the sanitised copy.
+ *
+ * The log is bounded: when an append pushes the file past 2000 lines it is
+ * compacted to the most recent 1000 records. Rotation is best-effort like
+ * the append itself — a failed compaction never fails the run.
  */
 
 import { promises as fs } from "node:fs";
@@ -10,11 +20,33 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import type { CortexClient } from "../cortex/client.js";
+import { redactSecrets } from "../secrets.js";
 import type { FusionRunRecord } from "./types.js";
+
+/** Rotation bounds: compact to KEEP_LINES records once past MAX_LINES. */
+const MAX_LINES = 2_000;
+const KEEP_LINES = 1_000;
 
 /** Default fusion telemetry log: `.openkai/fusion/runs.jsonl` under cwd. */
 export function defaultFusionLogPath(cwd: string = process.cwd()): string {
   return path.join(cwd, ".openkai", "fusion", "runs.jsonl");
+}
+
+/**
+ * The persistent copy of a record: task and role text redacted, everything
+ * else (ids, verdicts, usage, timings) verbatim. Returns a new object — the
+ * caller's in-memory record is never mutated.
+ */
+function redactRecord(record: FusionRunRecord): FusionRunRecord {
+  return {
+    ...record,
+    task: redactSecrets(record.task),
+    roles: record.roles.map((role) => ({
+      ...role,
+      text: redactSecrets(role.text),
+      ...(role.error !== undefined ? { error: redactSecrets(role.error) } : {}),
+    })),
+  };
 }
 
 /** Append one run record. Creates the directory lazily; never throws on I/O
@@ -25,25 +57,41 @@ export async function recordFusionRun(
 ): Promise<void> {
   try {
     await fs.mkdir(path.dirname(logPath), { recursive: true });
-    await fs.appendFile(logPath, `${JSON.stringify(record)}\n`, "utf-8");
+    await fs.appendFile(logPath, `${JSON.stringify(redactRecord(record))}\n`, "utf-8");
+    // Bounded log: compact once past the cap, keeping the most recent records.
+    const text = await fs.readFile(logPath, "utf-8").catch(() => "");
+    const lines = text.split("\n").filter((line) => line.trim().length > 0);
+    if (lines.length > MAX_LINES) {
+      await fs.writeFile(logPath, `${lines.slice(-KEEP_LINES).join("\n")}\n`, "utf-8");
+    }
   } catch {
     // telemetry is a by-product, never a failure mode
   }
 }
 
-/** Read every record (for the report command). */
+/**
+ * Read every record (for the report command). One corrupt line is skipped,
+ * never fatal: a torn write or a hand-edit must not zero the history.
+ */
 export async function readFusionRuns(
   logPath: string = defaultFusionLogPath(),
 ): Promise<FusionRunRecord[]> {
+  let text: string;
   try {
-    const text = await fs.readFile(logPath, "utf-8");
-    return text
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as FusionRunRecord);
+    text = await fs.readFile(logPath, "utf-8");
   } catch {
     return [];
   }
+  const records: FusionRunRecord[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim().length === 0) continue;
+    try {
+      records.push(JSON.parse(line) as FusionRunRecord);
+    } catch {
+      // skip the corrupt line, keep the rest of the history
+    }
+  }
+  return records;
 }
 
 /**
@@ -56,25 +104,28 @@ export async function exportFusionRunArtifact(
   agent: string,
 ): Promise<boolean> {
   try {
-    const raw = JSON.stringify(record);
+    // Same redaction boundary as the local log — the two stores must never
+    // drift on what leaves the process.
+    const exported = redactRecord(record);
+    const raw = JSON.stringify(exported);
     const contentHash = createHash("sha256").update(raw).digest("hex");
     await client.postJson(
       "/artifacts",
       {
-        source_file: `.openkai/fusion/runs.jsonl#${record.runId}`,
+        source_file: `.openkai/fusion/runs.jsonl#${exported.runId}`,
         content_hash: contentHash,
         source_type: "fusion_run",
         modality: "json",
         raw_content: raw,
-        caption: `fusion run ${record.runId} (gate: ${record.gate.outcome})`,
+        caption: `fusion run ${exported.runId} (gate: ${exported.gate.outcome})`,
         metadata: {
-          runId: record.runId,
-          task: record.task,
-          gated: record.gated,
-          gateOutcome: record.gate.outcome,
-          models: record.roles.map((r) => `${r.role}:${r.modelId}`),
-          wallMs: record.wallMs,
-          ts: record.ts,
+          runId: exported.runId,
+          task: exported.task,
+          gated: exported.gated,
+          gateOutcome: exported.gate.outcome,
+          models: exported.roles.map((r) => `${r.role}:${r.modelId}`),
+          wallMs: exported.wallMs,
+          ts: exported.ts,
         },
       },
       { agent },

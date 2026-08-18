@@ -19,6 +19,12 @@ export interface RoleOutput {
   text: string;
   usage: Usage | undefined;
   latencyMs: number;
+  /**
+   * Set when the role's completion failed (panel.ts allSettled): the run
+   * record keeps the failure attributed to its role instead of discarding
+   * the surviving role's output with it. Absent on success.
+   */
+  error?: string;
 }
 
 /** A kept disagreement, with both positions attributed. */
@@ -64,8 +70,16 @@ export interface GateCheck {
 /** The outcome of executing one check. */
 export interface GateCheckResult {
   check: GateCheck;
-  exitCode: number;
+  /**
+   * The shell's genuine exit code; `null` when there isn't one — the process
+   * was killed on timeout, or failed to spawn. A 127 here is ALWAYS the
+   * shell's own "command not found" (gate.ts maps no other condition onto
+   * it), which is what makes defective-gate detection sound.
+   */
+  exitCode: number | null;
   output: string;
+  /** True when the check hit the timeout and its process group was killed. */
+  timedOut: boolean;
   pass: boolean;
 }
 
@@ -101,6 +115,16 @@ export class WeakGateError extends Error {
     super(message);
     this.runs = runs;
   }
+}
+
+/**
+ * Thrown at fuse() entry when `gate: true` is requested with no `applyWork`
+ * wired: completion-only roles cannot change the workspace, so the baseline
+ * RED state can never flip — the gate is unwinnable and would burn
+ * panel/synthesis tokens only to halt. Fail fast instead.
+ */
+export class UnwinnableGateError extends Error {
+  override readonly name = "UnwinnableGateError";
 }
 
 /** Thrown at the retry cap — loud halt, no silent loops. */

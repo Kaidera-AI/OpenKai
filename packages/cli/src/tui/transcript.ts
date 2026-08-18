@@ -44,7 +44,8 @@ const PREVIEW_LEN = 120;
 /** Truncate a value to a single-line preview. */
 function preview(value: unknown): string {
   const str = typeof value === "string" ? value : safeStringify(value);
-  const oneLine = str.replace(/\n/g, " ");
+  // Tool args/results are model-chosen — sanitise before the card (E001 §2).
+  const oneLine = sanitizeTerminalText(str).replace(/\n/g, " ");
   return oneLine.length > PREVIEW_LEN ? oneLine.slice(0, PREVIEW_LEN - 1) + "…" : oneLine;
 }
 
@@ -162,15 +163,34 @@ export class Transcript implements Component {
   /**
    * Add a local notice block — slash-command output (`/help`, `/sessions`, …).
    * Never sent to the model and never persisted; it is operator-local chrome.
+   * Sanitised here (single choke point): notice bodies routinely embed
+   * model/tool text — error messages, paths, session ids (E001 §2).
    */
   addNotice(lines: string | string[]): void {
     const body = Array.isArray(lines) ? lines.join("\n") : lines;
+    const clean = sanitizeTerminalText(body);
     const comp = new Text(
-      body.split("\n").map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`).join("\n"),
+      clean.split("\n").map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`).join("\n"),
       1,
       0,
     );
-    this.blocks.push({ kind: "notice", text: body, comp });
+    this.blocks.push({ kind: "notice", text: clean, comp });
+  }
+
+  /**
+   * Add a failure notice — danger-tinted so a failed turn / persist error
+   * reads differently from routine chrome. Same choke point as
+   * {@link addNotice}: the message can carry model-sourced text.
+   */
+  addError(lines: string | string[]): void {
+    const body = Array.isArray(lines) ? lines.join("\n") : lines;
+    const clean = sanitizeTerminalText(body);
+    const comp = new Text(
+      clean.split("\n").map((line) => `${toolBorder("▎ ")}${highlight.danger(line)}`).join("\n"),
+      1,
+      0,
+    );
+    this.blocks.push({ kind: "notice", text: clean, comp });
   }
 
   /**
@@ -280,6 +300,7 @@ export class Transcript implements Component {
     args?: unknown;
     result?: unknown;
     isError?: boolean;
+    message?: string;
   }): void {
     switch (event.kind) {
       case "connected":
@@ -299,6 +320,14 @@ export class Transcript implements Component {
         this.settleTool(event.toolCallId ?? "?", event.result, event.isError ?? false);
         break;
       case "turn_end":
+        this.liveAssistant = null;
+        this.liveThinking = null;
+        this.liveBtw = null;
+        break;
+      case "error":
+        // Core emits this at turn settlement when the assistant message has
+        // stopReason "error" — render danger-tinted, settle the live turn.
+        this.addError(event.message ?? "turn failed");
         this.liveAssistant = null;
         this.liveThinking = null;
         this.liveBtw = null;

@@ -414,6 +414,7 @@ test("gate consent: refused approval skips execution entirely (outcome refused)"
     builderModel: rig.model,
     gate: true,
     approveGate: () => false,
+    applyWork: () => undefined,
   });
   assert.equal(result.gate.outcome, "refused");
   assert.equal(result.gateRuns.length, 0, "no gate check may execute without consent");
@@ -435,8 +436,9 @@ test("gate consent: approval lets the designed gate run", async () => {
     builderModel: rig.model,
     gate: true,
     approveGate: () => true,
+    applyWork: () => undefined,
   });
-  // Baseline fails RED (command `false`), evaluation fails, no applyWork → halt.
+  // Baseline fails RED (command `false`), evaluations fail, rounds exhausted → halt.
   assert.equal(result.gate.outcome, "halt");
   assert.ok(result.gateRuns.length >= 2, "baseline + evaluation executed with consent");
 });
@@ -477,6 +479,7 @@ test("gate consent: an approved check does not inherit secret-shaped env vars", 
       gate: true,
       cwd,
       approveGate: () => true,
+      applyWork: () => undefined,
     });
     const seen = await readFile(leak, "utf-8");
     assert.doesNotMatch(seen, /SHOULD-NOT-LEAK-1234/, "secret-NAMED var is scrubbed");
@@ -533,6 +536,7 @@ test("REPRO 9 (fusion): a designed gate with NO consent channel refuses", async 
       builderModel: rig.model,
       gate: true,
       cwd,
+      applyWork: () => undefined,
       // approveGate deliberately omitted — the TUI's call shape.
     });
 

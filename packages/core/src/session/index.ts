@@ -34,3 +34,4 @@ export {
   resolvePreviewPath,
   truncateDiff,
 } from "./permission-gate.js";
+export { taskTool } from "./task.js";

@@ -37,6 +37,11 @@ export interface PanelOptions {
  * Run the panel. The two `complete` calls are independent top-level
  * invocations — each builds its own Context inside `complete`, so there is
  * no shared message history to leak by construction.
+ *
+ * allSettled, not all: one role's provider failing must not throw away the
+ * other role's completed work. A failed role settles as a RoleOutput with
+ * empty text and its `error` field set; the caller (fuse) records the
+ * partial panel and skips synthesis/gate rather than merging one opinion.
  */
 export async function runPanel(
   streamFn: StreamFunction,
@@ -46,22 +51,51 @@ export async function runPanel(
     ? `${options.task}\n\n${options.sharedContext}`
     : options.task;
 
-  const run = (role: FusionRole, model: Model<Api>): Promise<RoleOutput> =>
-    complete(streamFn, model, {
-      system: ROLE_SYSTEM[role],
-      prompt,
-    }).then((result) => ({
-      role,
-      modelId: model.id,
-      text: result.text,
-      usage: result.usage,
-      latencyMs: result.latencyMs,
-    }));
+  const run = async (role: FusionRole, model: Model<Api>): Promise<RoleOutput> => {
+    const startedRole = Date.now();
+    try {
+      const result = await complete(streamFn, model, {
+        system: ROLE_SYSTEM[role],
+        prompt,
+      });
+      return {
+        role,
+        modelId: model.id,
+        text: result.text,
+        usage: result.usage,
+        latencyMs: result.latencyMs,
+      };
+    } catch (error) {
+      return {
+        role,
+        modelId: model.id,
+        text: "",
+        usage: undefined,
+        latencyMs: Date.now() - startedRole,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
 
   // Concurrent: fusion's 2-3x wall-clock is mitigated by running the pair
   // in parallel (OpenRouter's measurement is sequential-panel latency).
-  return Promise.all([
+  const settled = await Promise.allSettled([
     run("architect", options.architectModel),
     run("builder", options.builderModel),
   ]);
+  // run() never rejects (it captures its own failures), but keep the
+  // invariant local: an unexpected rejection becomes the same error shape.
+  return settled.map((outcome, i) => {
+    if (outcome.status === "fulfilled") return outcome.value;
+    const role: FusionRole = i === 0 ? "architect" : "builder";
+    const reason: unknown = outcome.reason;
+    return {
+      role,
+      modelId: (i === 0 ? options.architectModel : options.builderModel).id,
+      text: "",
+      usage: undefined,
+      latencyMs: 0,
+      error: reason instanceof Error ? reason.message : String(reason),
+    };
+  });
 }

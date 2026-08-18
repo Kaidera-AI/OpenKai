@@ -2,7 +2,8 @@
  * openkai login — subscription OAuth flows (Codex, Copilot, Anthropic OAuth).
  * Drives the provider's pi-ai OAuth implementation with the normalized
  * AuthInteraction contract (prompt/notify/signal), persists the credential
- * into pi-ai's auth store, and confirms with a catalogue refresh.
+ * into the core's persistent credential store (`defaultModels()`), and
+ * confirms with a catalogue refresh.
  *
  * The flow is device-code shaped: we print + open the verification URL and
  * read the user code back — no local server, works over SSH.
@@ -11,7 +12,7 @@
 import { execFile } from "node:child_process";
 import readline from "node:readline";
 
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModels } from "@kaidera/openkai-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 
 /** Open a URL in the system browser (best-effort, never fatal). */
@@ -25,7 +26,9 @@ export interface LoginOptions {
 }
 
 export async function runLogin(options: LoginOptions): Promise<number> {
-  const models = builtinModels();
+  // defaultModels() is the persistent credential store — OAuth tokens
+  // survive restart, unlike a bare builtinModels() instance.
+  const models = defaultModels();
   const provider = models.getProvider(options.provider);
   if (!provider) {
     process.stderr.write(`unknown provider "${options.provider}"\n`);

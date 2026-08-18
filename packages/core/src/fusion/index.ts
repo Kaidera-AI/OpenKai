@@ -44,6 +44,7 @@ export type { FusionPairStats } from "./telemetry.js";
 export {
   AttributionError,
   GateHaltError,
+  UnwinnableGateError,
   WeakGateError,
 } from "./types.js";
 export type {

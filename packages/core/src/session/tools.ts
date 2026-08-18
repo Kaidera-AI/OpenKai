@@ -4,7 +4,8 @@
  * Read trio (`read_file`, `list_files`, `grep`) — unchanged since P2; enough for
  * the loop to exercise tool-calling end-to-end without mutation.
  *
- * Gated trio (`write_file`, `edit_file`, `bash`) — added in P4b, each behind the
+ * Gated mutations (`write_file`, `edit_file`, `hashline_edit`, `bash`) — each
+ * behind the
  * {@link PermissionGate} + the pure {@link evaluate} policy engine. The P2 block
  * ("no write/bash until the permission engine exists") is now satisfied. The
  * honest-posture rule (ADR §5.6) still applies: execution is not sandboxed, and
@@ -15,6 +16,21 @@
  * `execute` callback returns an {@link AgentToolResult} whose `content` is
  * `TextContent[]` (the shape the model reads) and whose `details` carries the
  * structured payload for logs/UI.
+ *
+ * Hardening posture (ren's adversarial review):
+ *  - `read_file` stats first and reads at most `maxBytes` (+1 sentinel) off
+ *    disk — a multi-GB target is never buffered whole.
+ *  - `web_fetch` runs under a 30 s AbortSignal timeout and caps the response
+ *    read at 1 MiB before truncating to `maxBytes` for output.
+ *  - `grep` rejects patterns over 500 chars. ReDoS posture: patterns are
+ *    model-authored and run in-process on bounded file reads; the length cap
+ *    plus per-file/result caps keep a catastrophic-backtracking pattern a
+ *    latency problem, not a process-killer. No full ReDoS proof is attempted.
+ *  - `grep`/`glob` walkers carry a visited-realpath set, so an in-cwd symlink
+ *    cycle (a/sub -> a) terminates instead of recursing forever.
+ *  - `bash` honours the pi-agent-core AbortSignal (kills the child) and has a
+ *    120 s default exec timeout, param-overridable.
+ *  - `write_file` re-canonicalises its target AFTER approval (TOCTOU window).
  */
 
 import { exec } from "node:child_process";
@@ -55,8 +71,12 @@ function resolveWithin(cwd: string, input: string): string {
  * path is out of bounds (containment escape OR deny-floor hit). The floor
  * applies to every tool — read-only included; it is a boundary, not a
  * permission decision (E001 security findings 1–2).
+ *
+ * Exported for the sibling tools that need the identical boundary
+ * (hashline_edit's pre-read guard, the LSP tool's file confinement) — one
+ * implementation, no drift.
  */
-function guardPath(cwd: string, input: string): { target?: string; refusal?: string } {
+export function guardPath(cwd: string, input: string): { target?: string; refusal?: string } {
   let target: string;
   try {
     target = resolveWithin(cwd, input);
@@ -99,9 +119,23 @@ export const readFileTool = (cwd: string): AgentTool<typeof ReadFileParams, unkn
       if (!stat.isFile()) {
         return textResult(`Error: not a file: ${params.path}`, params.path);
       }
-      const content = await fs.readFile(target, "utf-8");
-      const truncated = content.length > max ? content.slice(0, max) + `\n…[truncated ${content.length - max} chars]` : content;
-      return textResult(truncated, { path: params.path, bytes: content.length, truncated: content.length > max });
+      // Bounded read: open + read at most `max` bytes (+1 sentinel to detect
+      // truncation) so a multi-GB target is never buffered whole.
+      const handle = await fs.open(target, "r");
+      let raw: string;
+      let truncated: boolean;
+      try {
+        const buf = Buffer.alloc(Math.min(stat.size, max + 1));
+        const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
+        truncated = stat.size > max;
+        raw = buf.subarray(0, truncated ? Math.min(bytesRead, max) : bytesRead).toString("utf-8");
+      } finally {
+        await handle.close();
+      }
+      // A mid-codepoint slice leaves a trailing U+FFFD — drop it.
+      const content = raw.endsWith("�") ? raw.slice(0, -1) : raw;
+      const text = truncated ? content + `\n…[truncated at ${max} bytes]` : content;
+      return textResult(text, { path: params.path, bytes: stat.size, truncated });
     } catch (error) {
       return textResult(`Error reading ${params.path}: ${error instanceof Error ? error.message : String(error)}`, params.path);
     }
@@ -161,6 +195,11 @@ export const grepTool = (cwd: string): AgentTool<typeof GrepParams, unknown> => 
     params: Static<typeof GrepParams>,
   ): Promise<AgentToolResult<unknown>> {
     const max = params.maxResults ?? 50;
+    // Pattern cost cap (ReDoS posture, see header): model-authored patterns
+    // run in-process; reject pathological-length patterns outright.
+    if (params.pattern.length > 500) {
+      return textResult(`Error: pattern too long (${params.pattern.length} > 500 chars)`, params.pattern);
+    }
     let regex: RegExp;
     try {
       regex = new RegExp(params.pattern, "i");
@@ -186,13 +225,16 @@ export const grepTool = (cwd: string): AgentTool<typeof GrepParams, unknown> => 
 });
 
 /** Recursive grep helper — respects maxResults; skips node_modules/.git/dist,
- *  symlink escapes, and deny-floor files (.env, keys, …) at every step. */
+ *  symlink escapes, and deny-floor files (.env, keys, …) at every step.
+ *  `visited` holds directory realpaths: an in-cwd symlink cycle passes the
+ *  containment check but must not recurse forever. */
 async function walkGrep(
   target: string,
   regex: RegExp,
   max: number,
   out: string[],
   cwd: string,
+  visited: Set<string> = new Set(),
 ): Promise<void> {
   if (out.length >= max) return;
   const stat = await fs.stat(target);
@@ -214,6 +256,10 @@ async function walkGrep(
   if (stat.isDirectory()) {
     const base = path.basename(target);
     if (base === "node_modules" || base === ".git" || base === "dist") return;
+    // Symlink-cycle guard: each real directory is walked once.
+    const real = await fs.realpath(target);
+    if (visited.has(real)) return;
+    visited.add(real);
     const entries = await fs.readdir(target, { withFileTypes: true });
     for (const entry of entries) {
       if (out.length >= max) return;
@@ -222,7 +268,7 @@ async function walkGrep(
       const child = path.join(target, entry.name);
       const guard = guardPath(cwd, child);
       if (guard.refusal !== undefined) continue;
-      await walkGrep(child, regex, max, out, cwd);
+      await walkGrep(child, regex, max, out, cwd, visited);
     }
   }
 }
@@ -281,7 +327,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`(^|/)${re}$`);
 }
 
-async function walkGlob(target: string, regex: RegExp, max: number, out: string[], cwd: string): Promise<void> {
+async function walkGlob(target: string, regex: RegExp, max: number, out: string[], cwd: string, visited: Set<string> = new Set()): Promise<void> {
   if (out.length >= max) return;
   const stat = await fs.stat(target);
   if (stat.isFile()) {
@@ -292,13 +338,17 @@ async function walkGlob(target: string, regex: RegExp, max: number, out: string[
   if (stat.isDirectory()) {
     const base = path.basename(target);
     if (base === "node_modules" || base === ".git" || base === "dist") return;
+    // Symlink-cycle guard: each real directory is walked once.
+    const real = await fs.realpath(target);
+    if (visited.has(real)) return;
+    visited.add(real);
     const entries = await fs.readdir(target, { withFileTypes: true });
     for (const entry of entries) {
       if (out.length >= max) return;
       const child = path.join(target, entry.name);
       const guard = guardPath(cwd, child);
       if (guard.refusal !== undefined) continue;
-      await walkGlob(child, regex, max, out, cwd);
+      await walkGlob(child, regex, max, out, cwd, visited);
     }
   }
 }
@@ -326,13 +376,41 @@ export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unkn
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return textResult("Error: only http(s) URLs are supported", params.url);
     }
+    // 30 s wall-clock timeout + 1 MiB response-read cap: a slow or endless
+    // endpoint must not stall the turn or balloon memory.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
     try {
-      const res = await fetch(url, { redirect: "follow" });
-      const body = await res.text();
+      const res = await fetch(url, { redirect: "follow", signal: controller.signal });
+      const CAP = 1 << 20; // 1 MiB read cap
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+      let readCapped = false;
+      const reader = res.body?.getReader();
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+          if (received > CAP) {
+            chunks.push(value.subarray(0, value.byteLength - (received - CAP)));
+            readCapped = true;
+            await reader.cancel().catch(() => undefined);
+            break;
+          }
+          chunks.push(value);
+        }
+      }
+      const body = Buffer.concat(chunks).toString("utf-8");
       const truncated = body.length > max ? body.slice(0, max) + `\n…[truncated ${body.length - max} chars]` : body;
-      return textResult(truncated, { url: params.url, status: res.status, bytes: body.length });
+      const suffix = readCapped && body.length <= max ? "\n…[response capped at 1MiB]" : "";
+      return textResult(truncated + suffix, { url: params.url, status: res.status, bytes: body.length, readCapped });
     } catch (error) {
-      return textResult(`Error fetching ${params.url}: ${error instanceof Error ? error.message : String(error)}`, params.url);
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      const msg = isTimeout ? "timed out after 30s" : error instanceof Error ? error.message : String(error);
+      return textResult(`Error fetching ${params.url}: ${msg}`, params.url);
+    } finally {
+      clearTimeout(timer);
     }
   },
 });
@@ -426,12 +504,20 @@ export function writeFileTool(
       if (outcome.decision === "reject") {
         return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
       }
+      // TOCTOU: re-canonicalise AFTER approval — the path the operator saw in
+      // the preview and the path on disk may have diverged (symlink swap)
+      // between the preview read and this write.
+      const postGuard = guardPath(cwd, params.path);
+      if (postGuard.refusal !== undefined) {
+        return textResult(`Permission denied: ${postGuard.refusal}`, { path: params.path, denied: true });
+      }
+      const target = postGuard.target!;
       try {
         if (hooks?.beforeMutation) {
           await hooks.beforeMutation("write_file", params.path).catch(() => undefined);
         }
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, params.content, "utf-8");
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, params.content, "utf-8");
         return textResult(`Wrote ${params.path} (${params.content.length} bytes)`, {
           path: params.path,
           bytes: params.content.length,
@@ -512,6 +598,9 @@ export function editFileTool(
 const BashParams = Type.Object({
   command: Type.String({ description: "Shell command to execute (unsandboxed)." }),
   cwd: Type.Optional(Type.String({ description: "Working directory (default: session cwd)." })),
+  timeoutSeconds: Type.Optional(
+    Type.Integer({ description: "Exec timeout in seconds (default 120). The child is killed on timeout or abort.", minimum: 1 }),
+  ),
 });
 
 /** bash: unsandboxed shell behind the gate (ADR §5.6 honest posture). */
@@ -526,7 +615,7 @@ export function bashTool(
     description:
       "Run a shell command. Execution is NOT sandboxed (honest posture, ADR §5.6). Requires operator approval; the preview shows the command and resolved cwd.",
     parameters: BashParams,
-    async execute(_id, params): Promise<AgentToolResult<unknown>> {
+    async execute(_id, params, signal): Promise<AgentToolResult<unknown>> {
       const runCwd = params.cwd ? resolvePreviewPath(cwd, params.cwd) : cwd;
       const outcome = await gate.request("bash", _id, params, (): PermissionPreview => ({
         kind: "command",
@@ -550,7 +639,10 @@ export function bashTool(
         if (hooks?.beforeMutation) {
           await hooks.beforeMutation("bash", params.command).catch(() => undefined);
         }
-        const { stdout, stderr } = await runShell(params.command, runCwd);
+        const { stdout, stderr } = await runShell(params.command, runCwd, {
+          timeoutMs: (params.timeoutSeconds ?? 120) * 1000,
+          signal,
+        });
         const out = (stdout + (stderr ? (stderr.endsWith("\n") ? stderr : stderr + "\n") : "")).trim();
         return textResult(out.length > 0 ? out : "(no output)", {
           command: params.command,
@@ -582,14 +674,39 @@ function countOccurrences(hay: string, needle: string): number {
   return count;
 }
 
-/** Promise wrapper around `node:child_process` exec with a byte cap. */
-function runShell(command: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    exec(command, { cwd, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
-      if (err) reject(err);
-      else resolve({ stdout, stderr });
-    });
+/**
+ * Promise wrapper around `node:child_process` exec with a byte cap, a wall-clock
+ * timeout, and abort passthrough: on timeout or signal-abort the child is
+ * SIGTERM'd so a hung pipeline cannot outlive its turn.
+ */
+function runShell(
+  command: string,
+  cwd: string,
+  opts: { timeoutMs: number; signal?: AbortSignal },
+): Promise<{ stdout: string; stderr: string }> {
+  const { promise, resolve, reject } = Promise.withResolvers<{ stdout: string; stderr: string }>();
+  let settled = false;
+  const child = exec(command, { cwd, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
+    if (err) reject(err);
+    else resolve({ stdout, stderr });
   });
+  const kill = (why: string): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
+    child.kill("SIGTERM");
+    reject(new Error(why));
+  };
+  const onAbort = (): void => kill("aborted");
+  const timer = setTimeout(() => kill(`timed out after ${opts.timeoutMs}ms`), opts.timeoutMs);
+  if (opts.signal?.aborted) kill("aborted");
+  else opts.signal?.addEventListener("abort", onAbort, { once: true });
+  return promise;
 }
 
 /**
@@ -600,6 +717,6 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
  */
 export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string, extraTools: AgentTool<any>[] = []): AgentTool<any>[] {
   const childModel = modelId ?? "openrouter/google/gemini-2.5-flash-lite";
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), lspTool(cwd), mcpStatusTool(), taskTool(cwd, childModel), ...extraTools, writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd, gate, hooks), lspTool(cwd), mcpStatusTool(), taskTool(cwd, childModel), ...extraTools, writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }
 

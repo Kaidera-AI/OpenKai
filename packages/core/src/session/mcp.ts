@@ -7,6 +7,17 @@
  *
  * Protocol: JSON-RPC 2.0 over stdio (MCP spec 2024-11-05).
  * Operations: initialize → tools/list → tools/call per invocation.
+ *
+ * Hardening (ren's adversarial review):
+ *  - Spawned servers get a SCRUBBED environment ({@link scrubbedChildEnv}) —
+ *    credential-named/valued variables are dropped; the operator's explicit
+ *    `config.env` entries are applied last (explicit beats scrub).
+ *  - Every proxied `tools/call` is wrapped in the session {@link PermissionGate}
+ *    when one is threaded through {@link discoverMcpTools} — an MCP tool is a
+ *    remote-controlled capability and must not bypass consent.
+ *  - The per-connection read buffer is capped at 1 MiB; on overflow the
+ *    connection is killed and its pending requests rejected (a runaway server
+ *    must not balloon memory).
  */
 
 import { spawn as cpSpawn, type ChildProcess } from "node:child_process";
@@ -15,6 +26,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
+import type { PermissionGate } from "./permission-gate.js";
+import { scrubbedChildEnv } from "../procenv.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +51,8 @@ interface McpToolDef {
 interface McpConnection {
   process: ChildProcess;
   name: string;
+  /** Working directory the server was spawned from (used in gate previews). */
+  cwd: string;
   nextId: number;
   pending: Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>;
   buffer: string;
@@ -101,18 +116,34 @@ function sendJsonRpc(conn: McpConnection, method: string, params?: unknown): Pro
 
 const _connections = new Map<string, McpConnection>();
 
+/** Per-connection read-buffer cap (1 MiB); overflow kills the connection. */
+const BUFFER_CAP = 1 << 20;
+
+/** Kill a runaway connection: terminate the process, reject all pending. */
+function killConnection(conn: McpConnection, why: string): void {
+  for (const [, pending] of conn.pending) {
+    pending.reject(new Error(why));
+  }
+  conn.pending.clear();
+  try { conn.process.kill(); } catch { /* best effort */ }
+  _connections.delete(conn.name);
+}
+
 async function connectServer(config: McpServerConfig): Promise<McpConnection> {
   const existing = _connections.get(config.name);
   if (existing) return existing;
 
   const proc = cpSpawn(config.command, config.args ?? [], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ...config.env },
+    // Scrubbed environment: credential-named/valued vars are dropped; the
+    // operator's explicit config.env is applied LAST (explicit beats scrub).
+    env: scrubbedChildEnv(config.env),
   });
 
   const conn: McpConnection = {
     process: proc,
     name: config.name,
+    cwd: process.cwd(),
     nextId: 1,
     pending: new Map(),
     buffer: "",
@@ -122,6 +153,10 @@ async function connectServer(config: McpServerConfig): Promise<McpConnection> {
 
   proc.stdout!.on("data", (chunk: Buffer) => {
     conn.buffer += chunk.toString("utf-8");
+    if (conn.buffer.length > BUFFER_CAP) {
+      killConnection(conn, `MCP server "${conn.name}" exceeded the 1MiB buffer cap — connection killed`);
+      return;
+    }
     let parsed;
     while ((parsed = parseMessage(conn.buffer)) !== null) {
       conn.buffer = parsed.remaining;
@@ -171,9 +206,10 @@ function textResult(text: string): AgentToolResult<unknown> {
   return { content: [{ type: "text", text }] as TextContent[], details: text };
 }
 
-function proxyTool(conn: McpConnection, toolDef: McpToolDef): AgentTool<Record<string, unknown>, unknown> {
+function proxyTool(conn: McpConnection, toolDef: McpToolDef, gate?: PermissionGate): AgentTool<Record<string, unknown>, unknown> {
+  const fullName = `mcp__${conn.name}__${toolDef.name}`;
   return {
-    name: `mcp__${conn.name}__${toolDef.name}`,
+    name: fullName,
     label: `MCP:${conn.name}:${toolDef.name}`,
     description: toolDef.description ?? `MCP tool ${toolDef.name} from ${conn.name}`,
     parameters: {
@@ -182,7 +218,19 @@ function proxyTool(conn: McpConnection, toolDef: McpToolDef): AgentTool<Record<s
       required: toolDef.inputSchema.required,
       additionalProperties: false,
     } as unknown as Record<string, unknown>,
-    async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
+    async execute(toolCallId, params): Promise<AgentToolResult<unknown>> {
+      // With a gate threaded through, every tools/call goes through consent —
+      // the preview shows the proxied invocation as a command line.
+      if (gate) {
+        const outcome = await gate.request(fullName, toolCallId, params, () => ({
+          kind: "command",
+          command: `${fullName} ${JSON.stringify(params).slice(0, 500)}`,
+          cwd: conn.cwd,
+        }));
+        if (outcome.decision === "reject") {
+          return textResult(`Permission denied: ${outcome.reason}`);
+        }
+      }
       try {
         const result = await sendJsonRpc(conn, "tools/call", {
           name: toolDef.name,
@@ -206,8 +254,10 @@ function proxyTool(conn: McpConnection, toolDef: McpToolDef): AgentTool<Record<s
 /**
  * Discover and connect to all configured MCP servers.
  * Returns an array of proxy AgentTools — one per discovered tool.
+ * When `gate` is supplied, every proxied `tools/call` is wrapped in a
+ * permission request (consent preview shows the invocation as a command).
  */
-export async function discoverMcpTools(): Promise<AgentTool<Record<string, unknown>, unknown>[]> {
+export async function discoverMcpTools(gate?: PermissionGate): Promise<AgentTool<Record<string, unknown>, unknown>[]> {
   const configs = loadMcpConfig();
   if (configs.length === 0) return [];
 
@@ -216,7 +266,7 @@ export async function discoverMcpTools(): Promise<AgentTool<Record<string, unkno
     try {
       const conn = await connectServer(config);
       for (const toolDef of conn.tools) {
-        tools.push(proxyTool(conn, toolDef));
+        tools.push(proxyTool(conn, toolDef, gate));
       }
     } catch {
       // Server failed to connect — skip, don't block boot
@@ -255,10 +305,9 @@ export function mcpStatusTool(): AgentTool<Record<string, unknown>, unknown> {
   };
 }
 
-/** Shut down all MCP connections. */
+/** Shut down all MCP connections, rejecting any in-flight requests. */
 export function shutdownMcp(): void {
-  for (const conn of _connections.values()) {
-    try { conn.process.kill(); } catch { /* best effort */ }
+  for (const conn of [..._connections.values()]) {
+    killConnection(conn, "MCP shutdown");
   }
-  _connections.clear();
 }

@@ -12,10 +12,10 @@
  * `openkai tail`".
  */
 
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   CortexClient,
   DEFAULT_MODEL_ID,
+  defaultModels,
   exportFusionRunArtifact,
   fuse,
   listCasts,
@@ -23,6 +23,7 @@ import {
   resolveCast,
   defaultFusionLogPath,
   ShiftRouter,
+  UnwinnableGateError,
   type CastConfig,
   type Cast,
   type RoleOutput,
@@ -111,7 +112,7 @@ export function emitShiftRoutingEvents(router: ShiftRouter): void {
 }
 
 export async function runFuse(options: FuseCliOptions): Promise<number> {
-  const models = builtinModels();
+  const models = defaultModels();
   const rawConfig = readConfig();
   const config: CastConfig = {
     casts: Array.isArray(rawConfig["casts"])
@@ -285,6 +286,17 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     if (result.gate.outcome === "refused") return 2;
     return options.gate && result.gate.outcome !== "pass" ? 1 : 0;
   } catch (error) {
+    if (error instanceof UnwinnableGateError) {
+      // The print-mode CLI wires no applyWork (the workspace-write path lands
+      // with the permission-gated write tools), so --gate can never flip a
+      // RED baseline here. Say so plainly instead of dumping the throw.
+      process.stderr.write(
+        `openkai fuse --gate: gated runs need a workspace-write path (applyWork), ` +
+          `which the CLI does not wire yet — completion-only roles cannot change ` +
+          `the work tree, so the gate is unwinnable. Run without --gate.\n`,
+      );
+      return 2;
+    }
     process.stderr.write(
       `ERROR: ${error instanceof Error ? error.message : String(error)}\n`,
     );

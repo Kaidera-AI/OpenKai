@@ -7,10 +7,12 @@
  * assignment (monotonic from 1) and `sessionId` injection. A bounded async
  * queue backs `events()` so a slow consumer never blocks the agent loop.
  *
- * Provider lane: OpenRouter through pi-ai (D-P2-2). The OpenRouter provider
- * reads `OPENROUTER_API_KEY` from the environment; the transport fails fast
- * with a named error ({@link MissingApiKeyError}) if that key is missing
- * before any network call.
+ * Provider lane: OpenRouter through pi-ai (D-P2-2). The default model
+ * catalogue comes from `../credentials.js` `defaultModels()` — builtinModels
+ * backed by the persistent credential store. Without an injected `models`
+ * collection the transport fails fast with a named error
+ * ({@link MissingApiKeyError}) if the OpenRouter key is missing before any
+ * network call.
  *
  * P4: the transport accepts an injected {@link Models} collection + provider
  * id so the TUI (and the faux-provider golden-frame tests) can drive the same
@@ -24,13 +26,15 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentMessage, AgentTool, AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Message, Model } from "@earendil-works/pi-ai";
 import type { Api } from "@earendil-works/pi-ai";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Models } from "@earendil-works/pi-ai";
+import { defaultModels } from "../credentials.js";
 import { mapAgentEvent } from "./events.js";
 import { gatedTools, readOnlyTools, bashTool } from "./tools.js";
 import type { MutationHooks } from "./tools.js";
 import { ShadowGit } from "../undo/shadow.js";
 import { uuidv7 } from "@earendil-works/pi-ai";
+import { shutdownMcp } from "./mcp.js";
+import { shutdownLspClient } from "./lsp.js";
 import { SessionPermissionGate, type PermissionGate, type PushPermissionEvent } from "./permission-gate.js";
 
 /** The stripped `permission_request` payload the gate pushes onto the queue. */
@@ -84,14 +88,33 @@ export interface InProcessTransportOptions extends SessionTransportOptions {
    * activity feed behind `openkai tail`). Fire-and-forget; never awaited.
    */
   onActivity?: (event: SessionEvent) => void;
+  /**
+   * Extra tools merged INTO the built-in set — never a replacement for it.
+   * With the gate enabled they go through {@link gatedTools}' extraTools
+   * slot; without it they append to the read-only set. This fixes the
+   * "MCP replaces everything" bug: built-ins are always present.
+   * For post-construction injection (e.g. gate-wired MCP proxies) use
+   * {@link InProcessTransport.addExtraTools}.
+   */
+  extraTools?: AgentTool<any>[];
 }
 
-/** A bounded async queue for bridging agent events to the consumer stream. */
+/**
+ * A bounded async queue for bridging agent events to the consumer stream.
+ * Control events (`permission_request`, `turn_end`, `session_end`, `error`)
+ * ALWAYS land — the capacity cap applies to deltas/results only; silently
+ * dropping a permission prompt deadlocks the run, and dropping turn/session
+ * markers corrupts the consumer's state machine. When a droppable event IS
+ * dropped, a one-time `error` marker is pushed so the consumer knows the
+ * stream has a gap.
+ */
 class EventQueue {
   private readonly items: SessionEvent[] = [];
   private readonly waiters: Array<(item: SessionEvent | "done") => void> = [];
   private done = false;
   private readonly capacity: number;
+  /** Set while an overflow episode is unacknowledged (queue hasn't drained). */
+  private overflowMarked = false;
 
   constructor(capacity = 4096) {
     this.capacity = capacity;
@@ -104,8 +127,25 @@ class EventQueue {
       waiter(item);
       return;
     }
-    if (this.items.length < this.capacity) {
+    // Kinds that must never be dropped, regardless of capacity.
+    const isControl =
+      item.kind === "permission_request" ||
+      item.kind === "turn_end" ||
+      item.kind === "session_end" ||
+      item.kind === "error";
+    if (this.items.length < this.capacity || isControl) {
       this.items.push(item);
+      return;
+    }
+    // Dropped a droppable event — mark the gap once per overflow episode.
+    if (!this.overflowMarked) {
+      this.overflowMarked = true;
+      this.items.push({
+        sessionId: item.sessionId,
+        seq: item.seq,
+        kind: "error",
+        message: "event queue overflow — intermediate deltas/results were dropped",
+      });
     }
   }
 
@@ -118,7 +158,10 @@ class EventQueue {
 
   async next(): Promise<SessionEvent | "done"> {
     if (this.items.length > 0) {
-      return this.items.shift()!;
+      const item = this.items.shift()!;
+      // A drained queue ends the overflow episode — the next drop re-marks.
+      if (this.items.length === 0) this.overflowMarked = false;
+      return item;
     }
     if (this.done) return "done";
     return new Promise<SessionEvent | "done">((resolve) => {
@@ -140,7 +183,7 @@ export class InProcessTransport implements SessionTransport {
   private seq = 0;
   private closed = false;
   /** P4b permission gate (undefined when permissions are disabled — v1 path). */
-  private readonly gate: SessionPermissionGate | undefined;
+  private readonly gateInstance: SessionPermissionGate | undefined;
   private readonly shadow: ShadowGit | undefined;
   private readonly cwd: string;
   private readonly mutationHooks: MutationHooks | undefined;
@@ -167,11 +210,12 @@ export class InProcessTransport implements SessionTransport {
     const provider = options.provider ?? "openrouter";
     const injected = options.models !== undefined;
 
-    // Register every built-in provider (incl. OpenRouter) and resolve the
-    // requested model from the OpenRouter catalogue at runtime. When an
-    // injected `models` collection is supplied (P4), use it as-is and skip the
-    // OpenRouter key requirement — the caller owns provider auth.
-    const models = options.models ?? builtinModels();
+    // Register every built-in provider (incl. OpenRouter) backed by the
+    // persistent credential store, and resolve the requested model from the
+    // catalogue at runtime. When an injected `models` collection is supplied
+    // (P4), use it as-is and skip the OpenRouter key requirement — the caller
+    // owns provider auth.
+    const models = options.models ?? defaultModels();
 
     if (!injected && provider === "openrouter" && !process.env.OPENROUTER_API_KEY) {
       throw new MissingApiKeyError("OpenRouter", "OPENROUTER_API_KEY");
@@ -194,12 +238,12 @@ export class InProcessTransport implements SessionTransport {
     this.queue = new EventQueue();
     this.onActivity = options.onActivity;
     this.cwd = options.cwd;
-    this.gate = enablePermissions
+    this.gateInstance = enablePermissions
       ? new SessionPermissionGate({ cwd: options.cwd, pushEvent: (e) => this.emitPermissionEvent(e) })
       : undefined;
     // Inc 05: shadow-git undo. Snapshots fire after approval, before every
     // gated mutation (write/edit/bash), via the MutationHooks seam.
-    this.shadow = this.gate ? new ShadowGit(options.cwd) : undefined;
+    this.shadow = this.gateInstance ? new ShadowGit(options.cwd) : undefined;
     this.mutationHooks = this.shadow
       ? {
           beforeMutation: async (tool, summary) => {
@@ -207,12 +251,18 @@ export class InProcessTransport implements SessionTransport {
           },
         }
       : undefined;
-    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, this.mutationHooks, options.modelId) : readOnlyTools(options.cwd));
+    // extraTools are MERGED into the built-in set (never a replacement):
+    // through gatedTools' extraTools slot with the gate, appended to the
+    // read-only set without it.
+    const extras = options.extraTools ?? [];
+    const tools = options.tools ?? (this.gateInstance
+      ? gatedTools(options.cwd, this.gateInstance, this.mutationHooks, options.modelId, extras)
+      : [...readOnlyTools(options.cwd), ...extras]);
     this.fullTools = tools;
     this.readOnlySet = readOnlyTools(options.cwd);
     const systemPrompt =
       options.systemPrompt ??
-      (this.gate
+      (this.gateInstance
         ? "You are OpenKai, a helpful coding assistant. Read tools: read_file, list_files, grep, glob, web_fetch. Memory: todo (shared project task list). Code intelligence: lsp (definition, references, hover, diagnostics, rename, symbols, code_actions -- use instead of grep for symbol-aware lookups). Structured edits: hashline_edit (read then PUT/CUT by line). Delegation: task (read-only subagent). Mutations: write_file, edit_file, bash -- these require operator approval; if denied, report it rather than retrying."
         : "You are OpenKai, a helpful coding assistant. Read-only tools: read_file, list_files, grep, glob, web_fetch, todo, lsp (code intelligence). Use them to inspect files when asked.");
 
@@ -259,11 +309,35 @@ export class InProcessTransport implements SessionTransport {
   /** Whether plan mode is active (read-only tools only). */
   get planMode(): boolean { return this._planMode; }
 
-  /** Toggle plan mode: swaps the agent's tool set between full and read-only. */
+  /** The session permission gate (undefined when permissions are disabled). */
+  get gate(): SessionPermissionGate | undefined {
+    return this.gateInstance;
+  }
+
+  /**
+   * Toggle plan mode: swaps the agent's tool set between full and read-only,
+   * AND flips the gate's plan-mode refusal so an in-flight turn whose tool
+   * snapshot predates the toggle is still refused at the gate (fail-closed).
+   */
   setPlanMode(on: boolean): void {
     if (this._planMode === on) return;
     this._planMode = on;
     this.agent.state.tools = on ? [...this.readOnlySet] : [...this.fullTools];
+    this.gateInstance?.setPlanMode(on);
+  }
+
+  /**
+   * Append tools to the live set post-construction (gate-wired MCP proxies —
+   * the gate only exists after the transport is constructed, so discovery
+   * runs second). Updates the agent's live tool set unless plan mode is on
+   * (the swap back out of plan mode picks them up via {@link fullTools}).
+   */
+  addExtraTools(tools: AgentTool<any>[]): void {
+    if (tools.length === 0) return;
+    this.fullTools.push(...tools);
+    if (!this._planMode) {
+      this.agent.state.tools = [...this.fullTools];
+    }
   }
   /** The active model id (mutable: `/model` switches mid-session). */
   get modelId(): string {
@@ -292,11 +366,11 @@ export class InProcessTransport implements SessionTransport {
 
   /** Set the autonomy axis (no-op when the gate is disabled). */
   setAutonomy(level: "off" | "low" | "med" | "high"): void {
-    this.gate?.setAutonomy(level);
+    this.gateInstance?.setAutonomy(level);
   }
 
   get autonomyLevel(): string {
-    return this.gate?.autonomyLevel ?? "off";
+    return this.gateInstance?.autonomyLevel ?? "off";
   }
 
   /**
@@ -306,10 +380,10 @@ export class InProcessTransport implements SessionTransport {
    * Throws when the gate is disabled (print mode).
    */
   async runBash(command: string): Promise<{ text: string; isError: boolean }> {
-    if (!this.gate) {
+    if (!this.gateInstance) {
       throw new Error("bash mode requires the permission gate (TUI mode)");
     }
-    const tool = bashTool(this.cwd, this.gate, this.mutationHooks);
+    const tool = bashTool(this.cwd, this.gateInstance, this.mutationHooks);
     const result = await tool.execute(uuidv7(), { command });
     const text = result.content
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -329,6 +403,9 @@ export class InProcessTransport implements SessionTransport {
 
   abort(): void {
     this.agent.abort();
+    // Settle any tool awaiting approval — an aborted run must not leave a
+    // gated tool hanging on a promise nobody will answer.
+    this.gateInstance?.rejectAll("aborted");
   }
 
   /**
@@ -339,13 +416,13 @@ export class InProcessTransport implements SessionTransport {
    * an explicit refusal instead of being dropped.
    */
   respond(requestId: string, decision: "once" | "always" | "reject"): void {
-    if (!this.gate) {
+    if (!this.gateInstance) {
       throw new Error(
         "respond() not supported: permission gate is not enabled on this transport. " +
           "Approval injection is only available on the in-process, operator-input path (scope §2).",
       );
     }
-    this.gate.respond(requestId, decision);
+    this.gateInstance.respond(requestId, decision);
   }
 
   async *events(): AsyncIterable<SessionEvent> {
@@ -367,9 +444,18 @@ export class InProcessTransport implements SessionTransport {
     return this.agent.state.model?.contextWindow ?? 0;
   }
 
+  /**
+   * Close the session: abort any active run, reject all pending approvals,
+   * shut down MCP servers and the LSP client, then close the event queue.
+   * A closed session never leaves a language server or MCP child running.
+   */
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.agent.abort();
+    this.gateInstance?.rejectAll("session closed");
+    shutdownMcp();
+    shutdownLspClient();
     this.queue.close();
   }
 

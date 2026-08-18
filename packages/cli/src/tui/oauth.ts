@@ -1,13 +1,14 @@
 /**
  * In-TUI OAuth login overlay — the subscription flow stitched like omp's:
  * the device-code URL + user code render in place, the browser opens, the
- * flow polls to completion, and the credential lands in pi-ai's store. The
+ * flow polls to completion, and the credential lands in the persistent
+ * credential store (`defaultModels()`). The
  * operator never leaves the TUI (CTO directive).
  */
 
 import { execFile } from "node:child_process";
 
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModels } from "@kaidera/openkai-core";
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { Input, Text } from "@earendil-works/pi-tui";
@@ -77,7 +78,9 @@ export class OAuthOverlay implements Component {
   }
 
   private async run(): Promise<void> {
-    const models = builtinModels();
+    // defaultModels() is the persistent credential store — OAuth tokens
+    // survive restart, unlike a bare builtinModels() instance.
+    const models = defaultModels();
     const abort = new AbortController();
     const interaction = {
       signal: abort.signal,

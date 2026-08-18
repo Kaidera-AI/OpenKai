@@ -12,7 +12,7 @@
  * answer lands in `~/.openkai/config.json` (+ keys into `~/.openkai/.env`).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -41,8 +41,11 @@ export function readConfig(): OpenKaiConfig {
 }
 
 function writeConfig(config: OpenKaiConfig): void {
-  mkdirSync(path.dirname(configPath()), { recursive: true });
-  writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  // Same posture as config.ts writeConfigFile: operator-only dir + file, and
+  // the chmod repairs pre-existing loose files.
+  mkdirSync(path.dirname(configPath()), { recursive: true, mode: 0o700 });
+  writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+  chmodSync(configPath(), 0o600);
 }
 
 /** Onboarding plays when the operator has never completed it. */
@@ -80,8 +83,9 @@ export async function runWelcome(): Promise<OpenKaiConfig> {
       }
       const answer = await ask(`  ${PROVIDERS[id]?.label ?? id} key (${envVar}) [Enter to skip]: `);
       if (answer.length > 0) {
-        mkdirSync(path.dirname(envPath()), { recursive: true });
+        mkdirSync(path.dirname(envPath()), { recursive: true, mode: 0o700 });
         appendFileSync(envPath(), `${envVar}=${answer}\n`, "utf-8");
+        chmodSync(envPath(), 0o600); // raw keys — operator-only, repairs loose files
         process.env[envVar] = answer;
         configured += 1;
       }
@@ -99,6 +103,7 @@ export async function runWelcome(): Promise<OpenKaiConfig> {
         const answer = await ask(`  ${PROVIDERS[id]?.label ?? id} key (${envVar}) [Enter to skip]: `);
         if (answer.length > 0) {
           appendFileSync(envPath(), `${envVar}=${answer}\n`, "utf-8");
+          chmodSync(envPath(), 0o600);
           process.env[envVar] = answer;
           configured += 1;
           break;

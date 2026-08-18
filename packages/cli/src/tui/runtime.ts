@@ -182,9 +182,6 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     process.stderr.write(`ERROR: model "${modelId}" not found under provider "${provider}".\n`);
     return { code: 2, next: { kind: "quit" } };
   }
-  // Discover MCP tools before creating the transport (E010).
-  const mcpTools = await discoverMcpTools();
-
   try {
     transport = new InProcessTransport({
       sessionId: store.sessionId,
@@ -194,7 +191,6 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       cwd,
       initialMessages: replayMessages,
       enablePermissions: true,
-      tools: mcpTools.length > 0 ? mcpTools : undefined,
       onActivity: (event) =>
         appendActivity(cwd, event.kind, {
           toolName: "toolName" in event ? (event.toolName as string) : undefined,
@@ -210,6 +206,12 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     }
     throw error;
   }
+
+  // Discover MCP tools AFTER construction so the proxies execute under the
+  // transport's permission gate (E010), then merge them into the gated set —
+  // the transport merges extras, never replaces its own tools.
+  const mcpTools = await discoverMcpTools(transport.gate);
+  if (mcpTools.length > 0) transport.addExtraTools(mcpTools);
 
   // Theme (E008): explicit choice wins; otherwise auto-detect the terminal's
   // background (OSC 11 → COLORFGBG → dark) before the alt screen takes over.
@@ -351,13 +353,18 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       controller.openChangelog();
       return { consume: true };
     }
+    // Esc grammar (scope §3.5 + droid's panic key): feed BOTH detectors
+    // before either consumes — the double fires at the 2nd Esc (clear draft),
+    // and a 3rd inside the rewind window still completes the triple. Triple
+    // is checked first so it wins when it completes.
+    const escPresses = rewindDetector.feed(data);
+    if (escPresses === "triple") {
+      controller.openRewind();
+      return { consume: true };
+    }
     if (escDetector.feed(data)) {
       composer.clear();
       tui.flash("draft cleared");
-      return { consume: true };
-    }
-    if (rewindDetector.feed(data) === "triple") {
-      controller.openRewind();
       return { consume: true };
     }
     if (isQuit(data, manager)) {

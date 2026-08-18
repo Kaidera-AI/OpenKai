@@ -444,8 +444,13 @@ async function main(argv: string[]): Promise<number> {
   // ── bridge: a chat connector relaying pipe lines into the hub ───────────
   if (command === "bridge") {
     const token = process.env.OPENKAI_HUB_TOKEN;
-    const port = getString("--port") ?? "8787";
     if (!token) return fail("bridge requires OPENKAI_HUB_TOKEN.");
+    // Same bounded parse as `serve` — an unchecked --port value can smuggle
+    // userinfo/path text into the request URL below.
+    const portRaw = getString("--port") ?? "8787";
+    const parsed = parseBoundedInt("--port", portRaw, 1, 65535);
+    if (typeof parsed === "string") return fail(parsed);
+    const port = parsed;
     const { createInterface } = await import("node:readline");
     const rl = createInterface({ input: process.stdin });
     rl.on("line", async (line) => {
@@ -645,4 +650,15 @@ process.stdout.on("error", (error: NodeJS.ErrnoException) => {
   throw error;
 });
 
-process.exitCode = await main(process.argv.slice(2));
+// Top-level boundary: a crash is an ERROR line and exit 1, never a stack
+// dump — unless OPENKAI_DEBUG asks for it.
+try {
+  process.exitCode = await main(process.argv.slice(2));
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`ERROR: ${message}\n`);
+  if (process.env.OPENKAI_DEBUG && error instanceof Error && error.stack) {
+    process.stderr.write(`${error.stack}\n`);
+  }
+  process.exitCode = 1;
+}

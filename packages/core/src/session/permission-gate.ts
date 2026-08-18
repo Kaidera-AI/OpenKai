@@ -25,8 +25,12 @@
  * path (a separate event-loop task), resolving the awaited promise — so the
  * pump drains while a tool awaits approval. There is no shared turn. No
  * auto-approving timeout is bolted on (scope §9): an approval that is never
- * answered simply blocks until the run is aborted — it can never resolve to
- * `allow` on its own (fail-closed).
+ * answered blocks until the run is aborted — `abort()`/`close()` settle every
+ * pending request as `reject` via {@link SessionPermissionGate.rejectAll}, so
+ * a blocked tool unblocks as refused; it can never resolve to `allow` on its
+ * own (fail-closed). Plan mode ({@link SessionPermissionGate.setPlanMode})
+ * adds a gate-level read-only refusal covering in-flight turns whose tool
+ * snapshot predates the plan/act toggle.
  */
 
 import { randomUUID } from "node:crypto";
@@ -58,6 +62,22 @@ export interface PermissionGate {
 
   /** Answer a pending request (called from the operator input path). */
   respond(requestId: string, decision: "once" | "always" | "reject"): void;
+
+  /**
+   * Plan mode (read-only): while on, every {@link request} that reaches the
+   * gate is rejected without prompting. This covers in-flight turns whose
+   * tool snapshot predates the plan/act toggle — the transport swaps the
+   * tool set for the NEXT turn, but a tool already executing still calls
+   * the gate, and the gate is the last line (fail-closed).
+   */
+  setPlanMode(on: boolean): void;
+
+  /**
+   * Settle every pending request as `reject` with `reason`. Called by the
+   * transport on abort()/close() so a tool awaiting approval never hangs
+   * past the run's lifetime.
+   */
+  rejectAll(reason: string): void;
 }
 
 /** A stripped event the gate asks the transport to stamp + push onto its queue. */
@@ -90,10 +110,19 @@ const DIFF_MAX_LINES = 80;
 export class SessionPermissionGate implements PermissionGate {
   private readonly cwd: string;
   private readonly pushEvent: PushPermissionEvent;
-  /** Pending approvals: requestId → resolver. */
-  private readonly pending = new Map<string, (d: "once" | "always" | "reject") => void>;
+  /** Pending approvals: requestId → resolver (payload carries the reject reason). */
+  private readonly pending = new Map<
+    string,
+    (r: { d: "once" | "always" | "reject"; reason?: string }) => void
+  >;
   /** Session-scoped `always` cache: toolName + args signature. In memory only. */
   private readonly alwaysCache = new Set<string>();
+  /**
+   * Plan mode (read-only): while on, every request is rejected without
+   * prompting — the gate-side backstop for in-flight turns whose tool
+   * snapshot predates the plan/act toggle.
+   */
+  private planMode = false;
   /**
    * The autonomy axis (droid's coarse visible layer over the fine rules):
    * off/low = default posture; med auto-approves in-cwd write/edit; high
@@ -115,12 +144,29 @@ export class SessionPermissionGate implements PermissionGate {
     return this.autonomy;
   }
 
+  /** Toggle plan mode: while on, every request is rejected (read-only). */
+  setPlanMode(on: boolean): void {
+    this.planMode = on;
+  }
+
+  /** Settle every pending request as reject — abort/close unblock path. */
+  rejectAll(reason: string): void {
+    for (const resolve of this.pending.values()) {
+      resolve({ d: "reject", reason });
+    }
+    this.pending.clear();
+  }
+
   async request(
     toolName: string,
     toolCallId: string,
     args: unknown,
     buildPreview: () => PermissionPreview | Promise<PermissionPreview>,
   ): Promise<PermissionOutcome> {
+    // Plan mode is the outermost refusal: even an `allow`-by-policy call that
+    // reaches the gate mid-toggle is refused (fail-closed, read-only).
+    if (this.planMode) return { decision: "reject", reason: "plan mode — read-only" };
+
     const { decision, reason } = evaluateWithReason(toolName, args, this.cwd);
     if (decision === "allow") return { decision: "approve" };
     if (decision === "deny") return { decision: "reject", reason };
@@ -152,12 +198,16 @@ export class SessionPermissionGate implements PermissionGate {
       rule: reason,
     });
 
-    const outcome = await new Promise<"once" | "always" | "reject">((resolve) => {
-      this.pending.set(requestId, resolve);
-    });
+    const outcome = await new Promise<{ d: "once" | "always" | "reject"; reason?: string }>(
+      (resolve) => {
+        this.pending.set(requestId, resolve);
+      },
+    );
 
-    if (outcome === "reject") return { decision: "reject", reason: "rejected by operator" };
-    if (outcome === "always") this.alwaysCache.add(key);
+    if (outcome.d === "reject") {
+      return { decision: "reject", reason: outcome.reason ?? "rejected by operator" };
+    }
+    if (outcome.d === "always") this.alwaysCache.add(key);
     return { decision: "approve" };
   }
 
@@ -165,7 +215,7 @@ export class SessionPermissionGate implements PermissionGate {
     const resolve = this.pending.get(requestId);
     if (resolve) {
       this.pending.delete(requestId);
-      resolve(decision);
+      resolve({ d: decision });
     }
     // Unknown / already-resolved requests are ignored — fail-safe, never allow.
   }

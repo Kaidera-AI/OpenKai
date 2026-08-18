@@ -5,14 +5,20 @@
  * `CUT N.=M` deletes) with the TAG validated against the live file. Numbers
  * are the ORIGINAL lines, so a stale read is refused instead of silently
  * mis-applying. This is omp's core DX win — no fuzzy old_string matching.
+ *
+ * op=edit is a mutation: it sits behind the {@link PermissionGate} (diff
+ * preview + approval, shadow-snapshot hook), and every op runs the shared
+ * {@link guardPath} boundary check BEFORE any file read.
  */
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
+import type { PermissionGate } from "./permission-gate.js";
+import { buildDiffPreview } from "./permission-gate.js";
+import { guardPath, type MutationHooks } from "./tools.js";
 
 /** Content-derived 4-hex tag binding a read to the exact file state. */
 export function fileTag(content: string): string {
@@ -84,8 +90,19 @@ const HashlineParams = Type.Object({
   ),
 });
 
-/** hashline_edit: line-anchored structured edits with staleness validation. */
-export function hashlineEditTool(cwd: string): AgentTool<typeof HashlineParams, unknown> {
+/**
+ * hashline_edit: line-anchored structured edits with staleness validation.
+ * op=read is read-only (still floor-guarded); op=edit is a MUTATION behind the
+ * permission gate — the boundary check runs BEFORE any read (an unguarded read
+ * first is a confirmed-guess oracle over floor files, same as edit_file), the
+ * gate preview is a before/after diff, and `beforeMutation` fires after
+ * approval, before the write.
+ */
+export function hashlineEditTool(
+  cwd: string,
+  gate: PermissionGate,
+  hooks?: MutationHooks,
+): AgentTool<typeof HashlineParams, unknown> {
   const textResult = (text: string, details?: unknown) => ({
     content: [{ type: "text", text } as TextContent],
     details,
@@ -94,13 +111,16 @@ export function hashlineEditTool(cwd: string): AgentTool<typeof HashlineParams, 
     name: "hashline_edit",
     label: "Hashline Edit",
     description:
-      "Structured line-anchored edits. op=read returns numbered LINE:TEXT rows under [path#TAG]. op=edit applies PUT/CUT hunks over the ORIGINAL line numbers, refusing a stale #TAG. No fuzzy matching — exact and safe.",
+      "Structured line-anchored edits. op=read returns numbered LINE:TEXT rows under [path#TAG]. op=edit applies PUT/CUT hunks over the ORIGINAL line numbers, refusing a stale #TAG, and requires operator approval (diff preview). No fuzzy matching — exact and safe.",
     parameters: HashlineParams,
-    async execute(_toolCallId, params: Static<typeof HashlineParams>) {
-      const target = path.resolve(cwd, params.path);
-      if (!target.startsWith(path.resolve(cwd))) {
-        return textResult(`Error: path escapes cwd: ${params.path}`, { denied: true });
+    async execute(toolCallId, params: Static<typeof HashlineParams>) {
+      // Boundary check BEFORE any read — same oracle defence as edit_file:
+      // every out-of-bounds path returns the same path-derived refusal.
+      const guard = guardPath(cwd, params.path);
+      if (guard.refusal !== undefined) {
+        return textResult(`Error: ${guard.refusal}`, { path: params.path, denied: true });
       }
+      const target = guard.target!;
       let content: string;
       try {
         content = await fs.readFile(target, "utf-8");
@@ -113,6 +133,15 @@ export function hashlineEditTool(cwd: string): AgentTool<typeof HashlineParams, 
       if (!params.tag) return textResult("Error: edit needs the #TAG from a prior read", params.op);
       const result = applyHashline(content, params.tag, (params.hunks ?? []) as Hunk[]);
       if (result.error) return textResult(`Error: ${result.error}`, { path: params.path });
+      const outcome = await gate.request("hashline_edit", toolCallId, params, () =>
+        buildDiffPreview(target, content, result.content!),
+      );
+      if (outcome.decision === "reject") {
+        return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
+      }
+      if (hooks?.beforeMutation) {
+        await hooks.beforeMutation("hashline_edit", params.path).catch(() => undefined);
+      }
       await fs.writeFile(target, result.content!, "utf-8");
       const changed = (params.hunks ?? []).reduce((n, h) => n + (h.end - h.start + 1), 0);
       return textResult(`edited ${params.path} (${changed} line(s) touched) — new tag #${fileTag(result.content!)}`, {

@@ -4,7 +4,7 @@
  * flow. Nobody edits a file by hand (CTO directive 2026-08-17).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { Input, Text } from "@earendil-works/pi-tui";
@@ -23,6 +23,7 @@ export function writeEnvKey(key: string, value: string): void {
   if (index >= 0) lines[index] = entry;
   else lines.push(entry);
   writeFileSync(file, lines.filter((l) => l.trim().length > 0).join("\n") + "\n", { mode: 0o600 });
+  chmodSync(file, 0o600); // mode only applies at creation — repair loose pre-existing files
   process.env[key] = value;
 }
 

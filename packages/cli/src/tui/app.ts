@@ -28,6 +28,7 @@ import {
   sessionTree,
   type FuseResult,
   type InProcessTransport,
+  type PermissionPreview,
   type SessionEvent,
   type SessionTransport,
   type UsageSnapshot,
@@ -84,6 +85,7 @@ function countMcpServers(): number {
 }
 import { tipOfTheDay } from "./tips.js";
 import { Transcript } from "./transcript.js";
+import { sanitizeTerminalText } from "./sanitize.js";
 import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
 import { parseSlashCommand, helpText, buildPaletteItems } from "./commands.js";
@@ -219,10 +221,10 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     onSubmit: (text) => {
       const command = parseSlashCommand(text);
       if (command) {
-        void controller.dispatchCommand(command.name, command.argument);
+        controller.guard(controller.dispatchCommand(command.name, command.argument), `/${command.name}`);
         return;
       }
-      void controller.submit(text);
+      controller.guard(controller.submit(text), "submit");
     },
   });
   controller.attachComposer(composer);
@@ -282,8 +284,8 @@ export class TuiController {
   private composer?: Composer;
   /** Droid's `!` bash mode: submissions run through the gated bash tool. */
   bashMode = false;
-  /** Cline's Plan mode: read-only — mutations refused at the gate (E010). */
-  planMode = false;
+  // Plan mode (E010) has NO field here — the transport is the single source
+  // of truth (`transport.planMode`); caching it in the controller drifted.
   private busy = false;
   private done = false;
   /** True while the current turn is a `/btw` side channel (scope §1.5) — persistTurn skips it so the ephemeral exchange never re-persists the prior assistant block. */
@@ -314,6 +316,18 @@ export class TuiController {
   /** Attach the composer (set after construction so the controller can build it). */
   attachComposer(composer: Composer): void {
     this.composer = composer;
+  }
+
+  /**
+   * Run an async controller action, surfacing a rejection as a transcript
+   * notice — composer/palette dispatches must never end as unhandled
+   * rejections.
+   */
+  guard(action: Promise<void>, label: string): void {
+    void action.catch((error: unknown) => {
+      this.transcript.addError(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.tui.requestRender();
+    });
   }
 
   /** Execute a slash command (scope §4). Output is a local notice — never sent to the model. */
@@ -348,9 +362,6 @@ export class TuiController {
         }
         break;
       }
-      case "model":
-        this.openModelPicker();
-        break;
       case "effort":
         this.cycleEffort(argument);
         break;
@@ -407,11 +418,14 @@ export class TuiController {
         this.openSettings();
         break;
       case "plan": {
-        this.transport.setPlanMode(!this.transport.planMode);
-        this.planMode = this.transport.planMode;
-        this.status.update({ ...this.status.currentState, plan: this.planMode });
+        // Cline's Plan mode (E010): the transport owns the flag — the TUI
+        // reads it for the chip + auto-reject, never caches it.
+        const on = !this.transport.planMode;
+        this.transport.setPlanMode(on);
+        if (on) this.rejectOpenPermission();
+        this.status.update({ ...this.status.currentState, plan: this.transport.planMode });
         this.transcript.addNotice(
-          this.planMode
+          this.transport.planMode
             ? "plan mode ON — read-only; write_file/edit_file/bash are refused at the gate"
             : "plan mode OFF — mutations ask for approval as usual",
         );
@@ -452,9 +466,6 @@ export class TuiController {
       }
       case "setup":
         this.openSetup();
-        break;
-      case "settings":
-        this.openSettings();
         break;
       case "init": {
         const result = initAgentsMd(process.cwd());
@@ -667,6 +678,13 @@ export class TuiController {
 
   /** Submit a user prompt: persist + display + fire the transport turn. */
   async submit(text: string): Promise<void> {
+    if (this.busy) {
+      // Mirror btw(): never interleave turns — notice only, nothing is
+      // persisted or rendered as a user block.
+      this.transcript.addNotice("a turn is already running — wait for it to settle");
+      this.tui.requestRender();
+      return;
+    }
     if (this.bashMode) {
       await this.runShellTurn(text);
       return;
@@ -1060,6 +1078,7 @@ export class TuiController {
       return;
     }
     this.provider = provider;
+    this.modelId = modelId; // /stats + both pickers read this — keep it in sync
     this.modelSwitch(model);
     this.status.update({ ...this.status.currentState, modelId });
     this.recentModels = [`${provider}/${modelId}`, ...this.recentModels.filter((m) => m !== `${provider}/${modelId}`)].slice(0, 8);
@@ -1161,14 +1180,14 @@ export class TuiController {
   /** The palette action table — each value maps to a controller method. */
   private paletteActions(): Record<string, () => void> {
     return {
-      help: () => void this.dispatchCommand("help", ""),
-      model: () => void this.dispatchCommand("model", ""),
-      sessions: () => void this.dispatchCommand("sessions", ""),
+      help: () => this.guard(this.dispatchCommand("help", ""), "/help"),
+      model: () => this.guard(this.dispatchCommand("model", ""), "/model"),
+      sessions: () => this.guard(this.dispatchCommand("sessions", ""), "/sessions"),
       resume: () => this.composer?.prefill("/resume "),
-      new: () => void this.dispatchCommand("new", ""),
+      new: () => this.guard(this.dispatchCommand("new", ""), "/new"),
       btw: () => this.composer?.prefill("/btw "),
-      undo: () => void this.undo(),
-      quit: () => void this.dispatchCommand("quit", ""),
+      undo: () => this.guard(this.undo(), "/undo"),
+      quit: () => this.guard(this.dispatchCommand("quit", ""), "/quit"),
       "toggle-thinking": () => this.toggleThinking(),
       palette: () => undefined,
       stash: () => this.stashOrPop(),
@@ -1269,13 +1288,24 @@ export class TuiController {
       case "turn_end":
         this.transcript.applyEvent(event);
         this.setBusy(false);
-        if (!this.btwTurn) void this.persistTurn(); // /btw turns are ephemeral — never re-persist (scope §1.5)
+        if (this.wantsAutoCompact) {
+          // Deferred from updateUsage — safe now that no run is in flight.
+          this.wantsAutoCompact = false;
+          this.autoCompact();
+        }
+        // /btw turns are ephemeral — never re-persist them (scope §1.5).
+        if (!this.btwTurn) {
+          void this.persistTurn().catch((error: unknown) => {
+            this.transcript.addError(`persist failed: ${error instanceof Error ? error.message : String(error)}`);
+            this.tui.requestRender();
+          });
+        }
         this.btwTurn = false;
         // Attention (scope §1.1): a turn settled — if unfocused, bell/OSC + chrome.
         this.signalAttention("Turn complete");
         break;
       case "permission_request":
-        if (this.planMode) {
+        if (this.transport.planMode) {
           // Cline's Plan mode: read-only — mutations are refused at the gate
           // without bothering the operator.
           this.transport.respond(event.requestId, "reject");
@@ -1382,9 +1412,11 @@ export class TuiController {
 
   /** Update the "what it's doing" label in the busy chip. */
   private setActivity(activity: string): void {
+    // Tool names are model-chosen (E001 F6c) — sanitise + flatten before chrome.
+    const clean = sanitizeTerminalText(activity).replace(/\n/g, " ");
     const state = this.status.currentState;
-    if (state.activity === activity) return;
-    this.status.update({ ...state, activity });
+    if (state.activity === clean) return;
+    this.status.update({ ...state, activity: clean });
   }
 
   private setAwaitingApproval(awaiting: boolean): void {
@@ -1392,14 +1424,19 @@ export class TuiController {
     this.status.update({ ...state, awaitingApproval: awaiting });
   }
 
+  /** The permission request currently on screen (plan mode auto-rejects it). */
+  private pendingPermission?: { requestId: string; toolName: string };
+
   /** Show the permission overlay for a `permission_request` event (P4b §5). */
-  private showPermission(event: { requestId: string; toolName: string; rule: string; preview: import("@kaidera/openkai-core").PermissionPreview }): void {
+  private showPermission(event: { requestId: string; toolName: string; rule: string; preview: PermissionPreview }): void {
     this.setAwaitingApproval(true);
+    this.pendingPermission = { requestId: event.requestId, toolName: event.toolName };
     const overlay = new PermissionOverlay({
       toolName: event.toolName,
       rule: event.rule,
       preview: event.preview,
       onDecision: (decision: PermissionDecision) => {
+        this.pendingPermission = undefined;
         try {
           this.transport.respond(event.requestId, decision);
         } catch {
@@ -1414,6 +1451,25 @@ export class TuiController {
     this.tui.showOverlay(overlay, { anchor: "center", width: "60%" });
   }
 
+  /**
+   * Auto-reject an already-open permission overlay when plan mode turns on —
+   * the operator just declared read-only, so a mutation awaiting approval on
+   * a stale screen must not slip through.
+   */
+  private rejectOpenPermission(): void {
+    const pending = this.pendingPermission;
+    if (!pending) return;
+    this.pendingPermission = undefined;
+    try {
+      this.transport.respond(pending.requestId, "reject");
+    } catch {
+      // Transport without a gate — nothing pending; still close the overlay.
+    }
+    this.tui.hideOverlay();
+    this.setAwaitingApproval(false);
+    this.transcript.addNotice(`plan mode — ${pending.toolName} blocked (read-only)`);
+  }
+
   private updateUsage(usage: UsageSnapshot): void {
     const state = this.status.currentState;
     const ctxWindow = this.transport.getContextWindow();
@@ -1424,15 +1480,42 @@ export class TuiController {
     this.status.update({ ...state, usage, ctxPercent });
     // OpenCode's auto-compact: when context crosses 80%, elide the middle of
     // the transcript so the session keeps going instead of hitting the wall.
+    // Never mid-turn — rewriting the message list under a running agent would
+    // corrupt the in-flight loop; defer to turn settlement (turn_end).
     if (ctxPercent !== undefined && ctxPercent >= 80 && featureEnabled("autoCompact")) {
-      const messages = this.transport.getMessages();
-      if (messages.length >= 6) {
-        const head = messages.slice(0, 1);
-        const tail = messages.slice(-2);
-        this.transport.setMessages([...head, ...tail]);
-        this.transcript.addNotice(`auto-compact — context at ${ctxPercent}%; elided the middle (${messages.length} → ${head.length + tail.length} messages)`);
+      if (this.busy) {
+        this.wantsAutoCompact = true;
+      } else {
+        this.autoCompact();
       }
     }
+  }
+
+  /** Set when context crossed the compact threshold mid-turn; run at turn_end. */
+  private wantsAutoCompact = false;
+
+  /**
+   * Elide the middle of the message list: keep the head + the tail from the
+   * last user message. The user-message boundary means a kept toolResult
+   * always keeps its parent assistant call — no orphaned toolResult whose
+   * call was elided.
+   */
+  private autoCompact(): void {
+    const messages = this.transport.getMessages();
+    if (messages.length < 6) return;
+    let tailStart = -1;
+    for (let i = messages.length - 1; i >= 1; i -= 1) {
+      if (messages[i]!.role === "user") {
+        tailStart = i;
+        break;
+      }
+    }
+    if (tailStart <= 1) return; // no tail boundary, or nothing in the middle to elide
+    const head = messages.slice(0, 1);
+    const tail = messages.slice(tailStart);
+    this.transport.setMessages([...head, ...tail]);
+    const ctxPercent = this.status.currentState.ctxPercent ?? 0;
+    this.transcript.addNotice(`auto-compact — context at ${ctxPercent}%; elided the middle (${messages.length} → ${head.length + tail.length} messages)`);
   }
 
   /** Persist the settled assistant text at turn settlement. */

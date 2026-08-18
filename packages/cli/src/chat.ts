@@ -131,6 +131,10 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
 
   // ── 7. Consume the event stream concurrently with the agent run ────────
   let assistantText = "";
+  // A failed turn (error event from the settled assistant message, or the
+  // stream itself throwing) must surface as a non-zero exit — the checkpoint
+  // flush below still runs either way.
+  let turnFailed = false;
 
   const abort = new AbortController();
   process.on("SIGINT", () => abort.abort());
@@ -179,6 +183,7 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
           break;
         case "error":
           log(`error: ${event.message}`);
+          turnFailed = true;
           break;
         // "connected" is emitted but we already fired the prompt; no action.
         default:
@@ -187,10 +192,14 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
     }
   } catch (error) {
     log(`run failed: ${error instanceof Error ? error.message : String(error)}`);
+    turnFailed = true;
   }
 
-  // Ensure the prompt promise settled (it should have resolved by now).
-  await promptPromise.catch(() => undefined);
+  // Ensure the prompt promise settled (it should have resolved by now); a
+  // rejection here is a failed turn even if no error event surfaced.
+  await promptPromise.catch(() => {
+    turnFailed = true;
+  });
 
   // ── 8. Flush checkpoint + emit `stopped` lifecycle ─────────────────────
   const ingestResult = await checkpoint.flushNow();
@@ -205,7 +214,7 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
   }
 
   return {
-    exitCode: 0,
+    exitCode: turnFailed ? 1 : 0,
     sessionId: store.sessionId,
     modelId,
     ingestResult: ingestResult ?? undefined,

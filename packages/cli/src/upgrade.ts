@@ -14,8 +14,15 @@
  *
  * Witness verification ships *with* the upgrader (an auto-updating component
  * without it is an attack surface): every artifact is SHA-256 verified before
- * the binary swap, and manifests may be Ed25519-signed (verified when
- * `OPENKAI_RELEASE_PUBLIC_KEY` is set). No cloud-vendor-specific update
+ * the binary swap, and manifests may be Ed25519-signed (verified when a
+ * release key is pinned). The pin comes from `OPENKAI_RELEASE_PUBLIC_KEY` in
+ * the operator's real environment or `~/.openkai/.env` — env.ts's allowlist
+ * keeps OPENKAI_* names out of a project checkout's `.env`, so a repository
+ * can never supply the pin — or from the build-time `OPENKAI_RELEASE_KEY`
+ * define (release pipeline; no keypair exists yet), which WINS over the env
+ * and makes verification mandatory (fail closed). With no key pinned the
+ * upgrader still runs on the SHA-256 witness alone, but warns loudly that
+ * manifest signatures are NOT verified. No cloud-vendor-specific update
  * service is used — only plain HTTPS artifact fetch (cloud-agnostic policy).
  */
 
@@ -44,6 +51,21 @@ export type Channel = "standalone" | "npm";
 /** The channel this build was compiled for (authoritative; set at build time). */
 export const BUILD_CHANNEL: Channel =
   DECLARED_BUILD_CHANNEL === "standalone" ? "standalone" : "npm";
+
+// ─── Build-time release-key pin ────────────────────────────────────────────
+//
+// `OPENKAI_RELEASE_KEY` mirrors the OPENKAI_BUILD_CHANNEL seam above: the
+// release pipeline injects the base64 DER SPKI Ed25519 public key via
+// `bun build --compile --define`. No keypair exists yet — this is the seam
+// for when it does. When defined it WINS over OPENKAI_RELEASE_PUBLIC_KEY and
+// verification is mandatory (a pinned key makes verifyManifest fail closed on
+// unsigned or invalid manifests).
+declare const OPENKAI_RELEASE_KEY: string | undefined;
+
+const DECLARED_RELEASE_KEY: string | undefined =
+  typeof OPENKAI_RELEASE_KEY !== "undefined"
+    ? (OPENKAI_RELEASE_KEY as string)
+    : undefined;
 
 export const DEFAULT_MANIFEST_URL = "https://openkai.dev/releases/latest.json";
 
@@ -486,6 +508,20 @@ interface ResolvedContext {
   deps: UpgradeDeps;
 }
 
+/** One-shot latch so the unsigned-manifest warning prints once per process. */
+let warnedNoReleaseKey = false;
+
+/** Loud, one-time warning when no release key is pinned (TLS-only trust). */
+function warnNoReleaseKeyOnce(): void {
+  if (warnedNoReleaseKey) return;
+  warnedNoReleaseKey = true;
+  process.stderr.write(
+    `openkai upgrade: WARNING — no release key pinned (${RELEASE_KEY_ENV} unset); ` +
+      `manifest signatures NOT verified. The SHA-256 witness travels over the same ` +
+      `TLS channel as the binary, so this is TLS-only trust. Pin a key to verify signatures.\n`,
+  );
+}
+
 function resolveContext(options: UpgradeCliOptions): ResolvedContext {
   const env = options.env ?? process.env;
   const channel = resolveChannel({
@@ -498,7 +534,9 @@ function resolveContext(options: UpgradeCliOptions): ResolvedContext {
   const currentBinary = options.currentBinary ?? process.execPath;
   const currentVersion = options.currentVersion ?? CLI_VERSION;
   const target = options.target ?? detectTarget();
-  const releasePublicKey = env[RELEASE_KEY_ENV];
+  // Build-time pin WINS over the env pin; with no key at all the standalone
+  // path below warns once that manifest signatures are NOT verified.
+  const releasePublicKey = DECLARED_RELEASE_KEY ?? env[RELEASE_KEY_ENV];
   return {
     channel,
     autoUpdateEnabled,
@@ -557,6 +595,8 @@ export async function runUpgrade(
       autoUpdateEnabled: ctx.autoUpdateEnabled,
     };
   }
+
+  if (!ctx.releasePublicKey) warnNoReleaseKeyOnce();
 
   const upgrader = new Upgrader({
     manifestUrl: ctx.manifestUrl,

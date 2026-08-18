@@ -23,10 +23,10 @@
  * live with Inc 05's permission-gated write tools.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 
 import type { Api, Model, StreamFunction } from "@earendil-works/pi-ai";
-import { SECRET_NAME_PATTERN, SECRET_VALUE_PATTERN } from "../secrets.js";
+import { scrubbedChildEnv } from "../procenv.js";
 import { complete } from "./complete.js";
 import type { GateCheck, GateCheckResult, GateRun } from "./types.js";
 import { GateHaltError, WeakGateError } from "./types.js";
@@ -121,53 +121,91 @@ export interface RunGateOptions {
 }
 
 /**
- * The environment handed to a gate check. The commands are MODEL-AUTHORED and
- * run unsandboxed, so the operator's credentials are not theirs to inherit:
- * anything whose NAME or VALUE is secret-shaped is dropped (E001 finding F9).
- * SECURITY.md §4 keeps secrets in `.env`, and `.env` is loaded into this
- * process — without this scrub one designed check exfiltrates the lot.
- *
- * ponytail: name+value shape match, not an allowlist. A check that genuinely
- * needs a credential should be given one explicitly; tighten to an allowlist
- * if that case ever turns up.
+ * The environment handed to a gate check comes from the shared scrubber
+ * (../procenv.js): the commands are MODEL-AUTHORED and run unsandboxed, so
+ * the operator's credentials are not theirs to inherit — anything whose NAME
+ * or VALUE is secret-shaped is dropped (E001 finding F9). SECURITY.md §4
+ * keeps secrets in `.env`, and `.env` is loaded into this process — without
+ * this scrub one designed check exfiltrates the lot.
  */
-function childEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (SECRET_NAME_PATTERN.test(name)) continue;
-    if (value !== undefined && SECRET_VALUE_PATTERN.test(value)) continue;
-    env[name] = value;
-  }
-  env.CI = "1";
-  return env;
+
+/** Execute one check: async spawn, streamed capture, group kill on timeout. */
+function runCheck(
+  check: GateCheck,
+  options: RunGateOptions,
+): Promise<GateCheckResult> {
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const maxOutputChars = options.maxOutputChars ?? 4_000;
+  const { promise, resolve } = Promise.withResolvers<GateCheckResult>();
+  // detached: the shell leads its own process group, so a timeout can kill
+  // the WHOLE tree — a check that spawned a `sleep` grandchild would
+  // otherwise outlive the kill and hold the workspace.
+  const child = spawn(check.command, {
+    shell: true,
+    cwd: options.cwd,
+    detached: true,
+    env: scrubbedChildEnv(),
+  });
+  let output = "";
+  let timedOut = false;
+  let settled = false;
+  const finish = (exitCode: number | null, error?: unknown): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    const detail = error ? `\n${error instanceof Error ? error.message : String(error)}` : "";
+    const trimmed = `${output}${detail}`.trim();
+    resolve({
+      check,
+      exitCode,
+      timedOut,
+      output: trimmed.slice(0, maxOutputChars),
+      pass: !timedOut && exitCode === (check.expectExit ?? 0),
+    });
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    // Negative pid = signal the child's whole process group.
+    if (child.pid !== undefined) {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    } else {
+      child.kill("SIGKILL");
+    }
+    // The `close` event settles the result, carrying the partial output
+    // collected before the kill — a hung check stays visible, not silent.
+  }, timeoutMs);
+  child.stdout?.on("data", (chunk: Buffer) => {
+    output += chunk.toString("utf-8");
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    output += chunk.toString("utf-8");
+  });
+  child.on("error", (error) => finish(null, error));
+  child.on("close", (code) => finish(code));
+  return promise;
 }
 
-/** Execute every check; pass = ALL checks exit as expected. */
-export function runGate(
+/**
+ * Execute every check; pass = ALL checks exit as expected. Checks run
+ * sequentially (they share one workspace; parallel shells would race).
+ * `exitCode` is the shell's genuine status only: a timeout kills the
+ * process group and records `timedOut` with a null code — 127 therefore
+ * ALWAYS means the shell's own "command not found", which is what the
+ * defective-gate repair keys on.
+ */
+export async function runGate(
   checks: GateCheck[],
   purpose: GateRun["purpose"],
   options: RunGateOptions,
-): GateRun {
-  const timeoutMs = options.timeoutMs ?? 60_000;
-  const maxOutputChars = options.maxOutputChars ?? 4_000;
-  const results: GateCheckResult[] = checks.map((check) => {
-    const proc = spawnSync(check.command, {
-      shell: true,
-      cwd: options.cwd,
-      timeout: timeoutMs,
-      encoding: "utf-8",
-      env: childEnv(),
-    });
-    const exitCode =
-      typeof proc.status === "number" ? proc.status : proc.error ? 127 : 1;
-    const raw = `${proc.stdout ?? ""}${proc.stderr ?? ""}`.trim();
-    return {
-      check,
-      exitCode,
-      output: raw.slice(0, maxOutputChars),
-      pass: exitCode === (check.expectExit ?? 0),
-    };
-  });
+): Promise<GateRun> {
+  const results: GateCheckResult[] = [];
+  for (const check of checks) {
+    results.push(await runCheck(check, options));
+  }
   return { purpose, results, pass: results.every((r) => r.pass) };
 }
 
@@ -177,7 +215,7 @@ export function verbatimFailures(run: GateRun): string {
     .filter((r) => !r.pass)
     .map(
       (r) =>
-        `FAIL ${r.check.name} (exit ${r.exitCode}, expected ${r.check.expectExit ?? 0})\n` +
+        `FAIL ${r.check.name} (exit ${r.exitCode ?? "none"}${r.timedOut ? ", timed out" : ""}, expected ${r.check.expectExit ?? 0})\n` +
         `$ ${r.check.command}\n${r.output || "(no output)"}`,
     )
     .join("\n\n");
@@ -212,6 +250,14 @@ export interface GatedFusionOptions {
    * validator, not the builder.
    */
   repairGate?: (defective: GateRun) => Promise<GateCheck[]>;
+  /**
+   * Operator consent, the SAME callback that approved the original design.
+   * The repaired gate is fresh model-authored shell, so it goes through the
+   * identical consent channel before it executes (E001 finding F9 applies to
+   * the repair exactly as to the design). Absent or false = refusal, and the
+   * run halts rather than execute unconsented checks.
+   */
+  approveGate?: (checks: GateCheck[]) => boolean | Promise<boolean>;
 }
 
 /**
@@ -227,7 +273,7 @@ export async function runGatedFusion(
   const runs: GateRun[] = [];
 
   // Baseline: MUST fail RED (step 2).
-  const baseline = runGate(options.checks, "baseline", { cwd: options.cwd });
+  const baseline = await runGate(options.checks, "baseline", { cwd: options.cwd });
   runs.push(baseline);
   if (baseline.pass) {
     throw new WeakGateError(
@@ -242,7 +288,7 @@ export async function runGatedFusion(
 
   if (!options.applyWork) {
     // Completion-only roles: nothing can change the workspace mid-run.
-    const evaluation = runGate(checks, "evaluation", { cwd: options.cwd });
+    const evaluation = await runGate(checks, "evaluation", { cwd: options.cwd });
     runs.push(evaluation);
     if (!evaluation.pass) {
       throw new GateHaltError(
@@ -255,13 +301,16 @@ export async function runGatedFusion(
 
   for (let round = 1; round <= maxRounds; round += 1) {
     options.applyWork(work);
-    let evaluation = runGate(checks, "evaluation", { cwd: options.cwd });
+    let evaluation = await runGate(checks, "evaluation", { cwd: options.cwd });
     runs.push(evaluation);
 
-    // Gate repair: a check whose command does not exist (exit 127) is a
-    // defective gate, not failing work. Repair once, re-run without
-    // consuming the builder round.
-    const defective = evaluation.results.some((r) => r.exitCode === 127);
+    // Gate repair: a check whose command does not exist (genuine exit 127 —
+    // timeouts are excluded even in the boundary race where a killed shell's
+    // code had already arrived) is a defective gate, not failing work.
+    // Repair once, re-run without consuming the builder round.
+    const defective = evaluation.results.some(
+      (r) => r.exitCode === 127 && !r.timedOut,
+    );
     if (
       defective &&
       !evaluation.pass &&
@@ -269,8 +318,20 @@ export async function runGatedFusion(
       options.repairGate
     ) {
       gateRepairsUsed += 1;
-      checks = await options.repairGate(evaluation);
-      evaluation = runGate(checks, "repair", { cwd: options.cwd });
+      const repaired = await options.repairGate(evaluation);
+      // The repaired design is fresh model-authored shell: it passes through
+      // the SAME consent channel as the original design before executing.
+      const consented = options.approveGate
+        ? await options.approveGate(repaired)
+        : false;
+      if (!consented) {
+        throw new GateHaltError(
+          "operator refused the repaired gate design — halting rather than running unconsented checks.",
+          runs,
+        );
+      }
+      checks = repaired;
+      evaluation = await runGate(checks, "repair", { cwd: options.cwd });
       runs.push(evaluation);
     }
 

@@ -24,7 +24,7 @@ import type {
   RoleOutput,
   SynthesisArtifact,
 } from "./types.js";
-import { GateHaltError, WeakGateError } from "./types.js";
+import { GateHaltError, UnwinnableGateError, WeakGateError } from "./types.js";
 
 export interface FuseOptions {
   task: string;
@@ -45,6 +45,14 @@ export interface FuseOptions {
    * channel cannot silently run model-authored shell.
    */
   approveGate?: (checks: GateCheck[]) => boolean | Promise<boolean>;
+  /**
+   * Materialise the builder's current output into the workspace between gate
+   * rounds. **Required when `gate` is true**: without it the baseline RED
+   * state can never change, the gate is unwinnable, and {@link fuse} throws
+   * {@link UnwinnableGateError} at entry rather than burn panel/synthesis
+   * tokens on a run that can only halt.
+   */
+  applyWork?: (builderText: string) => void;
   cwd?: string;
   maxRounds?: number;
 }
@@ -59,11 +67,11 @@ export interface FuseResult {
 }
 
 /**
- * Run one fusion. Completion-only roles cannot change the workspace, so the
- * gate's baseline RED check and its evaluation run on the same tree state —
- * the RED check still catches weak gates (a green gate proves nothing), and
- * the evaluation is the verdict on the workspace as it stands. The live
- * repair loop (applyWork) wires in with Inc 05's permission-gated tools.
+ * Run one fusion. A gated run REQUIRES `applyWork`: completion-only roles
+ * cannot change the workspace, so without a materialisation path the
+ * baseline RED state can never flip and the gate is unwinnable — fuse()
+ * throws {@link UnwinnableGateError} at entry, before the validator, panel,
+ * or synthesis burn a single token.
  */
 export async function fuse(
   streamFn: StreamFunction,
@@ -74,6 +82,17 @@ export async function fuse(
   const cwd = options.cwd ?? process.cwd();
   const gated = options.gate === true;
   const gateRuns: GateRun[] = [];
+
+  // Unwinnable configurations fail fast at entry: no applyWork means the
+  // gate's RED baseline can never be turned green, so every gated run would
+  // end in a halt after burning panel + synthesis tokens for nothing.
+  if (gated && !options.applyWork) {
+    throw new UnwinnableGateError(
+      "gate: true requires applyWork — without a way to materialise the " +
+        "builder's output the baseline RED state can never change, so the " +
+        "gate is unwinnable. Refusing before burning panel/synthesis tokens.",
+    );
+  }
 
   // FU-3 step 1: the validator designs the gate before any work.
   const checks = gated
@@ -124,6 +143,39 @@ export async function fuse(
     sharedContext: checks ? gateListing(checks) : undefined,
   });
 
+  // Partial panel: a failed role is recorded with its error, and the
+  // surviving role's output is returned — not thrown away. A merge over one
+  // position would be a silent regression to one opinion (the AttributionError
+  // class of defect), so synthesis and the gate do not run on a broken panel.
+  if (outputs.some((o) => o.error !== undefined)) {
+    const record: FusionRunRecord = {
+      runId: uuidv7(),
+      ts: new Date().toISOString(),
+      task: options.task,
+      gated,
+      roles: outputs,
+      synthesis: undefined,
+      gate: { rounds: 0, outcome: "not-run" },
+      wallMs: Date.now() - started,
+    };
+    return {
+      runId: record.runId,
+      outputs,
+      synthesis: {
+        consensus: [],
+        divergences: [],
+        discarded: [],
+        blindSpots: [],
+        raw: "",
+        modelId: judge.id,
+        usage: undefined,
+      },
+      gate: { rounds: 0, outcome: "not-run" },
+      gateRuns: [],
+      record,
+    };
+  }
+
   // FU-2: the attributed merge from a fresh third session.
   const synthesis = await runSynthesis(streamFn, judge, options.task, outputs);
 
@@ -139,6 +191,8 @@ export async function fuse(
         cwd,
         maxRounds: options.maxRounds,
         initialWork: builderOutput,
+        applyWork: options.applyWork,
+        approveGate: options.approveGate,
         repairWork: (failures) =>
           complete(streamFn, options.builderModel, {
             system:

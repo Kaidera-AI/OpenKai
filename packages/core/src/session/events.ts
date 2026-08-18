@@ -33,8 +33,10 @@ export type StrippedSessionEvent = DistributiveOmit<SessionEvent, "sessionId" | 
  * Map one {@link AgentEvent} to zero or more {@link StrippedSessionEvent}s.
  * The caller stamps `sessionId` and assigns `seq` (ascending from 1).
  *
- * Returns an array because `turn_end` emits both a usage snapshot and a turn
- * marker. The common case is exactly one output event.
+ * Returns an array because `turn_end` emits a usage snapshot, an optional
+ * `error` event (when the settled assistant message carries stopReason
+ * "error" or an errorMessage), and a turn marker. The common case is exactly
+ * one output event.
  */
 export function mapAgentEvent(event: AgentEvent): StrippedSessionEvent[] {
   switch (event.type) {
@@ -70,6 +72,20 @@ export function mapAgentEvent(event: AgentEvent): StrippedSessionEvent[] {
       // The settled assistant message carries final usage.
       if (event.message && "usage" in event.message && event.message.usage) {
         out.push({ kind: "usage", usage: toSnapshot(event.message.usage) });
+      }
+      // A turn that settled as a provider error (stopReason "error" or an
+      // errorMessage on the assistant message) surfaces as an `error` event
+      // so the renderer can show it — otherwise the failure is silent text.
+      if (
+        event.message &&
+        "role" in event.message &&
+        event.message.role === "assistant" &&
+        (event.message.stopReason === "error" || event.message.errorMessage !== undefined)
+      ) {
+        out.push({
+          kind: "error",
+          message: event.message.errorMessage ?? `turn ended with stopReason "${event.message.stopReason}"`,
+        });
       }
       out.push({ kind: "turn_end" });
       return out;

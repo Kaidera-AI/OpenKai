@@ -9,7 +9,7 @@
  * patching of `os.homedir`).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -38,8 +38,11 @@ export function readConfigFile(): Record<string, unknown> {
 /** Write the config file, creating the directory if needed. */
 export function writeConfigFile(config: Record<string, unknown>): void {
   const file = configFilePath();
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  // The home dir and config file carry provider/MCP configuration — operator
+  // only (0o700 / 0o600). The chmod also repairs pre-existing loose files.
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
+  chmodSync(file, 0o600);
 }
 
 // ── MCP server config (pi/opencode shape) ──────────────────────────────────

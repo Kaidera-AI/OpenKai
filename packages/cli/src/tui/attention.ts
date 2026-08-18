@@ -14,6 +14,8 @@
  * terminal's `write`, or a capturing writer in tests).
  */
 
+import { sanitizeTerminalText } from "./sanitize.js";
+
 /** A minimal write sink (the terminal's `write`, or a test capturer). */
 export interface AttentionWriter {
   write(data: string): void;
@@ -62,11 +64,13 @@ export class AttentionNotifier {
 }
 
 /**
- * Escape an OSC string payload (the string terminator BEL/ST is the only
- * special char that must not appear literally). Keeps the sequence well-formed.
+ * Escape an OSC string payload. The full C0/C1 range must not survive — BEL/ST
+ * terminate the sequence early, and other controls (or a smuggled ESC) let
+ * notification text forge terminal state (E001 §2). Reuses the terminal
+ * sanitiser; newlines flattened since an OSC payload is single-line.
  */
 function escapeOsc(s: string): string {
-  return s.replace(/\x07/g, " ").replace(/\x1b/g, " ");
+  return sanitizeTerminalText(s).replace(/\n/g, " ");
 }
 
 /** DEC 1004 focus-report sequences the runtime writes to enable/disable them. */

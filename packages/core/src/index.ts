@@ -10,3 +10,9 @@ export {
   SECRET_NAME_PATTERN,
   SECRET_PREFIXES,
 } from "./secrets.js";
+export {
+  authFilePath,
+  defaultModels,
+  FileCredentialStore,
+  openkaiHome,
+} from "./credentials.js";

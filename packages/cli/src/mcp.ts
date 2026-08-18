@@ -65,7 +65,21 @@ function parseArgs(argsStr: string | undefined): string[] | undefined {
 
 // ── add ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Names that must never key the mcpServers map: they mutate or shadow
+ * Object.prototype when the map is a plain object (JSON round-trip).
+ */
+// Built via fromEntries: a literal `__proto__:` key would set the object's
+// prototype instead of creating an own property.
+const RESERVED_SERVER_NAMES: Record<string, true> = Object.fromEntries(
+  ["__proto__", "constructor", "prototype"].map((name) => [name, true as const]),
+);
+
 export async function runMcpAdd(options: McpAddOptions): Promise<number> {
+  if (RESERVED_SERVER_NAMES[options.name] === true) {
+    process.stderr.write(`ERROR: "${options.name}" is a reserved name — pick another.\n`);
+    return 2;
+  }
   if (!options.command && !options.url) {
     process.stderr.write("ERROR: mcp add requires --command <cmd> or --url <url>.\n");
     return 2;
@@ -99,7 +113,7 @@ export async function runMcpAdd(options: McpAddOptions): Promise<number> {
 
 export async function runMcpRemove(options: McpRemoveOptions): Promise<number> {
   const servers = readMcpServers();
-  if (!(options.name in servers)) {
+  if (!Object.hasOwn(servers, options.name)) {
     process.stderr.write(`ERROR: no MCP server named "${options.name}".\n`);
     return 1;
   }
@@ -143,7 +157,7 @@ export async function runMcpList(): Promise<number> {
 
 export async function runMcpTest(options: McpTestOptions): Promise<number> {
   const servers = readMcpServers();
-  if (!(options.name in servers)) {
+  if (!Object.hasOwn(servers, options.name)) {
     process.stderr.write(`ERROR: no MCP server named "${options.name}".\n`);
     return 1;
   }
@@ -183,7 +197,14 @@ export async function runMcpTest(options: McpTestOptions): Promise<number> {
         entry.command!,
         [...args, "--help"],
         {
-          env: { ...process.env, ...entry.env },
+          // Probe env is PATH + HOME + the entry's own vars only — the
+          // operator's full environment (provider keys, tokens) is not
+          // the server's to inherit for a --help probe.
+          env: {
+            ...(process.env.PATH !== undefined ? { PATH: process.env.PATH } : {}),
+            ...(process.env.HOME !== undefined ? { HOME: process.env.HOME } : {}),
+            ...entry.env,
+          },
           stdio: ["pipe", "pipe", "pipe"],
           timeout: timeoutMs,
         },

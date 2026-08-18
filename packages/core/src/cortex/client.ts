@@ -5,6 +5,13 @@
  * the agent CLIs use: `X-Project` scoping header, optional `X-Agent-Name`.
  * Per the Cortex access rule this client is the whole contract — OpenKai
  * never touches Postgres/Redis/workers directly.
+ *
+ * Transport hygiene (ren review): `CORTEX_API_TOKEN` (process env only —
+ * never the project `.env`) adds an `Authorization: Bearer` header; every
+ * JSON call carries a default 15s timeout (`AbortSignal.timeout`,
+ * per-call overridable) so a hung API cannot stall a turn; and a
+ * non-loopback plain-http baseUrl warns once on stderr (tokens and session
+ * content would cross the network in cleartext).
  */
 
 import { parseSse } from "./sse.js";
@@ -23,6 +30,22 @@ import type {
 
 /** Default local Cortex API origin (matches `.agents/scripts/_cortex_env.sh`). */
 export const DEFAULT_CORTEX_API_URL = "http://localhost:8501";
+
+/** Default per-request timeout for JSON calls (ren review). */
+export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
+/** Process-wide one-shot latch for the plain-http warning. */
+let insecureHttpWarned = false;
+
+/** True when the URL host is loopback (localhost, 127.0.0.0/8, ::1). */
+function isLoopbackUrl(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === "localhost" || host === "::1" || host.startsWith("127.");
+  } catch {
+    return false;
+  }
+}
 
 /** Non-2xx response from the Cortex API. `body` carries the server's detail. */
 export class CortexApiError extends Error {
@@ -62,6 +85,8 @@ export class CortexClient {
   readonly project: string;
   private readonly agent: string | undefined;
   private readonly fetchImpl: typeof fetch;
+  /** Optional bearer token from `CORTEX_API_TOKEN` (process env only). */
+  private readonly token: string | undefined;
 
   constructor(options: CortexClientOptions) {
     if (!options.project) {
@@ -75,6 +100,18 @@ export class CortexClient {
     this.project = options.project;
     this.agent = options.agent;
     this.fetchImpl = options.fetch ?? fetch;
+    this.token = process.env.CORTEX_API_TOKEN;
+    if (
+      !insecureHttpWarned &&
+      this.baseUrl.startsWith("http://") &&
+      !isLoopbackUrl(this.baseUrl)
+    ) {
+      insecureHttpWarned = true;
+      console.error(
+        `[openkai] warning: Cortex baseUrl ${this.baseUrl} is plain http on a non-loopback host — ` +
+          "credentials and session content cross the network in cleartext",
+      );
+    }
   }
 
   private headers(extra?: Record<string, string>): Record<string, string> {
@@ -83,12 +120,14 @@ export class CortexClient {
       ...extra,
     };
     if (this.agent) headers["X-Agent-Name"] = this.agent;
+    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
     return headers;
   }
 
-  private async getJson<T>(path: string): Promise<T> {
+  private async getJson<T>(path: string, options: { timeoutMs?: number } = {}): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       headers: this.headers(),
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
     });
     const text = await response.text();
     if (!response.ok) {
@@ -109,7 +148,7 @@ export class CortexClient {
   async postJson<T>(
     path: string,
     payload: unknown,
-    options: { agent?: string } = {},
+    options: { agent?: string; timeoutMs?: number } = {},
   ): Promise<T> {
     const headers = this.headers({ "Content-Type": "application/json" });
     if (options.agent) headers["X-Agent-Name"] = options.agent;
@@ -117,6 +156,7 @@ export class CortexClient {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
     });
     const text = await response.text();
     if (!response.ok) {
@@ -134,10 +174,11 @@ export class CortexClient {
    * `DELETE` a Cortex path. Returns the parsed JSON response (or `undefined`
    * for an empty body). Used by the skill-remove flow (E002 Inc 05).
    */
-  async deleteJson<T>(path: string): Promise<T> {
+  async deleteJson<T>(path: string, options: { timeoutMs?: number } = {}): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method: "DELETE",
       headers: this.headers(),
+      signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
     });
     const text = await response.text();
     if (!response.ok) {
