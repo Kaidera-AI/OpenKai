@@ -2,6 +2,88 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.6] — v0.1.006 (K3 adversarial review + keyless boot)
+
+Two full adversarial passes (ren@openkai's E012 review of 0.1.5, then kai's K3
+request against the E014/E015 surface) — 80+ findings reviewed, every
+confirmed one fixed and pinned. Plus the fresh-install boot contract: **the
+TUI never refuses to start** — missing credentials open sign-in inside the
+running shell (CTO directive).
+
+### Boot & first run (0.1.6)
+- **Keyless boot**: a machine with no API keys launches the TUI, shows the
+  capability row, and auto-opens the sign-in overlay; key/OAuth entry takes
+  effect on the next prompt (auth resolves per request). Headless paths
+  (`chat`, `serve`) keep their named exits.
+- **Single-key provider fallback**: a box with one NVIDIA key boots into the
+  NVIDIA lane (not a dead openrouter default); model defaults derive from the
+  bundled catalogue, so every lane is bootable offline.
+- **One credential store everywhere**: every catalogue/stream call site now
+  uses the persistent `FileCredentialStore` factory — OAuth logins survive
+  restarts on the fusion lane too.
+
+### K3 review fixes (E014/E015 surface)
+- **Tier scorer fidelity** (Switchyard calibration): `failing`/`passing`/
+  Jest ✕ recognised; structural `*Error`/`*Exception` matching; plain nonzero
+  exits score SOFT 0.3 as calibrated; gate refusals no longer read as tool
+  friction; negated passes ("did not pass") count as failure evidence; bash
+  writes (`sed -i`, redirection, `tee`) count as production — phantom
+  "spinning" misroutes closed.
+- **routeWithTier**: per-stage fall-open (plan/review rest on the capable
+  member), `defaultTier` option (the OK-9.7 posture seam), full type
+  narrowing.
+- **task tool**: stage→model resolution threads the cast's provider (was dead
+  by default); review stage loud-fails without a `judgeModel`; pre-aborted
+  children never start a run; `transport.prompt()` after `close()` rejects;
+  outputSchema extractor tries all fenced blocks + balanced spans, reads
+  required keys from formal JSON Schema, caps output at 64 KiB; operator
+  casts (`~/.openkai/config.json`) plumbed through; `web_fetch` honours the
+  caller's AbortSignal.
+- **Fusion telemetry**: wrong-shape log lines can't crash the dashboard;
+  rotation re-reads + merges before rewriting (concurrent writers kept);
+  pair keys provider-qualified; self-pairs render honestly; `__proto__` gate
+  keys counted; log-sourced strings stripped of control bytes.
+- **Bridge `--listen`** brought to hub posture and made correct: instant ack
+  + async relay with event-id dedup (Slack's 3s retries no longer multiply
+  paid turns), `url_verification` handshake answered, bot/subtype events
+  dropped (self-loop guard), timing-safe bearer compare, 1 MiB body cap,
+  Host allowlist, `/health`, request timeout, fixed error contract,
+  `--hub-host` for IPv6-bound hubs. Shared `http-common.ts` helpers — one
+  hardened implementation for both listeners.
+
+### E012 review fixes (0.1.5 surface, landed with this release)
+- **hashline_edit gated** (was an ungated arbitrary file write): approval
+  round-trip, deny floor, canonical containment, shadow snapshot.
+- **Upgrade trust root**: project `.env` can no longer set `OPENKAI_*` /
+  `CORTEX_*` knobs; release-key pin seam (`OPENKAI_RELEASE_KEY` build define,
+  fail-closed once pinned); `install.sh` performs the sha256 verification its
+  header claimed.
+- **MCP**: tools merge (never replace built-ins), execute through the
+  permission gate, spawn with a secret-scrubbed environment.
+- **Sessions**: resume rehydrates header/seq/parent chain; corrupt JSONL
+  tails tolerated; per-session advisory locks.
+- **Gate liveness**: abort/close settle pending approvals (`rejectAll`);
+  gated `bash` honours abort + timeout; control events can't be dropped by
+  the bounded event queue; plan mode enforced at the gate.
+- **TUI**: every model/tool render path sanitised (status chip, notices,
+  previews, attention); `submit()` busy guard; Ctrl+K palette bound; provider
+  errors render as error turns; `/model <id>` works; auto-compact is
+  idle-only.
+- **Deny floor extended**: ed25519/ecdsa keys, `.npmrc`/`.netrc`/`.pypirc`,
+  `.aws`/`.azure`/`.kube`/`.gnupg`, `*.p12`/`*.pfx`/keystores.
+
+### Research (this release's design base)
+- `research/2026-08-18-switchyard-routing-fusion-deep-dive.md` — 34+ primary
+  sources; what Switchyard is based on (arXiv:2603.20895), routing + fusion
+  literature distilled.
+- `research/2026-08-18-shift-fusion-orchestration-ADR.md` — OK-9: shift
+  predicts, fusion multiplies, the gate verifies; OK-9.7 operator postures
+  and pins.
+- `research/2026-08-18-e015-research-match-integration-review.md` — the
+  S1–S5 landing order (TUI visibility slice, orchestration facade).
+
+**263/263 tests green; typecheck clean; `scripts/security-audit.sh` PASSED.**
+
 ## [0.1.5] — v0.1.005 (the harness release: omp functionality, droid feel, Kaidera brand)
 
 Twenty-plus increments (E002–E011) fold the best of omp (functionality) and

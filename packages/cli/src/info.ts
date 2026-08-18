@@ -7,7 +7,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModels } from "@kaidera/openkai-core";
 import { CortexClient, defaultFusionLogPath, readFusionRuns } from "@kaidera/openkai-core";
 import {
   BUILD_CHANNEL,
@@ -75,7 +75,7 @@ export async function runInfo(options: InfoOptions): Promise<number> {
 
   // Provider catalogue (offline, bundled) + configuration matrix.
   try {
-    const catalogue = builtinModels();
+    const catalogue = defaultModels();
     const openrouterCount = catalogue.getModels("openrouter").length;
     lines.push(`model catalogue: ${openrouterCount} OpenRouter models bundled`);
   } catch {

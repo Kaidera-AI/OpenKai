@@ -35,7 +35,7 @@ import {
 } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModels } from "@kaidera/openkai-core";
 import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
 import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, readConfigFile, writeConfigFile, type StatuslineChip } from "../config.js";
 import { initAgentsMd } from "../init.js";
@@ -117,6 +117,12 @@ export interface TuiAppOptions {
   replayMessages?: AgentMessage[];
   sessionsRoot?: string;
   onExit?: (request: ExitRequest) => void;
+  /**
+   * 0.1.6 keyless boot: the provider has no credentials — the shell boots
+   * anyway and the sign-in overlay auto-opens after boot (CTO directive:
+   * never block the TUI on a missing key).
+   */
+  setupNeeded?: boolean;
   // ── P4b (scope §1) ─────────────────────────────────────────────────────
   /** Agent name for the identity pill + chrome (scope §1.2; default `openkai`). */
   agentName?: string;
@@ -646,7 +652,7 @@ export class TuiController {
           break;
         }
         try {
-          const models = builtinModels();
+          const models = defaultModels();
           await models.logout(arg);
           this.transcript.addNotice(`/logout — ${arg} signed out ✓`);
         } catch {
@@ -944,9 +950,22 @@ export class TuiController {
     this.tui.showOverlay(overlay, { anchor: "center", width: "64%", maxHeight: "80%" });
   }
 
+  /**
+   * 0.1.6 keyless boot: called once after `tui.start()` when the provider has
+   * no credentials. Explains the state, then opens the sign-in overlay for
+   * the active provider — configuration happens inside the running shell.
+   */
+  beginProviderSetup(providerId: string): void {
+    this.transcript.addNotice(
+      `No ${providerId} credentials found — OpenKai is fully usable once you sign in. ` +
+        `Everything else (settings, memory, sessions) works now. Sign in below, or /setup later.`,
+    );
+    this.tui.requestRender();
+    this.openSignIn(providerId);
+  }
+
   /** In-TUI provider sign-in: OAuth lanes run the device flow; key lanes prompt inline. */
-  private openSignIn(providerId: string): void {
-    const info = PROVIDERS[providerId];
+  private openSignIn(providerId: string): void {    const info = PROVIDERS[providerId];
     const status = providerKeyStatus(providerId);
     const done = (message: string): void => {
       this.tui.hideOverlay();
@@ -994,7 +1013,7 @@ export class TuiController {
         oauth: status.oauth,
       };
     });
-    const catalogue = builtinModels();
+    const catalogue = defaultModels();
     const picker = new ModelPicker(
       providers,
       (providerId) =>
@@ -1037,7 +1056,7 @@ export class TuiController {
 
   /** `/models` — the fullscreen hub (sidebar scopes + metadata model list). */
   openModelsHub(): void {
-    const catalogue = builtinModels();
+    const catalogue = defaultModels();
     const hub = new ModelsHub(
       Object.entries(PROVIDERS).map(([id, info]) => {
         const status = providerKeyStatus(id);
@@ -1070,7 +1089,7 @@ export class TuiController {
 
   /** Apply a picker selection: switch the session model + update chrome. */
   private applyModelSelection(provider: string, modelId: string): void {
-    const catalogue = builtinModels();
+    const catalogue = defaultModels();
     const model = catalogue.getModel(provider, modelId);
     if (!model || !this.modelSwitch) {
       this.transcript.addNotice(`model ${modelId} unavailable under ${provider}`);

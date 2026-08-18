@@ -30,7 +30,7 @@ import {
   listSessions,
   readSessionMessages,
 } from "@kaidera/openkai-core";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModels } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildTuiApp, type RunMode, type ExitRequest } from "./app.js";
 import {
@@ -58,7 +58,7 @@ import { detectThemeAsync, setTheme } from "./theme.js";
 import { featureEnabled } from "./features.js";
 import { appendActivity } from "../tail.js";
 import { CLI_VERSION } from "../version.js";
-import { providerKeyStatus, resolveProvider } from "../providers.js";
+import { configuredProviders, providerKeyStatus, resolveProvider } from "../providers.js";
 
 /** Options for {@link runTui}. */
 export interface RunTuiOptions {
@@ -125,8 +125,29 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
 /** Run one session to its exit request. */
 async function runSession(options: RunTuiOptions): Promise<{ code: number; next: ExitRequest }> {
   const config = readConfig();
-  const provider = resolveProvider(options.provider ?? (config.provider as string | undefined));
-  const modelId = options.model ?? process.env.OPENKAI_MODEL ?? (config.model as string | undefined) ?? (provider === "openrouter" ? "nvidia/nemotron-3-nano-30b-a3b:free" : undefined);
+  let provider = resolveProvider(options.provider ?? (config.provider as string | undefined));
+  // Fresh-install friendliness (0.1.6): when the resolved provider has no
+  // credentials but another lane does — and no explicit --provider was
+  // passed — prefer the configured lane. A box with one NVIDIA key boots
+  // into NVIDIA, not a dead openrouter default. Only lanes with a real env
+  // key count (`via` set): OAuth lanes report "configured" unconditionally,
+  // and a keyless box must reach the sign-in overlay, not a mismatched lane.
+  if (!options.provider && !providerKeyStatus(provider).configured) {
+    const keyed = configuredProviders().filter((p) => providerKeyStatus(p).via !== undefined);
+    if (keyed.length > 0 && !keyed.includes(provider)) {
+      provider = keyed[0]!;
+    }
+  }
+  // Model: flag > env > config > curated default > first catalogue entry for
+  // the lane (a bootable default must exist for every provider — the
+  // catalogue is bundled, so this never needs network).
+  const catalogue = defaultModels();
+  const modelId =
+    options.model ??
+    process.env.OPENKAI_MODEL ??
+    (config.model as string | undefined) ??
+    (provider === "openrouter" ? "nvidia/nemotron-3-nano-30b-a3b:free" : undefined) ??
+    catalogue.getModels(provider)[0]?.id;
   if (!modelId) {
     process.stderr.write(
       `ERROR: no default model for provider "${provider}" — pass --model <id> (or set OPENKAI_MODEL).\n`,
@@ -134,11 +155,16 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     return { code: 2, next: { kind: "quit" } };
   }
   const keyStatus = providerKeyStatus(provider);
-  if (!keyStatus.configured) {
+  // 0.1.6 (CTO directive): missing credentials NEVER block the TUI. The shell
+  // boots keyless (transport constructed with an injected catalogue, so no
+  // pre-network key check), the sign-in overlay auto-opens, and OAuth/key
+  // entry take effect on the next prompt — auth resolves per request.
+  // Headless paths (chat/serve) keep their named exits.
+  const setupNeeded = !keyStatus.configured;
+  if (setupNeeded && !options.quiet) {
     process.stderr.write(
-      `${provider} credentials not found: set ${keyStatus.needsKey ?? "the provider credentials"} or export them in your environment.\n`,
+      `[openkai] no ${provider} credentials — the TUI will open sign-in; everything else works.\n`,
     );
-    return { code: 1, next: { kind: "quit" } };
   }
   const agent = options.agent ?? process.env.OPENKAI_AGENT ?? "openkai";
   const cwd = process.cwd();
@@ -177,7 +203,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
 
   let transport: InProcessTransport;
   // The fusion lane shares the session's provider + model (self-pairing).
-  const fusionModels = builtinModels();
+  const fusionModels = catalogue;
   const fusionModel = fusionModels.getModel(provider, modelId);
   if (!fusionModel) {
     process.stderr.write(`ERROR: model "${modelId}" not found under provider "${provider}".\n`);
@@ -192,6 +218,10 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       cwd,
       initialMessages: replayMessages,
       enablePermissions: true,
+      // Injecting the catalogue skips the pre-network key check: a keyless
+      // machine still boots (0.1.6); auth failures surface at stream time as
+      // error events, and the sign-in overlay resolves them live.
+      models: fusionModels,
       onActivity: (event) =>
         appendActivity(cwd, event.kind, {
           toolName: "toolName" in event ? (event.toolName as string) : undefined,
@@ -277,6 +307,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     notifier,
     history,
     provider,
+    setupNeeded,
     onSetModel: (model) => transport.setModel(model),
     onSetEffort: {
       set: (level) => transport.setThinkingLevel(level),
@@ -295,7 +326,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
         ? fusionModels.getModel(partner.provider, partner.modelId) ?? fusionModel
         : fusionModel;
       return fuse(
-        (m, ctx, opts) => builtinModels().streamSimple(m, ctx, opts),
+        (m, ctx, opts) => defaultModels().streamSimple(m, ctx, opts),
         {
           task,
           architectModel: fusionModel,
@@ -402,6 +433,12 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     if (runMode.mode === "local") {
       process.stderr.write(`[openkai] local mode — Cortex unreachable or unset; persisting locally only.\n`);
     }
+  }
+
+  // 0.1.6 keyless boot: no credentials → open sign-in inside the running
+  // shell (the CTO directive: configure after launch, never block boot).
+  if (setupNeeded) {
+    controller.beginProviderSetup(provider);
   }
 
   const consumePromise = controller.consume();
