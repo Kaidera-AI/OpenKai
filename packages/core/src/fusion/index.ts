@@ -58,3 +58,11 @@ export type {
   SynthesisDiscard,
   SynthesisDivergence,
 } from "./types.js";
+
+
+export {
+  aggregateFusionRuns,
+  renderFusionDashboard,
+  type FusionDashboard,
+  type PairStats,
+} from "./telemetry.js";

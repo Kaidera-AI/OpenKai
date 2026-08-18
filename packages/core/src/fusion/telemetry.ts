@@ -185,3 +185,67 @@ export function summariseFusionRuns(records: FusionRunRecord[]): FusionPairStats
   }
   return stats.sort((a, b) => b.runs - a.runs);
 }
+
+
+/**
+ * Fusion telemetry dashboard (E015, K3 #4): aggregate the runs log into
+ * per-pair A/B stats + gate-outcome distribution. Pure over the records.
+ */
+export interface PairStats {
+  /** "providerA/modelA + providerB/modelB" (sorted, deduped). */
+  pair: string;
+  runs: number;
+  pass: number;
+  passRate: number;
+  avgWallMs: number;
+  totalTokens: number;
+}
+
+export interface FusionDashboard {
+  totalRuns: number;
+  pairs: PairStats[];
+  gateOutcomes: Record<string, number>;
+}
+
+export function aggregateFusionRuns(records: FusionRunRecord[]): FusionDashboard {
+  const byPair = new Map<string, { runs: number; pass: number; wall: number; tokens: number }>();
+  const gateOutcomes: Record<string, number> = {};
+  for (const r of records) {
+    const models = r.roles.map((role) => role.modelId).sort();
+    const pair = [...new Set(models)].join(" + ") || "(unknown)";
+    const acc = byPair.get(pair) ?? { runs: 0, pass: 0, wall: 0, tokens: 0 };
+    acc.runs += 1;
+    if (r.gate.outcome === "pass") acc.pass += 1;
+    acc.wall += r.wallMs;
+    for (const role of r.roles) acc.tokens += role.usage?.totalTokens ?? 0;
+    acc.tokens += r.synthesis?.usage?.totalTokens ?? 0;
+    byPair.set(pair, acc);
+    gateOutcomes[r.gate.outcome] = (gateOutcomes[r.gate.outcome] ?? 0) + 1;
+  }
+  const pairs: PairStats[] = [...byPair.entries()]
+    .map(([pair, a]) => ({
+      pair,
+      runs: a.runs,
+      pass: a.pass,
+      passRate: a.runs > 0 ? a.pass / a.runs : 0,
+      avgWallMs: a.runs > 0 ? Math.round(a.wall / a.runs) : 0,
+      totalTokens: a.tokens,
+    }))
+    .sort((x, y) => y.runs - x.runs);
+  return { totalRuns: records.length, pairs, gateOutcomes };
+}
+
+/** Render the dashboard as plain lines (the CLI prints them). */
+export function renderFusionDashboard(d: FusionDashboard): string[] {
+  const lines: string[] = [`fusion telemetry — ${d.totalRuns} run(s)`];
+  const gates = Object.entries(d.gateOutcomes)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" · ");
+  lines.push(`gate outcomes: ${gates || "(none)"}`);
+  for (const p of d.pairs) {
+    lines.push(
+      `  ${p.pair} — ${p.runs} run(s), ${(p.passRate * 100).toFixed(0)}% pass, avg ${(p.avgWallMs / 1000).toFixed(1)}s, ${p.totalTokens} tokens`,
+    );
+  }
+  return lines;
+}

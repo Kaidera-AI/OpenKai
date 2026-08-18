@@ -412,7 +412,15 @@ async function main(argv: string[]): Promise<number> {
         filesBreadth,
       });
     }
-    return fail("fusion requires a subcommand: report | advise.");
+    if (sub === "dashboard") {
+      const { readFusionRuns, aggregateFusionRuns, renderFusionDashboard } = await import("@kaidera/openkai-core");
+      const records = await readFusionRuns();
+      for (const line of renderFusionDashboard(aggregateFusionRuns(records))) {
+        process.stdout.write(line + "\n");
+      }
+      return 0;
+    }
+    return fail("fusion requires a subcommand: report | advise | dashboard.");
   }
 
   // ── undo (Inc 05) ────────────────────────────────────────────────────────
