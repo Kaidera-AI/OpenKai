@@ -69,6 +69,7 @@ Increment files: `Release_v0.1.0/E001_OPENKAI_V1/INCREMENTS/`.
 
 ## Standing risks (from ADR §7 + CPO amendments)
 
+0. **Feature regression (learned 2026-08-19):** the brand splash was silently dropped by an unrelated edit (b50232d) and reached the user. Mitigation: `Program/FEATURE_REGISTRY.md` is the living inventory; every feature PR updates it; the release gate walks it. A call-site deletion compiles clean and passes every test — the registry is the check, not the suite.
 1. Upstream pi namespace churn — mitigated: exact pins + lockfile.
 2. Scope flood (more patterns than v1 holds) — mitigated: ADR do-NOT list + P4b backlog discipline.
 3. ren A2: any v2 protocol change (approval channel) goes through CPO review BEFORE implementation.

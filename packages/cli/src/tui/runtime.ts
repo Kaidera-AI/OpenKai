@@ -255,8 +255,11 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   }
 
   const terminal = new ProcessTerminal();
-  // First-run brand moment: animated Kaidera mark + OpenKai wordmark, once
-  // ever, before the alt-screen app takes over (droid bar).
+  // First-run brand moment: animated Kaidera mark + OpenKai wordmark with the
+  // shine traversal (omp choreography, any key skips, TTY only), before the
+  // alt-screen app takes over. DROPPED in the mouse-feature edit (b50232d)
+  // and restored here — the feature registry exists to catch exactly this.
+  await playBrandAnimation(CLI_VERSION);
   const tui = new TuiAltScreen(terminal, true, undefined, {
     // Claude Code-style mouse (E012): wheel scrolls the transcript, drag
     // selects (copied to the clipboard), scrollbar drags, and OSC 8 URLs open

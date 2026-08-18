@@ -35,7 +35,7 @@ The composition law (arXiv:2410.10347): **route when you can predict, cascade wh
 | 07 | **Synthesis upgrade (OK-9 W4)** | pairwise-comparison synthesis contract (compare-then-compose), strongest-model resolution, parse-failure keeps both outputs + flags | synthesis prompt asks for comparison; failure posture tested |
 | 08 | **Calibration harness (OK-9 W6/W7)** | quadrant runner (RESCUE/LOSS/SAFE/HARD over ~60–95 instrumented runs), threshold sweep, CPT/APGR report, judge break-even meter on the feed | `openkai fusion calibrate` produces the quadrant table + recommended threshold; records in research/calibration/ |
 | 09 | **Release-key signing** | Ed25519 keypair generated (CTO custody); `OPENKAI_RELEASE_KEY` pinned at build; manifests signed; `<asset>.sha256` sidecars published | unsigned/tampered manifest refused by a pinned build; install.sh verifies sidecar |
-| 10 | **v0.1.007 release** | version bump (0.1.7 lockstep + core pin), CHANGELOG, K3-style adversarial gate on the epic diff, binaries, brew, npm | full channel verification; adversarial return accepted |
+| 10 | **v0.1.007 release** | version bump (0.1.7 lockstep + core pin), CHANGELOG, K3-style adversarial gate on the epic diff, **feature-registry audit** (Program/FEATURE_REGISTRY.md — every ✅/🔁 row verified against the build, evidence in the release notes), binaries, brew, npm | full channel verification; adversarial return accepted; registry audit recorded |
 
 ## 4. Standing invariants
 
