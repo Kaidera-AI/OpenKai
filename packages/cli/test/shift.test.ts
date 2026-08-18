@@ -1090,3 +1090,25 @@ test("routeWithTier: clean settled run stays efficient", () => {
   assert.equal(r.model, "cheap");
   assert.equal(r.source, "tests_passed");
 });
+
+// ── K3 #2 multi-modal routing (vision slice) ────────────────────────────────
+
+import { filterByModality, isVisionCapable } from "@kaidera/openkai-core";
+
+test("modality: image tasks filter to vision-capable models", () => {
+  const models = [
+    { id: "text-only", input: ["text"] as const },
+    { id: "vision", input: ["text", "image"] as const },
+  ];
+  const got = filterByModality(models, ["image"]);
+  assert.equal(got.length, 1);
+  assert.equal(got[0]!.id, "vision");
+  assert.ok(isVisionCapable(got[0]!.input));
+});
+
+test("modality: fail-open when no model matches (never refuse the task)", () => {
+  const models = [{ id: "text-only", input: ["text"] as const }];
+  const got = filterByModality(models, ["image"]);
+  assert.equal(got.length, 1);
+  assert.equal(got[0]!.id, "text-only");
+});

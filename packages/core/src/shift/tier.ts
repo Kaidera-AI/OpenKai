@@ -190,3 +190,36 @@ export function decideTier(input: TierInput, defaultTier: Tier = "efficient"): T
     reason: `below threshold; stage default ${defaultTier}`,
   };
 }
+
+
+// ── Multi-modal routing (K3 #2, vision slice) ──────────────────────────────
+
+/** Input modalities the pi-ai catalogue records per model. */
+export type ModelModality = "text" | "image";
+
+/**
+ * True when the model accepts every required modality (K3 #2). The catalogue
+ * records text/image today; audio/video/STT/TTS/embedding/ranking arrive with
+ * the provider substrate — the filter is modality-generic so they slot in.
+ */
+export function supportsModalities(modelInput: readonly ModelModality[], required: readonly ModelModality[]): boolean {
+  return required.every((m) => modelInput.includes(m));
+}
+
+/** Vision-capable shorthand (image tasks must never route to a text-only model). */
+export function isVisionCapable(modelInput: readonly ModelModality[]): boolean {
+  return modelInput.includes("image");
+}
+
+/**
+ * Filter candidate models by required input modalities; if the filter would
+ * empty the pool, return the original pool (fail-open to text-only rather
+ * than refuse the task). Pure and deterministic.
+ */
+export function filterByModality<T extends { input: readonly ModelModality[] }>(
+  models: readonly T[],
+  required: readonly ModelModality[],
+): T[] {
+  const filtered = models.filter((m) => supportsModalities(m.input, required));
+  return filtered.length > 0 ? filtered : [...models];
+}

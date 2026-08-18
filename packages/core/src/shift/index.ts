@@ -42,4 +42,8 @@ export {
   type TierDecisionSource,
   type TierInput,
   type ToolSignal,
+  supportsModalities,
+  isVisionCapable,
+  filterByModality,
+  type ModelModality,
 } from "./tier.js";
