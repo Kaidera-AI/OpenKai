@@ -1,5 +1,7 @@
 # Switchyard findings — NVIDIA NeMo (routing research for E002 Inc 02)
 
+> **SUPERSEDED 2026-08-18** by `2026-08-18-switchyard-routing-fusion-deep-dive.md` (ren's round-2 deep dive: mechanism-level, 34+ sources, answers what Switchyard is based on). Kept for provenance; the headlines below remain correct.
+
 **Date:** 2026-08-16 · **Author:** kai@openkai · **Repo:** github.com/NVIDIA-NeMo/Switchyard (1658★, **Apache-2.0**, Rust, pre-alpha, active)
 
 ## What it is

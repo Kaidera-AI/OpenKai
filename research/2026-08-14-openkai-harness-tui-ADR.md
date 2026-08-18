@@ -124,6 +124,7 @@ Component decisions:
 - **FU-5 accounting:** prime-agent's `child_usage_attributed` transcript entries solve fusion cost attribution at the persistence level.
 - **FU-6 offline option:** `ruvllm serve` (or Ollama — equivalent shape) as an optional OpenAI-compatible local lane behind the provider interface. Subprocess + HTTP cost, small-GGUF quality ceiling. Open thread R2-2.
 - E016's invariants stand unchanged: self-pairing first, gate-first validation (FU-3) before any self-modification, never replay one model's turns as another's history, never fuse everything, never delegate judgment.
+- **Amended 2026-08-18 by OK-9** (`2026-08-18-shift-fusion-orchestration-ADR.md`): shift and fusion are one decision system — shift predicts (tool-signal routing), fusion multiplies (evidence-settled panel rules), the gate verifies (its outcome is the router's reward). Panel rules hardened by the literature (self-pair default, third-party pairwise synthesis, panel of 2); shift graduates from keyword classification to Switchyard's corroborative signal scorer; calibration via the RESCUE/LOSS quadrant method.
 
 **OK-7 — Orchestrator-driven TUI.** Adopt opencode's `/tui/*` remote-control endpoints pattern so KOS dispatch can drive the operator's TUI: prefill a handoff prompt, toast on gate failure, open a diff on completion. This is where fusion stops being invisible.
 
