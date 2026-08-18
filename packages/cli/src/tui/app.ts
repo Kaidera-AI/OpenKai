@@ -16,6 +16,13 @@
  *    {@link FrecencyHistory}, ranked by the pure {@link rankFrecency}.
  *  - `/btw` side channel (§1.5) — answer renders as a system-marked block.
  *  - `/undo` surface (§1.6) — over `transport.undoLastMutation()`.
+ *
+ * E017 S1 (OK-9.7 trust surface — research/2026-08-18-shift-fusion-orchestration-ADR.md):
+ * routing becomes SEEABLE. Tier-aware {@link RoutingEvent}s drive the status
+ * line's `t:` chip (with a transition flash on flips); fusion runs render
+ * role-pilled blocks and structured gate verdicts; `/shift` renders the
+ * session routing ledger from `.openkai/activity.jsonl`; `/diff` opens the
+ * shadow-snapshot diff overlay.
  */
 
 import { ScrollView, VStack } from "@earendil-works/pi-tui";
@@ -23,12 +30,15 @@ import type { Component, TUI, StackChild } from "@earendil-works/pi-tui";
 import {
   CortexCheckpoint,
   SessionStore,
+  ShadowGit,
   forkSession,
   listSessions,
+  redactSecrets,
   sessionTree,
   type FuseResult,
   type InProcessTransport,
   type PermissionPreview,
+  type RoutingEvent,
   type SessionEvent,
   type SessionTransport,
   type UsageSnapshot,
@@ -59,7 +69,9 @@ import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { setTheme, themeName, themeNames, detectThemeAsync } from "./theme.js";
 import { changelogHead } from "./changelog.js";
-import { existsSync, readdirSync } from "node:fs";
+import { DiffOverlay } from "./diff.js";
+import { activityLogPath } from "../tail.js";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -123,6 +135,10 @@ export interface TuiAppOptions {
    * never block the TUI on a missing key).
    */
   setupNeeded?: boolean;
+  /** E017: called in submit() before the turn starts — the orchestrator's tier decision point. */
+  onBeforePrompt?: (text: string) => void;
+  /** E017: called after an auto-compact — the free tier-switch boundary (Devin pattern). */
+  onAutoCompact?: () => void;
   // ── P4b (scope §1) ─────────────────────────────────────────────────────
   /** Agent name for the identity pill + chrome (scope §1.2; default `openkai`). */
   agentName?: string;
@@ -150,6 +166,11 @@ export interface TuiAppOptions {
     set: (level: "off" | "low" | "med" | "high") => void;
     current: () => string;
   };
+  /**
+   * Project root for the `/shift` ledger (`.openkai/activity.jsonl`) and the
+   * `/diff` shadow repo. Defaults to process.cwd(); injectable for tests.
+   */
+  cwd?: string;
 }
 
 /** The built TUI app handle. */
@@ -281,6 +302,10 @@ export class TuiController {
   private readonly history?: FrecencyHistory;
   private readonly onUndo?: () => Promise<string>;
   private readonly runFusion?: (task: string) => Promise<FuseResult>;
+  private readonly onBeforePrompt?: (text: string) => void;
+  private readonly onAutoCompact?: () => void;
+  /** Project root (the `/shift` ledger + `/diff` shadow repo root). */
+  private readonly cwd: string;
   private provider?: string;
   private modelId: string;
   private modelSwitch?: (model: Model<Api>) => void;
@@ -313,6 +338,9 @@ export class TuiController {
     this.history = options.history;
     this.onUndo = options.onUndo;
     this.runFusion = options.runFusion;
+    this.onBeforePrompt = options.onBeforePrompt;
+    this.onAutoCompact = options.onAutoCompact;
+    this.cwd = options.cwd ?? process.cwd();
     this.provider = options.provider;
     this.modelSwitch = options.onSetModel;
     this.effortSwitch = options.onSetEffort;
@@ -663,6 +691,12 @@ export class TuiController {
       case "undo":
         await this.undo();
         break;
+      case "shift":
+        this.showRoutingLedger();
+        break;
+      case "diff":
+        await this.openDiff();
+        break;
       case "exit":
       case "quit": // legacy alias — /exit is the name from v0.1.005
         this.onExit?.({ kind: "quit" });
@@ -701,6 +735,9 @@ export class TuiController {
     this.transcript.addUserMessage(text);
     this.recordPrompt(text); // frecency history (scope §1.4) — best-effort
     this.btwTurn = false; // this is a normal user turn, not a /btw side channel
+    // E017: the orchestrator decides the tier from the accumulated tool
+    // signals BEFORE the turn starts (evidence-only — no signals, no switch).
+    this.onBeforePrompt?.(text);
     this.setBusy(true);
     await this.transport.prompt(text);
   }
@@ -737,6 +774,115 @@ export class TuiController {
       this.transcript.addNotice(`undo: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.tui.requestRender();
+  }
+
+  /**
+   * `/shift` — the session routing ledger (E017 S1, OK-9.7 trust surface).
+   * Reads `.openkai/activity.jsonl` (the same file `openkai tail` follows)
+   * and renders the recent routing decisions: stage, model, tier, decision
+   * source, and the one-line reason. Two rules from the tail reader hold
+   * here: malformed rows are skipped (the file outlives any one writer), and
+   * string fields are redacted on READ (a log written before a redactor
+   * covered a provider still holds that key — rendering must not leak it).
+   */
+  private showRoutingLedger(): void {
+    const file = activityLogPath(this.cwd);
+    if (!existsSync(file)) {
+      this.transcript.addNotice("/shift — no activity feed yet; routing decisions land here as turns route");
+      return;
+    }
+    let rows: {
+      ts?: string;
+      kind?: string;
+      stage?: string;
+      model?: string;
+      provider?: string;
+      attempt?: number;
+      tier?: string;
+      source?: string;
+      reason?: string;
+    }[];
+    try {
+      rows = readFileSync(file, "utf-8")
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => {
+          try {
+            return JSON.parse(line) as (typeof rows)[number];
+          } catch {
+            return {}; // malformed row — skipped by the kind filter below
+          }
+        });
+    } catch {
+      this.transcript.addNotice(`/shift — could not read ${file}`);
+      return;
+    }
+    const routing = rows.filter(
+      (row) => row.kind === "routing" || row.kind === "fallback" || row.kind === "routing_error",
+    );
+    if (routing.length === 0) {
+      this.transcript.addNotice("/shift — no routing decisions on the feed yet");
+      return;
+    }
+    const recent = routing.slice(-12);
+    const lines = recent.map((row) => {
+      const time = (row.ts ?? "").slice(11, 19) || "?";
+      // Redact on read (tail.ts's rule): every rendered string passes through
+      // redactSecrets — a log written before a redactor covered a provider
+      // still holds that key, and model/provider/reason can echo credentials.
+      const stage = redactSecrets(row.stage ?? "?");
+      if (row.kind === "routing_error") {
+        return `${time}  ✗ routing: ${redactSecrets((row.reason ?? "").slice(0, 80))}`;
+      }
+      const tierLabel = row.tier
+        ? ` [${redactSecrets(row.tier)}${row.source ? ` · ${redactSecrets(row.source)}` : ""}]`
+        : "";
+      const head =
+        row.kind === "fallback"
+          ? `${time}  ↻ ${stage} fallback → ${redactSecrets(row.model ?? "?")} (${redactSecrets(row.provider ?? "?")}, attempt ${row.attempt ?? "?"})${tierLabel}`
+          : `${time}  ⇄ ${stage} → ${redactSecrets(row.model ?? "?")} (${redactSecrets(row.provider ?? "?")})${tierLabel}`;
+      const reason = row.reason ? ` — ${redactSecrets(row.reason).slice(0, 80)}` : "";
+      return `${head}${reason}`;
+    });
+    this.transcript.addNotice([
+      `/shift — recent routing decisions (${routing.length} total; full feed: openkai tail)`,
+      ...lines,
+    ]);
+  }
+
+  /**
+   * `/diff` — the shadow-git diff viewer (E017 S1, ren's TUI research). A
+   * scrollable overlay showing the unified diff between the latest shadow
+   * snapshot and the work tree. Read-only: the overlay never mutates the
+   * shadow repo or the work tree (the git seam is {@link ShadowGit.diff}).
+   */
+  async openDiff(): Promise<void> {
+    const shadow = new ShadowGit(this.cwd);
+    const view = await shadow.diff();
+    if (view === undefined) {
+      this.transcript.addNotice("/diff — no snapshots yet; gated mutations snapshot the tree as they run");
+      this.tui.requestRender();
+      return;
+    }
+    const lines: string[] = [];
+    if (view.diff.length > 0) lines.push(...view.diff.split("\n"));
+    if (view.untracked.length > 0) {
+      if (lines.length > 0) lines.push("");
+      lines.push(`untracked since snapshot (${view.untracked.length}):`);
+      for (const name of view.untracked.slice(0, 20)) lines.push(`  ? ${name}`);
+      if (view.untracked.length > 20) lines.push(`  … ${view.untracked.length - 20} more`);
+    }
+    if (lines.length === 0) {
+      this.transcript.addNotice(`/diff — work tree clean against snapshot ${view.base.slice(0, 8)}`);
+      this.tui.requestRender();
+      return;
+    }
+    const rows = Math.max(8, (this.tui.terminal.rows ?? 24) - 10);
+    const overlay = new DiffOverlay(`diff — snapshot ${view.base.slice(0, 8)} → work tree`, lines, () => {
+      this.tui.hideOverlay();
+      this.refocusComposer();
+    }, rows);
+    this.tui.showOverlay(overlay, { anchor: "center", width: "80%", maxHeight: "80%" });
   }
 
   /** Ctrl+R — search the prompt history and reuse a match. */
@@ -890,13 +1036,51 @@ export class TuiController {
     try {
       const result = await this.runFusion(task);
       this.transcript.addFusionResult(result.outputs, result.synthesis);
-      if (result.gate.outcome !== "not-run") {
-        this.transcript.addNotice(`gate: ${result.gate.outcome} (${result.gate.rounds} round(s))`);
-      }
+      this.renderGateOutcome(result);
     } catch (error) {
       this.transcript.addNotice(`fuse failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.tui.requestRender();
+  }
+
+  /**
+   * Render the fusion gate's verdict (E017 S1 — the gate verifies, and the
+   * verdict must be SEEABLE). pass is a quiet confirmation; halt is a
+   * danger notice naming the failing checks; weak-gate warns the proof is
+   * empty; refused records that the operator declined the designed checks.
+   * Check names are model-authored — the addNotice/addError choke point
+   * sanitises them (E001 §2).
+   */
+  private renderGateOutcome(result: FuseResult): void {
+    const gate = result.gate;
+    switch (gate.outcome) {
+      case "pass":
+        this.transcript.addNotice(`gate: pass ✓ (${gate.rounds} evaluation round(s))`);
+        break;
+      case "halt": {
+        const failing =
+          result.gateRuns
+            .at(-1)
+            ?.results.filter((r) => !r.pass)
+            .map((r) => r.check.name) ?? [];
+        this.transcript.addError([
+          `gate: HALT after ${gate.rounds} evaluation round(s) — the checks never went green`,
+          ...failing.slice(0, 6).map((name) => `  ✗ ${name}`),
+          "verbatim failures are in the fusion log (.openkai/fusion)",
+        ]);
+        break;
+      }
+      case "weak-gate":
+        this.transcript.addNotice(
+          "gate: weak-gate — the baseline was all-green BEFORE any work, so the gate proves nothing (the checks need a redesign)",
+        );
+        break;
+      case "refused":
+        this.transcript.addNotice("gate: refused — the designed checks were not approved; nothing executed");
+        break;
+      case "not-run":
+        break;
+    }
   }
 
   /** `/settings` — the configuration panel (opens on appearance). */
@@ -1206,6 +1390,8 @@ export class TuiController {
       new: () => this.guard(this.dispatchCommand("new", ""), "/new"),
       btw: () => this.composer?.prefill("/btw "),
       undo: () => this.guard(this.undo(), "/undo"),
+      shift: () => this.guard(this.dispatchCommand("shift", ""), "/shift"),
+      diff: () => this.guard(this.dispatchCommand("diff", ""), "/diff"),
       quit: () => this.guard(this.dispatchCommand("quit", ""), "/quit"),
       "toggle-thinking": () => this.toggleThinking(),
       palette: () => undefined,
@@ -1360,11 +1546,73 @@ export class TuiController {
     return this.transcript.toggleThinking();
   }
 
+  /**
+   * Apply one shift {@link RoutingEvent} to the chrome + transcript (E017 S1,
+   * OK-9.7 trust surface: operators tolerate routing they can see). The tier
+   * chip lights on the first tier-aware decision; a flip renders the
+   * transition (`eff▸cap` chip flash + a ledger notice naming the stage and
+   * decision source). Reaffirmations are silent — the ledger (`/shift`,
+   * `openkai tail`) is the full record; the chrome only speaks on CHANGE.
+   *
+   * Pure over the rendered state (no transport interaction) — the same
+   * shape the facade emits on the activity stream (contract #3).
+   */
+  applyRoutingEvent(event: RoutingEvent): void {
+    if (event.kind === "routing_error") {
+      // addError sanitises (single choke point) — provider error bodies can
+      // carry terminal control sequences even after core-side redaction.
+      this.transcript.addError(`routing: ${event.reason ?? "unknown"}`);
+      this.tui.requestRender();
+      return;
+    }
+    if (event.kind === "fallback") {
+      this.transcript.addNotice(
+        `fallback: ${event.stage} → ${event.model ?? "?"} (${event.provider ?? "?"}, attempt ${event.attempt ?? "?"})`,
+      );
+      this.tui.requestRender();
+      return;
+    }
+    // kind === "routing"
+    const tier = event.tier;
+    if (tier === undefined) return; // a plain stage route — the ledger has it; the chrome stays quiet
+    const state = this.status.currentState;
+    if (state.tier === tier) return; // reaffirmed — no noise
+    const previous = state.tier;
+    this.status.update({ ...state, tier, tierFrom: previous });
+    this.transcript.addNotice(
+      `tier: ${previous ?? "unset"} → ${tier} · ${event.stage} stage · source: ${event.source ?? "unknown"}`,
+    );
+    this.scheduleTierFlashClear();
+    this.tui.requestRender();
+  }
+
+  /**
+   * The transition flash window: after a flip the chip shows `t:eff▸cap` for
+   * a few seconds, then settles to the muted current tier. Unref'd — a
+   * pending flash must never hold the process open.
+   */
+  private tierFlashTimer: ReturnType<typeof setTimeout> | undefined;
+  private scheduleTierFlashClear(): void {
+    if (this.tierFlashTimer !== undefined) clearTimeout(this.tierFlashTimer);
+    this.tierFlashTimer = setTimeout(() => {
+      this.tierFlashTimer = undefined;
+      const state = this.status.currentState;
+      if (state.tierFrom === undefined) return;
+      this.status.update({ ...state, tierFrom: undefined });
+      this.tui.requestRender();
+    }, 4000);
+    this.tierFlashTimer.unref?.();
+  }
+
   /** Tear down: abort + flush store + checkpoint + close transport. */
   async shutdown(): Promise<void> {
     if (this.busyTick !== undefined) {
       clearInterval(this.busyTick);
       this.busyTick = undefined;
+    }
+    if (this.tierFlashTimer !== undefined) {
+      clearTimeout(this.tierFlashTimer);
+      this.tierFlashTimer = undefined;
     }
     this.transport.abort();
     if (this.checkpoint) await this.checkpoint.flushNow();
@@ -1535,6 +1783,9 @@ export class TuiController {
     this.transport.setMessages([...head, ...tail]);
     const ctxPercent = this.status.currentState.ctxPercent ?? 0;
     this.transcript.addNotice(`auto-compact — context at ${ctxPercent}%; elided the middle (${messages.length} → ${head.length + tail.length} messages)`);
+    // E017 (Devin boundary): compaction is the free tier-switch point — the
+    // orchestrator re-evaluates with the latch bypassed.
+    this.onAutoCompact?.();
   }
 
   /** Persist the settled assistant text at turn settlement. */

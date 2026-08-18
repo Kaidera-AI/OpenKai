@@ -24,6 +24,7 @@ export const FEATURES: readonly FeatureDef[] = [
   { key: "telemetry", label: "Fusion telemetry", description: "run records to .openkai/fusion + Cortex artifacts" },
   { key: "autoCompact", label: "Auto-compact", description: "elide the middle when context crosses 80% (OpenCode)" },
   { key: "mouse", label: "Mouse support", description: "wheel scroll, drag-select copy, scrollbar, clickable URLs (Claude Code)" },
+  { key: "shift", label: "Shift tier routing", description: "in-session tier decisions from tool signals (Switchyard pattern); posture in /settings routing" },
 ];
 
 const configFile = (): string => path.join(homedir(), ".openkai", "config.json");

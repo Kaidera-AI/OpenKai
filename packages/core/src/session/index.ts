@@ -34,4 +34,4 @@ export {
   resolvePreviewPath,
   truncateDiff,
 } from "./permission-gate.js";
-export { taskTool, extractAndValidateJson } from "./task.js";
+export { taskTool, extractAndValidateJson, steerChild, activeChildren } from "./task.js";

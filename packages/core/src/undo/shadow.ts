@@ -42,6 +42,16 @@ export interface ShadowSnapshot {
   message: string;
 }
 
+/** The read-only diff view (E017 S1 `/diff`): base snapshot + unified diff + untracked names. */
+export interface ShadowDiff {
+  /** The snapshot sha the diff is computed against. */
+  base: string;
+  /** `git diff <base>` over the work tree (tracked modifications). */
+  diff: string;
+  /** Files in the work tree that no snapshot tracks (names only). */
+  untracked: string[];
+}
+
 export class ShadowGitError extends Error {
   override readonly name = "ShadowGitError";
 }
@@ -203,5 +213,26 @@ export class ShadowGit {
           message: line.slice(separator + 1),
         };
       });
+  }
+
+  /**
+   * Read-only diff of the work tree against a snapshot (default: the latest
+   * shadow HEAD) — the `/diff` viewer's seam (E017 S1, ren's TUI research:
+   * the missing diff viewer). Returns undefined when no snapshot exists yet.
+   *
+   * Two read-only git calls, no index mutation: `diff <base>` covers files
+   * the snapshots track (including force-added gitignored mutations — .env,
+   * dist/), and `ls-files --others` LISTS files no snapshot has ever
+   * captured (names only, standard ignore rules — a brand-new gitignored
+   * file is invisible here until the next snapshot; recorded limitation).
+   */
+  async diff(base?: string): Promise<ShadowDiff | undefined> {
+    await this.init();
+    const sha = base ?? (await this.head());
+    if (!sha) return undefined;
+    const diff = await this.git(["diff", sha]);
+    const untrackedOut = await this.git(["ls-files", "--others", "--exclude-standard"]);
+    const untracked = untrackedOut.split("\n").filter((line) => line.length > 0);
+    return { base: sha, diff, untracked };
   }
 }

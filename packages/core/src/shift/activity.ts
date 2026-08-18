@@ -23,6 +23,7 @@
 
 import { redactSecrets } from "../secrets.js";
 import type { Stage } from "./stages.js";
+import type { Tier, TierDecisionSource } from "./tier.js";
 
 /** A routing decision event — emitted when a stage is routed to a model. */
 export interface RoutingEvent {
@@ -39,6 +40,16 @@ export interface RoutingEvent {
    * `routing` and `fallback` events.
    */
   attempt?: number;
+  /**
+   * The tier the turn was routed at (OK-9.1). Present on tier-aware
+   * decisions from the orchestration facade; absent on plain stage routes.
+   */
+  tier?: Tier;
+  /**
+   * Why the tier was chosen (OK-9.1 observability discipline — the label the
+   * calibration loop and the `/shift` ledger read).
+   */
+  source?: TierDecisionSource;
   /** Human-readable reason (classification basis, error summary, etc.). */
   reason?: string;
   /** Token usage from a successful call (present on `routing` when known). */
@@ -64,6 +75,9 @@ export function redactRoutingEvent(event: RoutingEvent): RoutingEvent {
     model: event.model !== undefined ? redactSecrets(event.model) : undefined,
     provider: event.provider !== undefined ? redactSecrets(event.provider) : undefined,
     attempt: event.attempt,
+    // tier/source are closed-vocabulary enums — no secret surface, copied through.
+    tier: event.tier,
+    source: event.source,
     reason: event.reason !== undefined ? redactSecrets(event.reason) : undefined,
     usage: event.usage,
   };

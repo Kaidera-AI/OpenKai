@@ -11,11 +11,16 @@
 
 import { CortexClient } from "@kaidera/openkai-core";
 import type { TeamEventEntry } from "@kaidera/openkai-core";
-import { DEFAULT_MODEL_ID } from "@kaidera/openkai-core";
+import {
+  aggregateFusionRuns,
+  DEFAULT_MODEL_ID,
+  readFusionRuns,
+  renderFusionDashboard,
+} from "@kaidera/openkai-core";
 import { runChat, type ChatOptions } from "./chat.js";
 import { loadDotEnv } from "./env.js";
 import { runFuse, type FuseCliOptions } from "./fuse.js";
-import { runFusionAdvise, runFusionReport } from "./fusion.js";
+import { runFusionAdvise, runFusionCalibrate, runFusionReport } from "./fusion.js";
 import { runInfo } from "./info.js";
 import { helpIndex, helpTopic } from "./help.js";
 import { runLogin } from "./login.js";
@@ -76,6 +81,16 @@ Commands:
                          --priority low|medium|high|urgent
                          --class architecture|ambiguous|high-blast-radius|routine
                          --files <n>  (expected blast radius)
+
+  fusion calibrate       OK-9 W6/W7 calibration harness: RESCUE/LOSS/SAFE/HARD
+                         quadrant table, threshold sweep recommendation, and
+                         the judge break-even line.
+                         --runs <path>       runs JSONL (default .openkai/fusion/runs.jsonl)
+                         --baseline <path>   capable-only baseline JSONL to merge
+                         --judge-model/--cheap-model/--dear-model <id>
+                         --provider <id>     catalogue lane for the pricing models
+                         --record-dir <path> dated-record directory
+                                             (default research/calibration)
 
   undo [--history]       Restore the work tree to the previous shadow-git
                          snapshot (taken before every gated mutation);
@@ -424,14 +439,24 @@ async function main(argv: string[]): Promise<number> {
       });
     }
     if (sub === "dashboard") {
-      const { readFusionRuns, aggregateFusionRuns, renderFusionDashboard } = await import("@kaidera/openkai-core");
       const records = await readFusionRuns();
       for (const line of renderFusionDashboard(aggregateFusionRuns(records))) {
         process.stdout.write(line + "\n");
       }
       return 0;
     }
-    return fail("fusion requires a subcommand: report | advise | dashboard.");
+    if (sub === "calibrate") {
+      return runFusionCalibrate({
+        runs: getString("--runs"),
+        baseline: getString("--baseline"),
+        provider: getString("--provider"),
+        judgeModel: getString("--judge-model"),
+        cheapModel: getString("--cheap-model"),
+        dearModel: getString("--dear-model"),
+        recordDir: getString("--record-dir"),
+      });
+    }
+    return fail("fusion requires a subcommand: report | advise | dashboard | calibrate.");
   }
 
   // ── undo (Inc 05) ────────────────────────────────────────────────────────

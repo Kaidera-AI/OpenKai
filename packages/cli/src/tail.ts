@@ -31,11 +31,13 @@ interface ActivityRow {
   isError?: boolean;
   usage?: { totalTokens?: number };
   message?: string;
-  // Shift routing event fields (E002 Inc 02).
+  // Shift routing event fields (E002 Inc 02; tier/source E017 — OK-9.1 labels).
   stage?: string;
   model?: string;
   provider?: string;
   attempt?: number;
+  tier?: string;
+  source?: string;
   reason?: string;
 }
 
@@ -89,11 +91,11 @@ function renderRow(row: ActivityRow): string | undefined {
       return `${time}  ■ session end`;
     case "error":
       return `${time}  ✗ error: ${(row.message ?? "").slice(0, 120)}`;
-    // ── Shift routing events (E002 Inc 02) ──────────────────────────────
+    // ── Shift routing events (E002 Inc 02; tier/source labels E017) ──────
     case "routing":
-      return `${time}  ⇄ ${row.stage ?? "?"} → ${row.model ?? "?"} (${row.provider ?? "?"})`;
+      return `${time}  ⇄ ${row.stage ?? "?"} → ${row.model ?? "?"} (${row.provider ?? "?"})${row.tier ? ` [${row.tier}${row.source ? ` · ${row.source}` : ""}]` : ""}`;
     case "fallback":
-      return `${time}  ↻ ${row.stage ?? "?"} fallback → ${row.model ?? "?"} (${row.provider ?? "?"}, attempt ${row.attempt ?? "?"})`;
+      return `${time}  ↻ ${row.stage ?? "?"} fallback → ${row.model ?? "?"} (${row.provider ?? "?"}, attempt ${row.attempt ?? "?"})${row.tier ? ` [${row.tier}]` : ""}`;
     case "routing_error":
       return `${time}  ✗ routing: ${(row.reason ?? "").slice(0, 120)}`;
     default:

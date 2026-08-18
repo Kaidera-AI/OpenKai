@@ -6,11 +6,13 @@
 
 import { SelectList, fuzzyFilter } from "@earendil-works/pi-tui";
 import type { Component, SelectItem } from "@earendil-works/pi-tui";
+import type { ShiftPosture } from "@kaidera/openkai-core";
 import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken, opaquePanel } from "./theme.js";
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
-import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, type StatuslineChip } from "../config.js";
+import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, writeShiftPosture, type StatuslineChip } from "../config.js";
+import { readShiftConfig } from "../fuse.js";
 
 export interface SettingsActions {
   pickModel: () => void;
@@ -31,7 +33,7 @@ interface Row extends SelectItem {
   action?: () => string | undefined;
 }
 
-const TABS = ["appearance", "providers", "model", "interaction", "memory", "features"] as const;
+const TABS = ["appearance", "providers", "model", "interaction", "memory", "features", "routing"] as const;
 type SettingsTab = (typeof TABS)[number];
 
 /** Status line presets (omp's statusLine.preset shape) over our chip sets. */
@@ -50,7 +52,7 @@ function currentPresetName(): string {
   return "custom";
 }
 
-/** The settings panel (omp's tabbed shape): appearance/providers/model/memory/features. */
+/** The settings panel (omp's tabbed shape): appearance/providers/model/interaction/memory/features/routing. */
 export class SettingsOverlay implements Component {
   private tab: SettingsTab;
   private query = "";
@@ -95,16 +97,21 @@ export class SettingsOverlay implements Component {
       case "providers":
         return Object.entries(PROVIDERS).map(([id, info]) => {
           const status = providerKeyStatus(id);
-          const state = status.oauth === true
-            ? "OAuth lane"
-            : status.configured
-              ? `✓ via ${status.via}`
-              : `set ${status.needsKey}`;
+          const state = info.keyless === true
+            ? "keyless — no API key; the local server must be running"
+            : status.oauth === true
+              ? "OAuth lane"
+              : status.configured
+                ? `✓ via ${status.via}`
+                : `set ${status.needsKey}`;
           return {
             value: `provider:${id}`,
             label: info.label,
             description: state,
             action: () => {
+              if (info.keyless === true) {
+                return "keyless lane — nothing to sign in; start the server and pick a model";
+              }
               this.actions.signIn(id);
               return undefined;
             },
@@ -176,6 +183,36 @@ export class SettingsOverlay implements Component {
             return `${f.label}: ${next ? "on" : "off"}`;
           },
         }));
+      case "routing": {
+        const shift = readShiftConfig(readConfigFile());
+        const posture: ShiftPosture = shift.posture ?? "balanced";
+        const pins = shift.pins ?? {};
+        const floor = Object.entries(pins.floor ?? {}).map(([stage, tier]) => `${stage}≥${tier}`);
+        const pinsSummary = [
+          floor.length > 0 ? `floor: ${floor.join(" ")}` : "floor: —",
+          `ceiling: ${pins.ceiling ?? "—"}`,
+          pins.never !== undefined && pins.never.length > 0 ? `never: ${pins.never.join(", ")}` : "never: —",
+        ].join(" · ");
+        return [
+          {
+            value: "routing:posture",
+            label: "posture",
+            description: `now: ${posture} — Enter to cycle (quality → balanced → saver)`,
+            action: () => {
+              const order: readonly ShiftPosture[] = ["quality", "balanced", "saver"];
+              const next = order[(order.indexOf(posture) + 1) % order.length]!;
+              writeShiftPosture(next);
+              return `routing posture: ${next} (applies to the next routed turn)`;
+            },
+          },
+          {
+            value: "routing:pins",
+            label: "model pins (read-only)",
+            description: `${pinsSummary} — edit ~/.openkai/config.json shift.pins`,
+            action: () => `pins: ${pinsSummary}`,
+          },
+        ];
+      }
     }
   }
 

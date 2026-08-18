@@ -47,3 +47,12 @@ export {
   filterByModality,
   type ModelModality,
 } from "./tier.js";
+
+// The orchestration facade (E017 Inc 02, OK-9.3) — re-exported through the
+// shift barrel so consumers keep one import surface.
+export {
+  Orchestrator,
+  type OrchestratorOptions,
+  type ShiftPosture,
+  type ShiftPins,
+} from "../orchestrate.js";

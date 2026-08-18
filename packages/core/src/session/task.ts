@@ -20,6 +20,13 @@
  * extractor tries every fenced block and balanced span (the first fence is
  * often a placeholder), reads required keys from formal JSON Schema when the
  * contract parses as one, and caps the validated output.
+ *
+ * E017 (CTO-requested, known-list item): the restored STEERING channel — a
+ * module-level registry of live child transports (sessionId → transport,
+ * registered at construction, deleted in the run's `finally`) with
+ * {@link steerChild}/{@link activeChildren} so the parent can name and steer
+ * a running subagent. Every result detail object carries the child's
+ * `sessionId` so the parent learns the name to steer.
  */
 
 import { Type, type Static } from "typebox";
@@ -34,6 +41,34 @@ const DEFAULT_TIMEOUT_SECONDS = 300;
 
 /** Cap on the validated child JSON returned into the parent's context. */
 const MAX_SCHEMA_OUTPUT_BYTES = 65_536;
+
+// ── E017 steering channel ───────────────────────────────────────────────────
+// Live child transports by session id. Registration happens synchronously at
+// construction (before the first await of the run) so a parent holding the
+// returned promise can already see and steer the child; removal is in the
+// run's `finally`, so a settled child is never steerable.
+const activeChildTransports = new Map<string, InProcessTransport>();
+
+/**
+ * Steer a running child subagent (inject a user message into its turn).
+ * Returns false when the id names no live child (unknown or already settled)
+ * or the child rejected the message.
+ */
+export function steerChild(sessionId: string, message: string): boolean {
+  const transport = activeChildTransports.get(sessionId);
+  if (transport === undefined) return false;
+  try {
+    transport.steer(message);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Session ids of the currently running child subagents. */
+export function activeChildren(): string[] {
+  return [...activeChildTransports.keys()];
+}
 
 const TaskParams = Type.Object({
   prompt: Type.String({ description: "The self-contained instruction for the subagent." }),
@@ -199,6 +234,11 @@ export function taskTool(
         ? `${params.prompt}\n\nRespond with ONLY a JSON object (no prose) matching exactly this contract:\n${params.outputSchema}`
         : params.prompt;
 
+      // The child's name travels in every result's details so the parent can
+      // steer it via steerChild (E017); it is minted before the transport so
+      // even a construction failure names the child it tried to start.
+      const sessionId = `task-${uuidv7()}`;
+
       let stopped: "timeout" | "aborted" | undefined;
       const stop = (why: "timeout" | "aborted", transport: InProcessTransport): void => {
         if (stopped !== undefined) return;
@@ -212,15 +252,17 @@ export function taskTool(
         // start a run at all — abort() before prompt() raced a full LLM turn
         // (agent.abort() is a no-op without an active run).
         if (signal?.aborted) {
-          return textResult("subagent aborted — the parent turn was cancelled", { error: true, stopped: "aborted" });
+          return textResult("subagent aborted — the parent turn was cancelled", { error: true, stopped: "aborted", sessionId });
         }
 
         const transport = new InProcessTransport({
-          sessionId: `task-${uuidv7()}`,
+          sessionId,
           modelId: childModelId,
           provider: childProvider,
           cwd,
         });
+        // E017 steering channel: live from here until the finally below.
+        activeChildTransports.set(sessionId, transport);
 
         // Teardown: on timeout or parent-abort, abort the child run and close
         // the transport — close() ends the event queue, which unblocks the
@@ -240,7 +282,7 @@ export function taskTool(
           for await (const event of events) {
             if (event.kind === "session_end") break;
             if (event.kind === "error") {
-              return textResult(`subagent error: ${event.message}`, { error: true });
+              return textResult(`subagent error: ${event.message}`, { error: true, sessionId });
             }
           }
 
@@ -249,7 +291,7 @@ export function taskTool(
               stopped === "timeout"
                 ? `subagent timed out after ${params.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS}s — aborted`
                 : "subagent aborted — the parent turn was cancelled",
-              { error: true, stopped },
+              { error: true, stopped, sessionId },
             );
           }
 
@@ -274,20 +316,23 @@ export function taskTool(
               return textResult(`subagent output failed the schema: ${result.error}\n\nraw answer:\n${answer.slice(0, 2000)}`, {
                 error: true,
                 model: childModelId,
+                sessionId,
               });
             }
-            return textResult(result.json!, { model: childModelId, schema: true });
+            return textResult(result.json!, { model: childModelId, schema: true, sessionId });
           }
           return textResult(answer.length > 0 ? answer : "(subagent produced no text)", {
             model: childModelId,
+            sessionId,
           });
         } finally {
           clearTimeout(timer);
           signal?.removeEventListener("abort", onAbort);
+          activeChildTransports.delete(sessionId);
           await transport.close();
         }
       } catch (error) {
-        return textResult(`subagent failed: ${error instanceof Error ? error.message : String(error)}`, { error: true });
+        return textResult(`subagent failed: ${error instanceof Error ? error.message : String(error)}`, { error: true, sessionId });
       }
     },
   };

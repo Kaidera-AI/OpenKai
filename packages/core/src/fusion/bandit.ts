@@ -103,6 +103,31 @@ export class FusionBandit {
   }
 
   /**
+   * Direct reward writeback for one (bucket, model) arm — the gate-outcome
+   * feed (OK-9 W5, E017 reward loop). Same posterior shape as {@link update}:
+   * the global arm and the per-bucket arm both move, so a failure informs but
+   * does not convict the model in other buckets. `bucket` is the caller's
+   * complexity vocabulary (low/medium/high today) — kept a plain string so
+   * the routing facade's bucket strings key the same arms {@link recommend}
+   * reads.
+   */
+  noteOutcome(bucket: string, modelId: string, success: boolean): void {
+    this.bump(this.global, modelId, success);
+    this.bump(this.arms, `${bucket}::${modelId}`, success);
+  }
+
+  /**
+   * Read one arm's posterior back (calibration/inspection — never on the
+   * routing hot path). Falls back to the model's global arm when the bucket
+   * is unseen, mirroring {@link recommend}'s hierarchical shrinkage; the
+   * uniform prior when the model is entirely unseen. Returns a COPY.
+   */
+  armFor(bucket: string, modelId: string): BanditArm {
+    const arm = this.arms.get(`${bucket}::${modelId}`) ?? this.global.get(modelId);
+    return arm ? { ...arm } : { alpha: 1, beta: 1 };
+  }
+
+  /**
    * Thompson-sample a recommendation among candidates for a bucket. Unseen
    * (bucket, model) arms start from the model's global posterior, so a
    * model's failures elsewhere inform but do not convict.

@@ -45,6 +45,25 @@ export interface SynthesisDiscard {
   by: "architect" | "builder";
 }
 
+/** One side of the pairwise comparison (OK-9 W4: compare before composing). */
+export interface SynthesisSideComparison {
+  strengths: string[];
+  /** What THIS side alone missed. */
+  blindSpots: string[];
+}
+
+/**
+ * The pairwise comparison the synthesiser produces BEFORE composing
+ * (LLM-Blender, arXiv:2306.02561 — pairwise comparison beats pointwise
+ * scoring; research/2026-08-18-switchyard-routing-fusion-deep-dive.md §4).
+ */
+export interface SynthesisComparison {
+  architect: SynthesisSideComparison;
+  builder: SynthesisSideComparison;
+  /** The points where the two outputs genuinely disagree. */
+  conflicts: string[];
+}
+
 /**
  * The FU-2 merge artifact. First-class, stored, attributed — the audit
  * record of WHY a decision was made, and the future input to FU-5.
@@ -54,6 +73,16 @@ export interface SynthesisArtifact {
   divergences: SynthesisDivergence[];
   discarded: SynthesisDiscard[];
   blindSpots: string[];
+  /** The compare step's output; absent only when the parse failed. */
+  comparison?: SynthesisComparison;
+  /**
+   * Set when the synthesiser's output could not be parsed (OK-9 W4): the
+   * merge fields are empty and {@link fallbackOutputs} carries both role
+   * outputs verbatim — a broken merge never throws the panel away.
+   */
+  synthesisError?: string;
+  /** Both role outputs, verbatim — present only when synthesisError is set. */
+  fallbackOutputs?: RoleOutput[];
   /** Raw model output, kept for audit even after successful parse. */
   raw: string;
   modelId: string;

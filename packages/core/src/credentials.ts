@@ -28,6 +28,7 @@ import type {
   CredentialStore,
   Models,
 } from "@earendil-works/pi-ai";
+import { ollamaCloudProvider, ollamaProvider } from "./ollama.js";
 
 /** Owner-only modes, same rule as the session tree (E001 finding F7). */
 const DIR_MODE = 0o700;
@@ -157,7 +158,14 @@ export class FileCredentialStore implements CredentialStore {
  * A pi-ai `Models` collection with every built-in provider registered and the
  * persistent {@link FileCredentialStore} injected, so logins and OAuth
  * refreshes land on disk instead of pi-ai's default in-memory store.
+ *
+ * The two Ollama lanes (E017) ride alongside the built-ins: they are
+ * OpenKai-owned providers (pi-ai's catalogue has no Ollama entry) — the
+ * keyless local lane and the OLLAMA_API_KEY cloud lane.
  */
 export function defaultModels(): Models {
-  return builtinModels({ credentials: new FileCredentialStore() });
+  const models = builtinModels({ credentials: new FileCredentialStore() });
+  models.setProvider(ollamaProvider());
+  models.setProvider(ollamaCloudProvider());
+  return models;
 }

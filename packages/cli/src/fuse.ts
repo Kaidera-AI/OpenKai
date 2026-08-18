@@ -18,7 +18,10 @@ import {
   defaultModels,
   exportFusionRunArtifact,
   fuse,
+  judgeBreakEven,
+  judgeBreakEvenEvent,
   listCasts,
+  Orchestrator,
   recordFusionRun,
   resolveCast,
   defaultFusionLogPath,
@@ -27,6 +30,10 @@ import {
   type CastConfig,
   type Cast,
   type RoleOutput,
+  type RoutingEvent,
+  type ShiftPins,
+  type ShiftPosture,
+  type Stage,
   type SynthesisArtifact,
 } from "@kaidera/openkai-core";
 import { providerKeyStatus, resolveProvider } from "./providers.js";
@@ -111,6 +118,72 @@ export function emitShiftRoutingEvents(router: ShiftRouter): void {
   }
 }
 
+const SHIFT_STAGES: readonly Stage[] = ["plan", "build", "review"];
+const SHIFT_TIERS = ["efficient", "capable"];
+const SHIFT_POSTURES: readonly ShiftPosture[] = ["quality", "balanced", "saver"];
+
+/**
+ * Read the `shift` config slice (OK-9.7 operator priorities):
+ *   "shift": { "posture": "quality"|"balanced"|"saver",
+ *              "pins": { "floor": {"plan"|"build"|"review": "efficient"|"capable"},
+ *                        "ceiling": "efficient"|"capable",
+ *                        "never": ["provider/model"] } }
+ * Unknown values are dropped, never guessed — a mis-typed pin must not
+ * silently route somewhere the operator did not ask for.
+ */
+export function readShiftConfig(raw: Record<string, unknown>): { posture?: ShiftPosture; pins?: ShiftPins } {
+  const shift = raw["shift"];
+  if (typeof shift !== "object" || shift === null) return {};
+  const out: { posture?: ShiftPosture; pins?: ShiftPins } = {};
+  const posture = (shift as Record<string, unknown>)["posture"];
+  if (typeof posture === "string" && SHIFT_POSTURES.some((p) => p === posture)) {
+    out.posture = posture as ShiftPosture;
+  }
+  const pinsRaw = (shift as Record<string, unknown>)["pins"];
+  if (typeof pinsRaw === "object" && pinsRaw !== null) {
+    const pins: ShiftPins = {};
+    const floorRaw = (pinsRaw as Record<string, unknown>)["floor"];
+    if (typeof floorRaw === "object" && floorRaw !== null) {
+      const floor: Partial<Record<Stage, "efficient" | "capable">> = {};
+      for (const [stage, tier] of Object.entries(floorRaw as Record<string, unknown>)) {
+        if (
+          SHIFT_STAGES.some((s) => s === stage) &&
+          typeof tier === "string" &&
+          SHIFT_TIERS.includes(tier)
+        ) {
+          floor[stage as Stage] = tier as "efficient" | "capable";
+        }
+      }
+      if (Object.keys(floor).length > 0) pins.floor = floor;
+    }
+    const ceiling = (pinsRaw as Record<string, unknown>)["ceiling"];
+    if (typeof ceiling === "string" && SHIFT_TIERS.includes(ceiling)) {
+      pins.ceiling = ceiling as "efficient" | "capable";
+    }
+    const never = (pinsRaw as Record<string, unknown>)["never"];
+    if (Array.isArray(never)) {
+      const list = never.filter((m): m is string => typeof m === "string");
+      if (list.length > 0) pins.never = list;
+    }
+    if (pins.floor !== undefined || pins.ceiling !== undefined || pins.never !== undefined) {
+      out.pins = pins;
+    }
+  }
+  return out;
+}
+
+/**
+ * Deterministic complexity bucket for the reward writeback (OK-9 W5). A
+ * prompt-length proxy — crude but stable — until the calibration harness
+ * (W6) owns complexity classification. Buckets key the bandit's per-bucket
+ * arms; the strings must match the low/medium/high vocabulary.
+ */
+function bucketForTask(prompt: string): string {
+  if (prompt.length < 160) return "low";
+  if (prompt.length < 640) return "medium";
+  return "high";
+}
+
 export async function runFuse(options: FuseCliOptions): Promise<number> {
   const models = defaultModels();
   const rawConfig = readConfig();
@@ -169,12 +242,28 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
   );
   if (!architect || !builder || !judge) return 2;
 
-  // ── E002 Inc 02: Shift routing (production wiring) ─────────────────────
-  // Construct a ShiftRouter with the resolved cast + fallback casts from the
-  // same config (cross-provider fallback). Classify the prompt and emit
-  // routing events through the existing appendActivity seam so `openkai tail`
-  // shows distinct models per stage.
+  // ── E017 Inc 02: orchestration facade (production wiring) ─────────────
+  // Stage classification + the tier decision live in the Orchestrator
+  // (OK-9.3 composition contract) — no hand-wired ShiftRouter.classify. The
+  // ShiftRouter stays for what it owns: the budget guard and the provider
+  // fallback chain on the execution path. Both write through the SAME
+  // appendActivity seam (the TUI's onActivity writer — no parallel writer).
   const cwd = process.cwd();
+  // The single activity seam for every routing event this run emits —
+  // shift routes, tier decisions, the judge break-even meter (OK-9 W7).
+  const sink = (event: RoutingEvent): void => {
+    appendActivity(cwd, event.kind, {
+      stage: event.stage,
+      model: event.model,
+      provider: event.provider,
+      attempt: event.attempt,
+      tier: event.tier,
+      source: event.source,
+      reason: event.reason,
+    });
+  };
+  let orchestrator: Orchestrator | undefined;
+  let stage: Stage | undefined;
   if (cast) {
     // Fallback casts: all OTHER casts from the config (cross-provider).
     const allCasts = listCasts(config);
@@ -183,23 +272,31 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     const router = new ShiftRouter({
       cast,
       fallbackCasts,
-      onActivity: (event) => {
-        // Route through the EXISTING appendActivity seam — the same writer
-        // the TUI's onActivity callback uses. No parallel writer.
-        appendActivity(cwd, event.kind, {
-          stage: event.stage,
-          model: event.model,
-          provider: event.provider,
-          attempt: event.attempt,
-          reason: event.reason,
-        });
-      },
+      onActivity: sink,
     });
 
-    // Classify the prompt (deterministic, no model call — FU-4 discipline).
-    const stage = router.classify({ prompt: options.prompt });
+    // The facade: the selected cast is the CAPABLE member of each stage's
+    // pair; the cheapest same-provider cast supplies the efficient member.
+    const shift = readShiftConfig(rawConfig);
+    orchestrator = new Orchestrator({
+      cwd,
+      castConfig: { ...config, defaultCast: cast.id },
+      posture: shift.posture,
+      pins: shift.pins,
+      onActivity: sink,
+    });
+
+    // First turn: no tool history yet — the scorer sees an empty window and
+    // the posture default decides (OK-9 risk 1: stage default + stickiness).
+    const decision = orchestrator.decide(
+      { prompt: options.prompt },
+      { signals: [], turnDepth: 0, compacted: false },
+    );
+    stage = decision.stage;
     if (!options.quiet) {
-      process.stderr.write(`[openkai] shift: prompt classified as "${stage}" stage\n`);
+      process.stderr.write(
+        `[openkai] shift: prompt classified as "${stage}" stage, tier=${decision.tier} (${decision.source})\n`,
+      );
     }
 
     // Emit routing events for all three fusion stages. Each stage routes to
@@ -216,75 +313,142 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
   }
 
   try {
-    const result = await fuse(
-      (model, context, opts) => models.streamSimple(model, context, opts),
-      {
-        task: options.prompt,
-        architectModel: architect,
-        builderModel: builder,
-        judgeModel: judge,
-        gate: options.gate,
-        maxRounds: options.maxRounds,
-        // Consent parity (E001 §2): the gate's checks are model-authored
-        // shell with operator privileges. Print them; only --yes executes.
-        approveGate: (checks) => {
-          process.stderr.write("\n[openkai] validator-designed gate (model-authored shell):\n");
-          for (const [i, c] of checks.entries()) {
-            process.stderr.write(`  ${i + 1}. ${c.name}\n     $ ${c.command}\n`);
-          }
-          if (!options.yes) {
-            process.stderr.write("gate REFUSED — rerun with --yes to execute these checks.\n");
-            return false;
-          }
-          process.stderr.write("gate approved via --yes.\n");
-          return true;
-        },
-      },
-    );
+    const bucket = bucketForTask(options.prompt);
+    // The panel for the current attempt — the cascade retry swaps both roles
+    // to the escalated (capable-tier) model as a self-pair (E016 default).
+    let panel = { architectModel: architect, builderModel: builder, judgeModel: judge };
+    let cascadeSpent = false;
 
-    await recordFusionRun(result.record, logPath);
-
-    // Managed mode (ren A1): with a project attached, also export the run
-    // record as a Cortex artifact. Best-effort — export failure never fails
-    // the run.
-    if (options.project) {
-      const client = new CortexClient({
-        baseUrl: options.api,
-        project: options.project,
-        agent: options.agent,
-      });
-      const exported = await exportFusionRunArtifact(
-        client,
-        result.record,
-        options.agent ?? "openkai",
+    for (;;) {
+      // Judge break-even meter (OK-9 W7): logged per run attempt from live
+      // catalogue pricing — the judge arbitrates the cheap↔dear gap between
+      // the builder and architect tiers of the CURRENT panel (the cascade
+      // retry re-prices against the escalated pair).
+      sink(
+        judgeBreakEvenEvent(
+          judgeBreakEven({
+            judge: panel.judgeModel,
+            cheap: panel.builderModel,
+            dear: panel.architectModel,
+          }),
+          panel.judgeModel.id,
+          { cheap: panel.builderModel.id, dear: panel.architectModel.id },
+        ),
       );
-      if (exported && !options.quiet) {
-        process.stderr.write(`[openkai] run artifact exported to Cortex (${options.project})\n`);
+
+      const result = await fuse(
+        (model, context, opts) => models.streamSimple(model, context, opts),
+        {
+          task: options.prompt,
+          architectModel: panel.architectModel,
+          builderModel: panel.builderModel,
+          judgeModel: panel.judgeModel,
+          gate: options.gate,
+          maxRounds: options.maxRounds,
+          // Consent parity (E001 §2): the gate's checks are model-authored
+          // shell with operator privileges. Print them; only --yes executes.
+          approveGate: (checks) => {
+            process.stderr.write("\n[openkai] validator-designed gate (model-authored shell):\n");
+            for (const [i, c] of checks.entries()) {
+              process.stderr.write(`  ${i + 1}. ${c.name}\n     $ ${c.command}\n`);
+            }
+            if (!options.yes) {
+              process.stderr.write("gate REFUSED — rerun with --yes to execute these checks.\n");
+              return false;
+            }
+            process.stderr.write("gate approved via --yes.\n");
+            return true;
+          },
+        },
+      );
+
+      await recordFusionRun(result.record, logPath);
+
+      // ── E017 Inc 04: cascade completion (OK-9.3 rule 2) ───────────────
+      // A gate halt at the retry cap escalates the stage one tier and
+      // retries ONCE — verify-then-escalate, never escalate on vibes. The
+      // halted attempt's failure is the bandit reward for the pair that
+      // served it (recorded BEFORE escalation moves the last-decision
+      // pointer). A ceiling pin suppresses the escalation — the documented
+      // cost-certainty posture, so there is nothing to retry at.
+      if (
+        options.gate &&
+        result.gate.outcome === "halt" &&
+        orchestrator !== undefined &&
+        stage !== undefined &&
+        !cascadeSpent
+      ) {
+        orchestrator.noteGateOutcome("fail", bucket);
+        cascadeSpent = true;
+        const escalation = orchestrator.escalate(stage);
+        if (escalation.tier === "capable") {
+          const escalatedModel = models.getModel(escalation.provider, escalation.model);
+          if (escalatedModel) {
+            if (!options.quiet) {
+              process.stderr.write(
+                `[openkai] cascade: gate halted at the retry cap — escalating stage "${stage}" ` +
+                  `to ${escalation.provider}/${escalation.model} and retrying once (OK-9.3 rule 2)\n`,
+              );
+            }
+            panel = { architectModel: escalatedModel, builderModel: escalatedModel, judgeModel: judge };
+            continue;
+          }
+        }
+        if (!options.quiet) {
+          process.stderr.write(
+            `[openkai] cascade: escalation suppressed or model unavailable (${escalation.reason}) — halting.\n`,
+          );
+        }
       }
-    }
 
-    for (const output of result.outputs) {
-      process.stdout.write(`${renderRole(output)}\n`);
-    }
-    process.stdout.write(`${renderSynthesis(result.synthesis)}\n`);
+      // Reward writeback (OK-9 W5): only real verdicts teach the router —
+      // refused/weak-gate/not-run carry no evidence.
+      if (orchestrator !== undefined && (result.gate.outcome === "pass" || result.gate.outcome === "halt")) {
+        orchestrator.noteGateOutcome(result.gate.outcome === "pass" ? "pass" : "fail", bucket);
+      }
 
-    if (options.gate) {
-      const verdict =
-        result.gate.outcome === "pass"
-          ? `PASS after ${result.gate.rounds} evaluation round(s)`
-          : result.gate.outcome === "weak-gate"
-            ? "WEAK GATE — baseline was green before work; gate proves nothing"
-            : result.gate.outcome === "refused"
-              ? "REFUSED — checks not approved (rerun with --yes to execute)"
-              : `HALT — gate still failing after the retry cap (escalate to triage)`;
-      process.stdout.write(`\n══ GATE: ${verdict} ══\n`);
-    }
+      // Managed mode (ren A1): with a project attached, also export the run
+      // record as a Cortex artifact. Best-effort — export failure never fails
+      // the run.
+      if (options.project) {
+        const client = new CortexClient({
+          baseUrl: options.api,
+          project: options.project,
+          agent: options.agent,
+        });
+        const exported = await exportFusionRunArtifact(
+          client,
+          result.record,
+          options.agent ?? "openkai",
+        );
+        if (exported && !options.quiet) {
+          process.stderr.write(`[openkai] run artifact exported to Cortex (${options.project})\n`);
+        }
+      }
 
-    if (!options.quiet) {
-      process.stderr.write(`[openkai] run ${result.runId} recorded at ${logPath}\n`);
+      for (const output of result.outputs) {
+        process.stdout.write(`${renderRole(output)}\n`);
+      }
+      process.stdout.write(`${renderSynthesis(result.synthesis)}\n`);
+
+      if (options.gate) {
+        const verdict =
+          result.gate.outcome === "pass"
+            ? `PASS after ${result.gate.rounds} evaluation round(s)`
+            : result.gate.outcome === "weak-gate"
+              ? "WEAK GATE — baseline was green before work; gate proves nothing"
+              : result.gate.outcome === "refused"
+                ? "REFUSED — checks not approved (rerun with --yes to execute)"
+                : `HALT — gate still failing after the retry cap${cascadeSpent ? " and the cascade retry" : ""} (escalate to triage)`;
+        process.stdout.write(`\n══ GATE: ${verdict} ══\n`);
+      }
+
+      if (!options.quiet) {
+        process.stderr.write(`[openkai] run ${result.runId} recorded at ${logPath}\n`);
+      }
+      if (result.gate.outcome === "refused") return 2;
+      return options.gate && result.gate.outcome !== "pass" ? 1 : 0;
     }
-    if (result.gate.outcome === "refused") return 2;
-    return options.gate && result.gate.outcome !== "pass" ? 1 : 0;
   } catch (error) {
     if (error instanceof UnwinnableGateError) {
       // The print-mode CLI wires no applyWork (the workspace-write path lands

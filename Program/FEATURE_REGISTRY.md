@@ -19,6 +19,8 @@
 | `/exit` (+`/quit` alias) | 0.1.5 | ✅ | |
 | `/btw` | 0.1.1 | ✅ | side channel, unpersisted |
 | `/undo` | 0.1.1 | ✅ | shadow-git |
+| `/shift` | 0.1.7 | ✅ | routing ledger over activity.jsonl (OK-9.7 trust surface) |
+| `/diff` | 0.1.7 | ✅ | shadow snapshot → work tree overlay (read-only) |
 | `/fuse [task]` | 0.1.5 | ✅ | in-TUI panel |
 | `/retry [model]` | 0.1.5 | ✅ | |
 | `/fork` `/tree` | 0.1.5 | ✅ | v3 parent links |
@@ -27,7 +29,7 @@
 | `/theme` | 0.1.5 | ✅ | packs + auto |
 | `/goal` | 0.1.5 | ✅ | boot card surface |
 | `/setup` | 0.1.5 | ✅ | onboarding panel |
-| `/settings` | 0.1.5 | ✅ | six tabs |
+| `/settings` | 0.1.5 | ✅ | seven tabs (routing added 0.1.7) |
 | `/init` | 0.1.5 | ✅ | never overwrites |
 | `/memory` | 0.1.5 | ✅ | .openkai/memory |
 | `/clear` `/copy` `/stats` `/context` `/compact` `/shake` | 0.1.5 | ✅ | real-context ops |
@@ -47,6 +49,7 @@
 | `events --print` | 0.1.1 | ✅ | SSE bridge |
 | `fuse` (+`--cast`, `--gate`) | 0.1.1 / 0.1.5 | ✅ | |
 | `fusion report` / `advise` / `dashboard` | 0.1.1 / — / 0.1.6 | ✅ | dashboard K3-hardened |
+| `fusion calibrate` | 0.1.7 | ✅ | OK-9 W6/W7: quadrant table + threshold recommendation + judge break-even; dated records in research/calibration |
 | `undo [--history]` | 0.1.1 | ✅ | |
 | `login <provider>` | 0.1.1 | ✅ | persistent store 0.1.5+ |
 | `tail [-f]` | 0.1.4 | ✅ | activity feed |
@@ -58,8 +61,8 @@
 | `splash` | 0.1.5 | ✅ | replays brand animation |
 | `help [topic]` | 0.1.5 | ✅ | |
 | `version` | 0.1.1 | ✅ | |
-| `openkai duet` (rename of fuse) | 0.1.5 | 📋 never shipped — `fuse` remains; E017 decision needed (ship alias or retire promise) | E002 §2 |
-| `openkai search` | — | 📋 never shipped (session search) | E001 Inc 09 item 9 |
+| `openkai duet` (rename of fuse) | 0.1.5 | ❌ retired 2026-08-19 (CTO) — `fusion` is the product term; no alias | E002 §2 |
+| `openkai search` | — | ❌ retired 2026-08-19 (CTO) — session search stays out of scope | E001 Inc 09 item 9 |
 
 ## Keybindings
 
@@ -82,6 +85,7 @@
 | `todo` | 0.1.5 | ✅ | shared task list |
 | `hashline_edit` | 0.1.5 | 🔁 ungated at ship → gated in E012 (0.1.5 patch line) | hashline.ts |
 | `task` | 0.1.5 | ✅ | K3 lifecycle + schema + provider fixes 0.1.6 |
+| `task` steering channel (`steerChild`/`activeChildren`, `sessionId` in result details) | 0.1.7 | ✅ | task.ts — the E017-restored known-list channel |
 | `lsp` | 0.1.5 | ✅ | confined + per-cwd clients 0.1.6 |
 | `write_file` `edit_file` `bash` (gated trio) | 0.1.1 | ✅ | previews, floor, abort/timeout |
 | MCP proxies | 0.1.5 | 🔁 replaced built-ins at ship → merge + gated + scrubbed env (E012) | mcp.ts |
@@ -101,13 +105,16 @@
 | Opaque overlays | 0.1.5 | ✅ | |
 | Attention notifications (focus-aware) | 0.1.1 | ✅ | attention.ts |
 | Role pills (per-agent identity) | 0.1.1 | ✅ | transcript.ts |
+| Tier chip + transition notice (routing visibility) | 0.1.7 | ✅ | status.ts + app.ts applyRoutingEvent (E017 S1) |
+| Fusion role-pill blocks + gate verdict notices | 0.1.7 | ✅ | transcript.ts + app.ts renderGateOutcome (E017 S1) |
 | Daily tips | 0.1.5 | ✅ | feature-gated |
 | Auto-compact at 80% | 0.1.5 | ✅ | idle-only 0.1.6 |
 | Mermaid→ASCII | 0.1.5 | ✅ | mermaid.ts |
 | Prompt stash + frecency history | 0.1.1 | ✅ | stash.ts |
 | Goal lifecycle on boot card | 0.1.5 | ✅ | goal.ts |
 | Boot capability row + memory surface | 0.1.5 | ✅ | app.ts |
-| Guided teaching turn in first-run | 0.1.1 | 📋 never shipped (welcome teaches keys, not a scripted turn) | E002 Inc 03 |
+| Settings routing tab (posture quality/balanced/saver cycling + read-only pins summary → `config.shift`) | 0.1.7 | ✅ | settings.ts + config.ts (`writeShiftPosture`) |
+| Guided teaching turn in first-run | 0.1.1 | ❌ retired 2026-08-19 (CTO) — `/setup` + keyless boot is the onboarding path | E002 Inc 03 |
 
 ## Backend capabilities
 
@@ -117,10 +124,14 @@
 | JSONL v3 session trees | 0.1.1 | ✅ | resume/lock/defensive parse 0.1.6 |
 | Cortex checkpoints + SSE | 0.1.1 | ✅ | redacted; watermark 0.1.6 |
 | Provider substrate (30+ lanes + OAuth) | 0.1.1 | ✅ | persistent store universal 0.1.6 |
+| Ollama lanes (`ollama` keyless local, `ollama-cloud` OLLAMA_API_KEY; dynamic discovery via /api/tags) | 0.1.7 | ✅ | core ollama.ts, registered in `defaultModels()` |
+| Provider table completeness (E017 pi-ai catalogue diff: +huggingface, baseten, google-vertex, cloudflare×2, opencode×2, ant-ling, minimax-cn, moonshotai-cn, zai-coding-cn, qwen×2, xiaomi×4; **deliberately skipped:** amazon-bedrock ambient AWS auth, azure-openai-responses per-resource base URL) | 0.1.7 | ✅ | cli providers.ts + `SKIPPED_PROVIDERS` |
 | Fusion FU-1..FU-5 (panel/synthesis/gate/policy/telemetry) | 0.1.1 | ✅ | K3-hardened 0.1.6 |
+| Synthesis compare-then-compose + judge selection + parse-failure fallback | 0.1.7 | ✅ | OK-9 W4 (LLM-Blender pairwise; judge ≠ panel member; panel survives a broken merge) |
 | Bandit routing (per-bucket posteriors) | 0.1.1 | ✅ | reward wiring = E017 inc 06 |
 | Casts | 0.1.5 | ✅ | operator casts 0.1.6 |
 | Shift (stage routing + tier scorer) | 0.1.5/0.1.6 | ✅ | composition wiring = E017 inc 02 |
+| Orchestration facade (`shift.posture`/`shift.pins` config, tier latch, gate-cap cascade retry, gate→bandit reward writeback) | 0.1.7 | ✅ | core orchestrate.ts; fuse.ts on the facade |
 | Permission engine + deny floor | 0.1.1 | ✅ | floor extended 0.1.6 (F10 closed: `.ssh` node denied) |
 | Shadow-git undo | 0.1.1 | ✅ | GIT_* scrub + gitignored capture 0.1.6 |
 | Secrets redaction at all write seams | 0.1.2 | ✅ | |

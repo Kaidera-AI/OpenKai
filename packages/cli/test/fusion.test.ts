@@ -33,6 +33,7 @@ import {
   fuse,
   readFusionRuns,
   recordFusionRun,
+  resolveSynthesiser,
   runGatedFusion,
   runPanel,
   runSynthesis,
@@ -67,6 +68,11 @@ function makeRig(route: (system: string, callCount: number) => string): FauxRig 
 }
 
 const SYNTHESIS_JSON = JSON.stringify({
+  comparison: {
+    architect: { strengths: ["clear structure"], blindSpots: ["no cost analysis"] },
+    builder: { strengths: ["concrete steps"], blindSpots: ["no rollback plan"] },
+    conflicts: ["error style"],
+  },
   consensus: ["both agree on the shape"],
   divergences: [
     {
@@ -107,6 +113,10 @@ test("synthesis: parses the structured merge with attribution intact", async () 
   assert.equal(synthesis.divergences[0]?.kept, "architect");
   assert.equal(synthesis.discarded[0]?.by, "builder");
   assert.deepEqual(synthesis.blindSpots, ["no retry budget"]);
+  // OK-9 W4: the pairwise compare step lands on the artifact.
+  assert.deepEqual(synthesis.comparison?.conflicts, ["error style"]);
+  assert.deepEqual(synthesis.comparison?.architect.blindSpots, ["no cost analysis"]);
+  assert.equal(synthesis.synthesisError, undefined);
 });
 
 test("synthesis: unattributed divergence throws AttributionError", async () => {
@@ -123,6 +133,104 @@ test("synthesis: unattributed divergence throws AttributionError", async () => {
       { role: "builder", modelId: "faux-1", text: "B", usage: undefined, latencyMs: 1 },
     ]),
     (error: unknown) => error instanceof AttributionError,
+  );
+});
+
+// ── OK-9 W4: compare-then-compose, judge selection, parse-failure posture ──
+// (research/2026-08-18-switchyard-routing-fusion-deep-dive.md §4)
+
+test("synthesis: the prompt is compare-then-compose (pairwise precedes composition)", async () => {
+  let seenSystem = "";
+  const rig = makeRig((system) => {
+    seenSystem = system;
+    return SYNTHESIS_JSON;
+  });
+  await runSynthesis(rig.streamFn, rig.model, "task", [
+    { role: "architect", modelId: "faux-1", text: "A", usage: undefined, latencyMs: 1 },
+    { role: "builder", modelId: "faux-1", text: "B", usage: undefined, latencyMs: 1 },
+  ]);
+  // LLM-Blender (arXiv:2306.02561): the synthesiser COMPARES the two outputs
+  // pairwise before composing — and the comparison key is in the contract.
+  assert.match(seenSystem, /COMPARE/);
+  assert.match(seenSystem, /COMPOSE/);
+  assert.ok(
+    seenSystem.indexOf("COMPARE") < seenSystem.indexOf("COMPOSE"),
+    "the compare step is ordered before the compose step",
+  );
+  assert.ok(seenSystem.includes('"comparison"'), "the JSON contract carries the comparison");
+  assert.match(seenSystem, /conflicts/);
+  // Judge-bias invariant in the prompt itself: no stake in either role.
+  assert.match(seenSystem, /fresh, third session with no stake in either role/);
+});
+
+test("synthesis: unparseable output returns both role outputs verbatim, flagged", async () => {
+  const rig = makeRig(() => "I cannot merge these. Sorry! (no JSON here)");
+  const synthesis = await runSynthesis(rig.streamFn, rig.model, "task", [
+    { role: "architect", modelId: "faux-1", text: "architect position", usage: undefined, latencyMs: 1 },
+    { role: "builder", modelId: "faux-1", text: "builder position", usage: undefined, latencyMs: 2 },
+  ]);
+  // The panel is never thrown away: both outputs survive verbatim.
+  assert.ok(synthesis.synthesisError, "the failure is flagged on the artifact");
+  assert.deepEqual(
+    synthesis.fallbackOutputs?.map((o) => `${o.role}:${o.text}`),
+    ["architect:architect position", "builder:builder position"],
+  );
+  assert.deepEqual(synthesis.consensus, []);
+  assert.deepEqual(synthesis.divergences, []);
+  assert.equal(synthesis.comparison, undefined);
+  assert.equal(synthesis.raw, "I cannot merge these. Sorry! (no JSON here)");
+});
+
+test("fuse: a failed synthesis keeps the panel and records the gate as not-run", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "openkai-fusion-"));
+  const gateRan = path.join(cwd, "gate-ran.txt");
+  try {
+    const rig = makeRig((system) => {
+      if (system.includes("VALIDATOR")) {
+        // Side effect proves execution: this file must NEVER appear.
+        return JSON.stringify([
+          { name: "probe", command: `printf ran > ${JSON.stringify(gateRan)}` },
+        ]);
+      }
+      if (system.includes("SYNTHESISER")) return "not json — the merge is broken";
+      if (system.includes("ARCHITECT role")) return "A";
+      return "B";
+    });
+    const result = await fuse(rig.streamFn, {
+      task: "gated task",
+      architectModel: rig.model,
+      builderModel: rig.model,
+      gate: true,
+      cwd,
+      approveGate: () => true,
+      applyWork: () => undefined,
+    });
+    assert.ok(result.synthesis.synthesisError, "the broken merge is flagged");
+    assert.equal(result.outputs.length, 2, "both role outputs survive");
+    assert.equal(result.gate.outcome, "not-run", "a broken merge never gates");
+    assert.equal(result.gateRuns.length, 0, "no gate check executed");
+    assert.equal(result.record.gate.outcome, "not-run", "the run record is honest");
+    assert.equal(result.record.synthesis?.modelId, "faux-1", "the attempt is still recorded");
+    await assert.rejects(
+      () => readFile(gateRan, "utf-8"),
+      "the approved gate never executed on a broken merge",
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("synthesiser selection: the judge is never a panel member when a judgeModel exists", () => {
+  const cast = { architectModel: "arch", builderModel: "build", judgeModel: "judge" };
+  const judge = resolveSynthesiser(cast);
+  assert.equal(judge, "judge", "the distinct judge synthesises");
+  assert.notEqual(judge, cast.architectModel, "judge ≠ architect (panel member)");
+  assert.notEqual(judge, cast.builderModel, "judge ≠ builder (panel member)");
+  // No distinct judge: the ARCHITECT falls in — never the builder (a weak
+  // aggregator caps the whole system, MoA arXiv:2406.04692).
+  assert.equal(
+    resolveSynthesiser({ architectModel: "arch", builderModel: "build" }),
+    "arch",
   );
 });
 

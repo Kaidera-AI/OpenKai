@@ -59,6 +59,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "compact", description: "Compact the conversation context (elide the middle, keep system + last exchange)." },
   { name: "shake", description: "Strip heavy tool results from context to reclaim tokens (omp's /shake elide)." },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },
+  { name: "shift", description: "Session routing ledger — recent tier decisions with stage, source, reason (OK-9.7)." },
+  { name: "diff", description: "Diff the latest shadow snapshot against the work tree (scrollable overlay)." },
   { name: "exit", description: "Exit the TUI (also Ctrl+C)." },
 ];
 
@@ -98,6 +100,8 @@ export function helpText(): string[] {
     "  /plan            toggle plan mode (read-only; mutations refused)",
     "  /goal [text]     set / show / pause / resume / done / drop the session goal",
     "  /undo            undo the last gated mutation",
+    "  /shift           routing ledger — recent tier decisions (stage · tier · source · reason)",
+    "  /diff            diff the latest snapshot against the work tree (overlay)",
     "  /exit            exit (also Ctrl+C)",
     "",
     "Keybindings",
@@ -126,6 +130,8 @@ export function buildPaletteItems(actions: Record<string, () => void>): PaletteI
     { value: "new", label: "New session", description: "Start a fresh session", keys: "/new" },
     { value: "btw", label: "BTW", description: "Ask a side question (system block)", keys: "/btw" },
     { value: "undo", label: "Undo mutation", description: "Undo the last gated mutation", keys: "/undo" },
+    { value: "shift", label: "Routing ledger", description: "Recent shift tier decisions", keys: "/shift" },
+    { value: "diff", label: "Snapshot diff", description: "Latest snapshot vs work tree", keys: "/diff" },
     { value: "quit", label: "Quit", description: "Exit the TUI", keys: "/quit" },
     { value: "toggle-thinking", label: "Toggle thinking", description: "Hide/reveal reasoning", keys: "Ctrl+O" },
     { value: "palette", label: "Command palette", description: "Open the fuzzy command palette", keys: "Ctrl+K" },

@@ -224,24 +224,50 @@ export class Transcript implements Component {
    * Render a fusion result (OK-7: fusion stops being invisible). Each role
    * output gets its identity pill; the synthesis renders as an attributed
    * merge block — consensus, kept divergences, discards, blind spots.
+   * A failed role (panel.ts allSettled) keeps its pill and shows the
+   * attributed error instead of an empty block (E017 S1: a broken panel must
+   * be SEEABLE, not silently absent).
    */
   addFusionResult(
-    outputs: { role: string; modelId: string; text: string; latencyMs: number }[],
+    outputs: { role: string; modelId: string; text: string; latencyMs: number; error?: string }[],
     synthesis: {
       consensus: string[];
       divergences: { topic: string; architect: string; builder: string; kept: string }[];
       discarded: { item: string; reason: string; by: string }[];
       blindSpots: string[];
+      /** Set when the merge could not be parsed (OK-9 W4) — both role outputs stand verbatim. */
+      synthesisError?: string;
     },
   ): void {
     for (const output of outputs) {
       const header = `${rolePill(output.role)} ${textToken.dim(`· ${output.modelId} · ${output.latencyMs}ms`)}`;
       const clean = sanitizeTerminalText(output.text);
-      const comp = new Markdown(`${header}\n\n${clean}`, 1, 0, markdownTheme);
+      const body =
+        output.error !== undefined
+          ? `${header}\n\n${highlight.danger(`✗ role failed: ${sanitizeTerminalText(output.error)}`)}`
+          : `${header}\n\n${clean}`;
+      const comp = new Markdown(body, 1, 0, markdownTheme);
       this.blocks.push({ kind: "assistant", text: clean, comp });
     }
 
     const clean = (s: string): string => sanitizeTerminalText(s);
+    // Parse failure (OK-9 W4): both role outputs already rendered above with
+    // their pills — flag the broken merge, never silently degrade.
+    if (synthesis.synthesisError !== undefined) {
+      const plain = `synthesis failed to parse — both role outputs stand verbatim (${clean(synthesis.synthesisError).slice(0, 80)})`;
+      const flagged = `${highlight.attention("synthesis failed to parse")} ${textToken.muted(`— both role outputs stand verbatim (${clean(synthesis.synthesisError).slice(0, 80)})`)}`;
+      const comp = new Text(`${toolBorder("▎ ")}${flagged}`, 1, 0);
+      this.blocks.push({ kind: "notice", text: plain, comp });
+      return;
+    }
+    // A run that never reached synthesis (refused gate, broken panel) carries
+    // an empty artifact — rendering an empty "synthesis" block is noise.
+    const hasSynthesis =
+      synthesis.consensus.length > 0 ||
+      synthesis.divergences.length > 0 ||
+      synthesis.discarded.length > 0 ||
+      synthesis.blindSpots.length > 0;
+    if (!hasSynthesis) return;
     const lines: string[] = [highlight.base("synthesis")];
     if (synthesis.consensus.length > 0) {
       lines.push(textToken.strong("consensus"));

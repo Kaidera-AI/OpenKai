@@ -31,6 +31,52 @@ In this mode:
 openkai fuse --prompt "Implement a secure auth middleware" --gate --max-rounds 5
 ```
 
+## Calibration (`openkai fusion calibrate`)
+
+The calibration harness (OK-9 W6/W7) turns recorded run outcomes into an
+escalation-threshold recommendation — Switchyard's quadrant method, not a
+borrowed operating point.
+
+**Record shape** (JSONL, one line per run; pooled from `--runs` and the
+optional `--baseline` file):
+
+```json
+{"taskId": "auth-middleware", "tier": "capable", "score": 0.62, "outcome": "pass"}
+```
+
+- `tier` — which arm the run served (`capable` or `efficient`).
+- `score` — the corroborative scorer value recorded for the task at routing
+  time (0..1); this is what the threshold sweeps against.
+- `outcome` — `pass` / `fail` for that arm on that task.
+
+Pairing is by `taskId`: tasks present in both arms land in a quadrant —
+**RESCUE** (efficient fails, capable passes: escalation rescues the task),
+**LOSS** (efficient passes, capable fails: escalation loses quality),
+**SAFE** (both pass), **HARD** (both fail). Tasks seen in only one arm are
+reported as unpaired and excluded.
+
+```bash
+openkai fusion calibrate \
+  --runs .openkai/fusion/runs.jsonl \
+  --baseline calibration/capable-baseline.jsonl
+```
+
+The report shows, per threshold candidate (0.30–0.80): the strong-call
+fraction and the quality gap closed (RouteLLM's CPT/APGR frame), rescued
+RESCUE tasks, and over-escalated LOSS tasks. The recommendation is
+Switchyard's rule: **the lowest threshold that rescues RESCUE without
+over-escalating LOSS** — and when the data cannot separate the quadrants, the
+report says so instead of faking a clean pick. Every run writes a dated
+record under `research/calibration/` (override with `--record-dir`).
+
+The report closes with the **judge break-even** line (OK-9.4, LangChain's
+formula): `judgeCost / (dearCost − cheapCost)` from live catalogue pricing —
+the fraction of calls that must offload to the cheap tier for the judge to
+pay for itself. Models come from `--judge-model` / `--cheap-model` /
+`--dear-model` (+`--provider`), or fall back to the configured/default cast.
+The same line is emitted as an activity event whenever a fusion run resolves
+its judge, so `openkai tail` shows the judge economics of live runs.
+
 ## Exit Codes
 
 | Code | Meaning |

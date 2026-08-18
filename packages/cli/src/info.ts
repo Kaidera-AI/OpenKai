@@ -91,7 +91,7 @@ export async function runInfo(options: InfoOptions): Promise<number> {
     const detail = status.oauth === true
       ? "OAuth lane — no env key needed (login flow at first use)"
       : status.configured
-        ? `via ${status.via}`
+        ? `via ${status.via ?? "keyless local server"}`
         : `set ${status.needsKey}`;
     lines.push(`  ${mark} ${id}${active} — ${detail}`);
   }

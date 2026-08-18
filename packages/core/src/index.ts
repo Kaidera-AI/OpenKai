@@ -16,3 +16,9 @@ export {
   FileCredentialStore,
   openkaiHome,
 } from "./credentials.js";
+export {
+  OLLAMA_CLOUD_BASE_URL,
+  OLLAMA_LOCAL_BASE_URL,
+  ollamaCloudProvider,
+  ollamaProvider,
+} from "./ollama.js";

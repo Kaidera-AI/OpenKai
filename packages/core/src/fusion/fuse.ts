@@ -16,7 +16,7 @@ import {
   verbatimFailures,
 } from "./gate.js";
 import { runPanel } from "./panel.js";
-import { runSynthesis } from "./synthesis.js";
+import { resolveSynthesiser, runSynthesis } from "./synthesis.js";
 import type {
   FusionRunRecord,
   GateCheck,
@@ -78,7 +78,9 @@ export async function fuse(
   options: FuseOptions,
 ): Promise<FuseResult> {
   const started = Date.now();
-  const judge = options.judgeModel ?? options.architectModel;
+  // OK-9 W4: the judge (synthesis + gate validation) is the strongest
+  // available model, never a panel member when a distinct judge exists.
+  const judge = resolveSynthesiser(options);
   const cwd = options.cwd ?? process.cwd();
   const gated = options.gate === true;
   const gateRuns: GateRun[] = [];
@@ -180,9 +182,12 @@ export async function fuse(
   const synthesis = await runSynthesis(streamFn, judge, options.task, outputs);
 
   // FU-3 steps 2–6 (baseline RED + evaluation; builder repair rounds are
-  // fresh builder sessions fed verbatim failures).
+  // fresh builder sessions fed verbatim failures). A FAILED synthesis never
+  // gates (OK-9 W4): the merge is the audit record the verdict attaches to,
+  // and gating a verbatim fallback would hide a broken merge behind a green
+  // check — the record stays honest as "not-run".
   let gate: FusionRunRecord["gate"] = { rounds: 0, outcome: "not-run" };
-  if (checks) {
+  if (checks && synthesis.synthesisError === undefined) {
     const builderOutput =
       outputs.find((o) => o.role === "builder")?.text ?? "";
     try {

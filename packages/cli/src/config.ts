@@ -12,6 +12,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import type { ShiftPosture } from "@kaidera/openkai-core";
 
 
 /** The OpenKai home directory (~/.openkai or $OPENKAI_HOME for tests). */
@@ -132,5 +133,23 @@ export function readStatuslineChips(): StatuslineChip[] {
 export function writeStatuslineChips(chips: StatuslineChip[]): void {
   const config = readConfigFile();
   config["statusline"] = { chips };
+  writeConfigFile(config);
+}
+
+// ── Shift routing config (E017) ─────────────────────────────────────────────
+// The pinned contract (a sibling consumes it in core/orchestrate.ts):
+//   "shift": { "posture": "quality"|"balanced"|"saver",
+//              "pins": { "floor": {...}, "ceiling": "...", "never": [...] } }
+// The READ side lives in fuse.ts (`readShiftConfig`) — this is the write
+// path only: it sets posture and preserves any pins the operator hand-edited.
+
+/** Persist the shift posture, preserving `shift.pins` and every other key. */
+export function writeShiftPosture(posture: ShiftPosture): void {
+  const config = readConfigFile();
+  const shift = config["shift"];
+  const existing = shift && typeof shift === "object" && !Array.isArray(shift)
+    ? (shift as Record<string, unknown>)
+    : {};
+  config["shift"] = { ...existing, posture };
   writeConfigFile(config);
 }

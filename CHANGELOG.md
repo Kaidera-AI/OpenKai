@@ -2,6 +2,61 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.7] — v0.1.007 (E017: orchestration composition — shift predicts, fusion multiplies, the gate verifies)
+
+The composition epic: the 0.1.6 machinery (K3-certified but callerless) is
+now wired end-to-end, visible in the TUI, and learning from its own gate
+outcomes. Design base: OK-9 (`research/2026-08-18-shift-fusion-orchestration-ADR.md`).
+**326/326 tests green; typecheck clean.**
+
+### Orchestration (E017)
+- **`Orchestrator` facade** (`core/orchestrate.ts`): one decision layer —
+  stage classify → per-stage tier latch (no mid-phase thrash) → override
+  rules → corroborative scorer → pin clamps → posture default. Session
+  sessions route through it: tool signals accumulate from the event stream
+  and the tier is decided before each prompt (evidence-only: no signals, no
+  switch); compaction re-evaluates with the latch bypassed (the free switch
+  point).
+- **Cascade completion**: a fusion gate halt escalates the stage one tier
+  and retries exactly once, labelled on the feed (FrugalGPT's move).
+- **Reward loop**: gate outcomes write bandit posteriors per bucket
+  (`noteGateOutcome`); priors feed cast/pair selection.
+- **Operator priorities (OK-9.7)**: `shift.posture` (quality/balanced/saver)
+  + floor/ceiling pins + `never` denylists in `~/.openkai/config.json`;
+  settings gains a **routing tab**; precedence: pin → override → posture →
+  bandit → stage default.
+- **Synthesis (OK-9 W4)**: compare-then-compose contract (pairwise
+  comparison, then the merge); synthesiser resolved as judge-first, never a
+  panel member; parse failure keeps both role outputs, flagged.
+- **Calibration (OK-9 W6/W7)**: `openkai fusion calibrate` — RESCUE/LOSS/
+  SAFE/HARD quadrant table, threshold sweep with the Switchyard selection
+  rule, CPT/APGR report, judge break-even meter; dated records under
+  `research/calibration/`.
+
+### TUI visibility (S1)
+- **Tier chip** in the status line with transition flash (`t:eff▸cap`) fed
+  by live routing events.
+- **Fusion role pills** on panel blocks; failed roles keep their pill with
+  the attributed error; gate verdicts render as notices.
+- **`/shift`** — the session routing ledger (stage/tier/source/rationale
+  from the activity feed). **`/diff`** — scrollable overlay diffing the
+  latest shadow snapshot against the work tree (ren's TUI research item).
+
+### Providers & steering
+- **Ollama lanes**: `ollama` (keyless local, live-probed) and `ollama-cloud`
+  (`OLLAMA_API_KEY`) — dynamic model lists via `/api/tags`.
+- **Provider table completeness**: huggingface, baseten, google-vertex,
+  cloudflare lanes, opencode/-go, ant-ling, regional token plans and more —
+  with deliberate skips (bedrock/azure ambient auth) recorded.
+- **Subagent steering**: `steerChild`/`activeChildren` — the parent can
+  steer a live child by session id; task results carry the id.
+- Feature toggle `shift` (default on) for in-session tier routing.
+
+### Registry & process
+- `Program/FEATURE_REGISTRY.md` is the release gate (E017 inc 10 walks it).
+  The brand splash regression is recorded and restored; `duet`/`search`/
+  guided-teaching-turn formally retired (CTO, 2026-08-19).
+
 ## [0.1.6] — v0.1.006 (K3 adversarial review + keyless boot)
 
 Two full adversarial passes (ren@openkai's E012 review of 0.1.5, then kai's K3

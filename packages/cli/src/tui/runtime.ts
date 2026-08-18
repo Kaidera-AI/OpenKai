@@ -24,13 +24,18 @@ import {
   DEFAULT_CORTEX_API_URL,
   InProcessTransport,
   MissingApiKeyError,
+  Orchestrator,
   SessionStore,
   discoverMcpTools,
   fuse,
   listSessions,
   readSessionMessages,
+  type CastConfig,
+  type ToolSignal,
 } from "@kaidera/openkai-core";
 import { defaultModels } from "@kaidera/openkai-core";
+import { readShiftConfig } from "../fuse.js";
+import type { RoutingEvent } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildTuiApp, type RunMode, type ExitRequest } from "./app.js";
 import {
@@ -209,6 +214,19 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     process.stderr.write(`ERROR: model "${modelId}" not found under provider "${provider}".\n`);
     return { code: 2, next: { kind: "quit" } };
   }
+  // E017 S1: routing events that arrive through the activity seam are ALSO
+  // forwarded to the running controller (tier chip, transition notices).
+  // Bound after buildTuiApp — the closure reads the current binding, so an
+  // event can never race the app's construction.
+  let routingToTui: ((event: RoutingEvent) => void) | undefined;
+  // E017: the tier scorer's signal window (Switchyard's tool-result history).
+  // Accumulated from the same activity stream; the last command text rides
+  // along so bash writes count as production (K3).
+  const signalWindow: ToolSignal[] = [];
+  let lastBashCommand: string | undefined;
+  let turnDepth = 0;
+  let compacted = false;
+  const sessionSignals = (): ToolSignal[] => [...signalWindow];
   try {
     transport = new InProcessTransport({
       sessionId: store.sessionId,
@@ -222,13 +240,59 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       // machine still boots (0.1.6); auth failures surface at stream time as
       // error events, and the sign-in overlay resolves them live.
       models: fusionModels,
-      onActivity: (event) =>
+      onActivity: (event) => {
+        // Accumulate tier-scorer signals (E017) before anything else reads.
+        if (event.kind === "tool_call") {
+          turnDepth += 1;
+          const args = "args" in event ? event.args : undefined;
+          lastBashCommand =
+            args !== null && typeof args === "object" && "command" in args && typeof args.command === "string"
+              ? args.command
+              : undefined;
+        } else if (event.kind === "tool_result") {
+          const result = "result" in event ? event.result : undefined;
+          let resultText = "";
+          if (result !== null && typeof result === "object" && "content" in result && Array.isArray(result.content)) {
+            const texts: string[] = [];
+            for (const part of result.content as unknown[]) {
+              if (part !== null && typeof part === "object" && "text" in part && typeof part.text === "string") {
+                texts.push(part.text);
+              }
+            }
+            resultText = texts.join("\n").slice(0, 500);
+          }
+          signalWindow.push({
+            tool: "toolName" in event && typeof event.toolName === "string" ? event.toolName : "?",
+            resultText,
+            ...(lastBashCommand !== undefined ? { command: lastBashCommand } : {}),
+            ...(("isError" in event && event.isError === true) ? { isError: true } : {}),
+          });
+          lastBashCommand = undefined;
+          if (signalWindow.length > 8) signalWindow.shift();
+        }
         appendActivity(cwd, event.kind, {
           toolName: "toolName" in event ? (event.toolName as string) : undefined,
           args: "args" in event ? event.args : undefined,
           isError: "isError" in event ? (event.isError as boolean) : undefined,
           usage: "usage" in event ? (event.usage as { totalTokens?: number }) : undefined,
-        }),
+          // Routing fields (E017): shift/fusion decisions share this seam —
+          // keep stage/tier/source/reason intact so `/shift` and
+          // `openkai tail` show the rationale (OK-9.7 trust surface).
+          stage: "stage" in event ? (event.stage as string) : undefined,
+          model: "model" in event ? (event.model as string) : undefined,
+          attempt: "attempt" in event ? (event.attempt as number) : undefined,
+          tier: "tier" in event ? (event.tier as string) : undefined,
+          source: "source" in event ? (event.source as string) : undefined,
+          reason: "reason" in event ? (event.reason as string) : undefined,
+        });
+        // The tier chip + transition notices render live from the same stream.
+        // The SessionEvent union is closed over session kinds; routing events
+        // share this callback by convention, so widen to string before testing.
+        const kind: string = event.kind;
+        if (kind === "routing" || kind === "fallback" || kind === "routing_error") {
+          routingToTui?.(event as unknown as RoutingEvent);
+        }
+      },
     });
   } catch (error) {
     if (error instanceof MissingApiKeyError) {
@@ -243,6 +307,35 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   // the transport merges extras, never replaces its own tools.
   const mcpTools = await discoverMcpTools(transport.gate);
   if (mcpTools.length > 0) transport.addExtraTools(mcpTools);
+
+  // E017: the session orchestrator (shift in-session). Posture/pins come
+  // from the pinned config.shift shape; the cast config is the same surface
+  // fusion uses. Events append to the ledger AND light the tier chip.
+  const shiftConfig = readShiftConfig(config);
+  // config doubles as the cast config surface (casts/defaultCast keys) —
+  // narrow explicitly at the boundary rather than trusting the loose record.
+  const castConfig: CastConfig = {
+    ...(Array.isArray(config.casts) ? { casts: config.casts as CastConfig["casts"] } : {}),
+    ...(typeof config.defaultCast === "string" ? { defaultCast: config.defaultCast } : {}),
+  };
+  const orchestrator = new Orchestrator({
+    cwd,
+    castConfig,
+    ...(shiftConfig.posture !== undefined ? { posture: shiftConfig.posture } : {}),
+    ...(shiftConfig.pins !== undefined ? { pins: shiftConfig.pins } : {}),
+    onActivity: (event) => {
+      appendActivity(cwd, event.kind, {
+        stage: event.stage,
+        model: event.model,
+        provider: event.provider,
+        attempt: event.attempt,
+        tier: event.tier,
+        source: event.source,
+        reason: event.reason,
+      });
+      routingToTui?.(event);
+    },
+  });
 
   // Theme (E008): explicit choice wins; otherwise auto-detect the terminal's
   // background (OSC 11 → COLORFGBG → dark) before the alt screen takes over.
@@ -311,6 +404,27 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     history,
     provider,
     setupNeeded,
+    cwd,
+    onBeforePrompt: (text) => {
+      // E017 composition in-session: decide the tier from accumulated tool
+      // signals. Evidence-only — with no signals or a below-threshold
+      // fall_open the operator's chosen model stands.
+      if (!featureEnabled("shift")) return;
+      const signals = sessionSignals();
+      if (signals.length === 0) return;
+      const decision = orchestrator.decide({ prompt: text }, { signals, turnDepth, compacted });
+      if (decision.source === "fall_open") return;
+      const model = catalogue.getModel(decision.provider, decision.model);
+      if (model && model.id !== transport.modelId) transport.setModel(model);
+    },
+    onAutoCompact: () => {
+      if (!featureEnabled("shift")) return;
+      compacted = true;
+      const decision = orchestrator.reevaluate({ signals: sessionSignals(), turnDepth, compacted });
+      if (!decision) return;
+      const model = catalogue.getModel(decision.provider, decision.model);
+      if (model && model.id !== transport.modelId) transport.setModel(model);
+    },
     onSetModel: (model) => transport.setModel(model),
     onSetEffort: {
       set: (level) => transport.setThinkingLevel(level),
@@ -343,6 +457,9 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     onExit: requestExit,
   });
   const { root, composer, controller } = app;
+  // Bind the routing forwarder (declared before the transport so the activity
+  // seam could reference it): facade/shift events now reach the chrome live.
+  routingToTui = (event) => controller.applyRoutingEvent(event);
 
   // Seed the composer's up-arrow recall with frecency-ranked prompts (§1.4).
   await controller.seedHistory();

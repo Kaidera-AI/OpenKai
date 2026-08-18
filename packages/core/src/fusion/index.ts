@@ -1,5 +1,30 @@
 export { complete } from "./complete.js";
 export type { CompletionRequest, CompletionResult } from "./complete.js";
+export {
+  CALIBRATION_THRESHOLDS,
+  callCostUsd,
+  DEFAULT_CALL_TOKENS,
+  DEFAULT_JUDGE_TOKENS,
+  isCalibrationRun,
+  judgeBreakEven,
+  judgeBreakEvenEvent,
+  judgeBreakEvenLine,
+  readCalibrationRuns,
+  renderCalibrationReport,
+  runCalibration,
+  splitCalibrationArms,
+} from "./calibrate.js";
+export type {
+  CalibrationQuadrant,
+  CalibrationReport,
+  CalibrationRow,
+  CalibrationRun,
+  CallTokenEstimate,
+  JudgeBreakEven,
+  JudgeBreakEvenInput,
+  ModelRates,
+  PricedModel,
+} from "./calibrate.js";
 export { fuse } from "./fuse.js";
 export type { FuseOptions, FuseResult } from "./fuse.js";
 export {
@@ -32,7 +57,7 @@ export type {
   FusionPriority,
   FusionTaskClass,
 } from "./policy.js";
-export { runSynthesis } from "./synthesis.js";
+export { resolveSynthesiser, runSynthesis } from "./synthesis.js";
 export {
   defaultFusionLogPath,
   exportFusionRunArtifact,
@@ -55,8 +80,10 @@ export type {
   GateRun,
   RoleOutput,
   SynthesisArtifact,
+  SynthesisComparison,
   SynthesisDiscard,
   SynthesisDivergence,
+  SynthesisSideComparison,
 } from "./types.js";
 
 

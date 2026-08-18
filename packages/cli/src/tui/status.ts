@@ -16,8 +16,10 @@
  * `~/.openkai/config.json` (key `statusline.chips`). The StatusLine reads the
  * config at construction and on each update so changes take effect on the next
  * render. The configurable chips are: agent, model, session, tokens, persist,
- * provider, state. The bash-mode `$` and autonomy `a:` chips are contextual
- * and always shown when active (they are not in the configurable set).
+ * provider, state. The bash-mode `$`, autonomy `a:`, and routed-tier `t:` chips
+ * are contextual and always shown when active (they are not in the
+ * configurable set). The tier chip (E017 S1, OK-9.7) shows the shift router's
+ * current tier and flashes `eff▸cap` on a transition.
  *
  * Updates arrive via {@link StatusState} mutations driven by the transport
  * event stream (usage at `turn_end`, turn state from deltas/turn_end).
@@ -26,7 +28,7 @@
 import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
-import type { UsageSnapshot } from "@kaidera/openkai-core";
+import type { UsageSnapshot, Tier } from "@kaidera/openkai-core";
 import {
   type StatuslineChip,
   readStatuslineChips,
@@ -75,6 +77,19 @@ export interface StatusState {
   ctxPercent?: number;
   /** Cline's Plan mode active (read-only). */
   plan?: boolean;
+  /**
+   * The routed tier for the current stage (E017 S1, OK-9.7 trust surface).
+   * Absent until the first tier-aware routing event arrives — the chip is
+   * contextual (same grammar as the bash `$` / autonomy chips): no routing,
+   * no chip.
+   */
+  tier?: Tier;
+  /**
+   * The previous tier while the transition flash is live — the chip renders
+   * `t:eff▸cap` (attention accent) until the flash window closes, then
+   * settles to the muted `t:cap`.
+   */
+  tierFrom?: Tier;
 }
 
 /** Default chrome state for a fresh session. */
@@ -94,6 +109,25 @@ export function defaultStatusState(modelId: string, sessionId: string, persistMo
     awaitingApproval: false,
     attention: false,
   };
+}
+
+/** Short tier labels for the chip (fixed width so flips never reflow the chrome). */
+const TIER_SHORT: Record<Tier, string> = { efficient: "eff", capable: "cap" };
+
+/**
+ * The routed-tier chip (E017 S1, OK-9.7: operators tolerate routing they can
+ * see). At rest: muted `t:cap`. During the transition flash after a flip:
+ * attention-accented `t:eff▸cap` — the same glanceable transition grammar the
+ * E015 review specified (`tier:eff▸cap`).
+ */
+function tierChip(state: StatusState): string {
+  const tier = state.tier;
+  if (tier === undefined) return "";
+  const from = state.tierFrom;
+  if (from !== undefined && from !== tier) {
+    return highlight.attention(`t:${TIER_SHORT[from]}▸${TIER_SHORT[tier]}`);
+  }
+  return textToken.muted(`t:${TIER_SHORT[tier]}`);
 }
 
 const BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -177,9 +211,10 @@ export class StatusLine implements Component {
     const left = active.filter(([chip]) => !RIGHT_CHIPS.includes(chip)).map(([, s]) => s);
     const right = active.filter(([chip]) => RIGHT_CHIPS.includes(chip)).map(([, s]) => s);
 
-    // Contextual chips (not configurable): bash mode + autonomy.
+    // Contextual chips (not configurable): bash mode + autonomy + routed tier.
     if (this.state.mode === "bash") left.push(highlight.base("$"));
     if (this.state.autonomy) left.push(textToken.muted(`a:${this.state.autonomy}`));
+    if (this.state.tier) left.push(tierChip(this.state));
 
     const leftText = left.join(` ${sep} `);
     const rightText = right.join(` ${sep} `);
