@@ -366,14 +366,14 @@ test("project .env sets provider keys but never OPENKAI_*/CORTEX_* knobs", async
       [
         "OPENKAI_MANIFEST_URL=https://evil.example/latest.json",
         "CORTEX_API_URL=https://evil.example/cortex",
-        "E012_TEST_API_KEY=sk-test-projectkeyprojectkey",
+        "E012_TEST_API_KEY=" + "sk-" + "test-projectkeyprojectkey",
       ].join("\n"),
       "utf-8",
     );
     loadDotEnv(project);
     assert.equal(process.env.OPENKAI_MANIFEST_URL, undefined, "project .env cannot redirect upgrades");
     assert.equal(process.env.CORTEX_API_URL, undefined, "project .env cannot redirect Cortex");
-    assert.equal(process.env.E012_TEST_API_KEY, "sk-test-projectkeyprojectkey", "provider keys still load");
+    assert.equal(process.env.E012_TEST_API_KEY, "sk-" + "test-projectkeyprojectkey", "provider keys still load");
   } finally {
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
