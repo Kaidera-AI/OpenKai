@@ -1,13 +1,46 @@
 # OpenKai Program — Progress Ledger
 
 **Program:** OpenKai v1 — standalone open-source agent harness + TUI with Cortex memory and fusion
-**Product ADR:** `research/2026-08-14-openkai-harness-tui-ADR.md` (ratified 2026-08-14, D1–D5)
+**Product ADR:** `research/2026-08-14-openkai-harness-tui-ADR.md` (ratified 2026-08-14, D1–D5) · OK-9 `research/2026-08-18-shift-fusion-orchestration-ADR.md` (ratification requested 2026-08-18)
 **Ledger owner:** kai@openkai (lead) · PM hygiene: beat@openkai
-**Updated:** 2026-08-16
+**Updated:** 2026-08-19 (ren@openkai — full inventory + E017 epic)
 
 ---
 
 ## Release plan
+
+**Current epic: E017 — Orchestration Composition (v0.1.007).** Spec: `Program/Release_v0.1.007/E017_ORCHESTRATION_COMPOSITION/EPIC_SPEC.md` (opened 2026-08-19, ren@openkai). Goal: wire the composition the research proves — shift predicts, fusion multiplies, the gate verifies, outcomes teach the router — and make it visible in the TUI. 10 increments (TUI visibility slice → orchestration facade → operator priorities → cascade completion → compaction switch → reward loop → synthesis upgrade → calibration harness → release-key signing → release with adversarial gate).
+
+| Sprint | Window | Contents | Exit | Status |
+|---|---|---|---|---|
+| S1 | 2026-08-15 | Inc 01 (P1 scaffold), Inc 02 (P2 agent loop) | Cortex client + single-lane loop live, sessions in Cortex | **DONE** |
+| S2 | 2026-08-15 → 08-16 | Inc 03 (P4a TUI shell), Inc 04 (P3 fusion core) | TUI runs the loop; fusion panel+synthesis+gate offline-proven | **DONE** |
+| S3 | 2026-08-17 | Inc 05 (P4b TUI ergonomics) | Permission engine, undo, attention, identity in TUI | **DONE** (landed early, 08-15) |
+| S4 | 2026-08-18 | Inc 06 (P3b fusion telemetry + invocation policy) | Fusion measured, selectively invoked | **DONE** (landed early, `ae1f71d`) |
+| S5 | 2026-08-19 | Inc 07 (P5 learning loops), Inc 08 (P6 packaging) | v1 release: npm + binaries + auto-upgrade + docs | **DONE** — superseded by the E002 line below |
+| E002 | 2026-08-16 → 08-18 | Fusion-first UX (casts, shift router, welcome, parity, capability mgmt, brand) | v0.1.005 shipped | **DONE** |
+| E012–E016 | 2026-08-18 | Adversarial reviews + fixes + research round 2 + release engineering | 0.1.6 on release/0.1.007 | **DONE** (below) |
+| E017 | 2026-08-19 → | Orchestration composition | v0.1.007 | **OPEN** |
+
+## 2026-08-18 inventory (ren@openkai — what actually exists)
+
+**Research base (all in `research/`):** round 1 six-findings + ratified ADR; round 1.5 droid bar; round 2 deep dive (34+ sources): what Switchyard is based on (arXiv:2603.20895 prefill router, unshipped; shipped routers are SWE-Bench-Pro-calibrated heuristics), the routing/fusion literature distilled to 10 laws; **OK-9 ADR** (shift/fusion composition + OK-9.7 operator priorities); E015 integration review (S1–S5 landing order); kai's KOS capability document.
+
+**E012 adversarial review (0.1.5 surface) — 55 findings, all fixed** (`dc1aa32`, `b50232d`): hashline gate bypass; upgrade `.env` RCE chain; MCP merge+gate+scrubbed env; persistent OAuth store; session resume; error events; TUI sanitiser gaps; gate liveness (rejectAll, abort, timeouts); deny floor extension; hub/config/upgrade hardening. Pins: `security-repro-e012.test.ts`.
+
+**E013 (CTO):** release-control SOP — no public release without explicit consent; `docs/RELEASE_SOP.md`.
+
+**E014/E015 machinery (kai, on release/0.1.007):** Switchyard tier scorer port; routeWithTier; modality routing; task outputSchema + stage-routed children; connectors + bridge --listen; fusion dashboard; KOS capability doc.
+
+**K3 adversarial review (ren, handoff b27bc40f) — 28 findings, all fixed** (`8089ec1..ea7176a`): bridge retry multiplication + full listener hardening; stage-resolution provider fix; tier-scorer calibration fidelity (5 sub-findings); task lifecycle races; telemetry dashboard + rotation; pins: `k3-e015-repro.test.ts`. 263/263 + audit PASSED.
+
+**E016 (CTO):** signed release channel — SLSA provenance attestations on CI-built binaries; Homebrew trust documented.
+
+**0.1.6 (ren, `fb41138`):** keyless boot contract (TUI never blocks on credentials; sign-in in-shell); single-key provider fallback; catalogue-derived model defaults; credential-store unification across all call sites.
+
+**Composition gap (the reason E017 exists):** the machinery is certified but callerless — routeWithTier has no production caller, the bandit never reads gate outcomes back, compaction never re-evaluates, fusion halt doesn't escalate, and the TUI renders none of it. E017 inc 01–06 close exactly this.
+
+## Historic ledger (E001 line, 2026-08-15/16)
 
 | Sprint | Window | Contents | Exit | Status |
 |---|---|---|---|---|
