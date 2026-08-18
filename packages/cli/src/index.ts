@@ -27,6 +27,17 @@ import { runSkillsAdd, runSkillsBind, runSkillsList, runSkillsRemove } from "./s
 import { runMcpAdd, runMcpList, runMcpRemove, runMcpTest } from "./mcp.js";
 import { runStatusline } from "./statusline.js";
 import { CLI_VERSION } from "./version.js";
+import { createServer, type ServerResponse } from "node:http";
+import { classifyConnectorPayload } from "./connectors.js";
+import {
+  allowedHostsFor,
+  bearerDigest,
+  bearerMatches,
+  BodyTooLargeError,
+  isLoopbackHost,
+  readBody,
+  urlHost,
+} from "./http-common.js";
 
 // .env from the current directory loads before any command resolves config;
 // real environment variables always win over file values.
@@ -459,56 +470,113 @@ async function main(argv: string[]): Promise<number> {
     const parsed = parseBoundedInt("--port", portRaw, 1, 65535);
     if (typeof parsed === "string") return fail(parsed);
     const port = parsed;
+    // The hub the bridge relays to (loopback only; --hub-host for an
+    // IPv6-bound hub — K3: the hardcoded 127.0.0.1 502'd against ::1 hubs).
+    const hubHostRaw = getString("--hub-host") ?? "127.0.0.1";
+    if (!isLoopbackHost(hubHostRaw)) return fail(`bridge --hub-host must be loopback (${hubHostRaw})`);
+    const hubBase = `http://${urlHost(hubHostRaw)}:${port}`;
     // --listen: run a loopback webhook receiver (Slack/Telegram payloads)
     // and relay normalised prompts into the hub. The sender must present the
-    // hub bearer token, so an open port can never inject prompts.
+    // hub bearer token, so an open port can never inject prompts. Acks are
+    // FAST (Slack retries at 3s) and deliveries deduped by event id — a
+    // retry must never spawn a second paid turn (K3).
     if (getBool("--listen")) {
-      const { createServer } = await import("node:http");
-      const { normaliseConnectorPayload } = await import("./connectors.js");
-      const server = createServer(async (req, res) => {
-        if (req.method !== "POST") {
-          res.writeHead(405, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "method not allowed" }));
-          return;
-        }
-        if (req.headers.authorization !== `Bearer ${token}`) {
-          res.writeHead(401, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "unauthorized" }));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        req.on("data", (c) => chunks.push(c));
-        await new Promise<void>((resolve) => req.on("end", resolve));
-        let text: string | undefined;
-        try {
-          text = normaliseConnectorPayload(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
-        } catch {
-          text = undefined;
-        }
-        if (!text) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "no prompt text in payload" }));
-          return;
-        }
-        try {
-          const upstream = await fetch(`http://127.0.0.1:${port}/prompt`, {
-            method: "POST",
-            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-            body: JSON.stringify({ text }),
-          });
-          const body = (await upstream.json()) as { sessionId?: string; error?: string };
-          res.writeHead(upstream.status, { "content-type": "application/json" });
-          res.end(JSON.stringify(body));
-        } catch (error) {
-          res.writeHead(502, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
-        }
-      });
+      const tokenHash = bearerDigest(token);
       const listenPortRaw = getString("--listen-port") ?? "8788";
       const listenPort = parseBoundedInt("--listen-port", listenPortRaw, 1, 65535);
       if (typeof listenPort === "string") return fail(listenPort);
+      const allowedHosts = allowedHostsFor(listenPort);
+
+      const json = (res: ServerResponse, status: number, body: unknown): void => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      };
+
+      // Delivery dedup: event id → expiry. Small TTL map; Slack retries land
+      // within seconds, Telegram edits within minutes.
+      const seen = new Map<string, number>();
+      const DEDUP_TTL_MS = 15 * 60 * 1000;
+      const isDuplicate = (eventId: string | undefined): boolean => {
+        if (eventId === undefined) return false;
+        const now = Date.now();
+        for (const [id, expiry] of seen) {
+          if (expiry <= now) seen.delete(id);
+        }
+        if (seen.has(eventId)) return true;
+        seen.set(eventId, now + DEDUP_TTL_MS);
+        return false;
+      };
+
+      /** Fire-and-forget relay into the hub; failures log to stderr only. */
+      const relay = (text: string): void => {
+        void fetch(`${hubBase}/prompt`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text }),
+        }).catch((error: unknown) => {
+          process.stderr.write(`bridge relay failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        });
+      };
+
+      const server = createServer(async (req, res) => {
+        // DNS-rebinding guard, same as the hub's.
+        const reqHost = req.headers.host;
+        if (!reqHost || allowedHosts[reqHost] !== true) {
+          json(res, 403, { error: "forbidden host — loopback only" });
+          return;
+        }
+        if (req.method === "GET" && req.url === "/health") {
+          json(res, 200, { ok: true });
+          return;
+        }
+        if (req.method !== "POST") {
+          json(res, 405, { error: "method not allowed" });
+          return;
+        }
+        let rawBody: string;
+        try {
+          rawBody = await readBody(req);
+        } catch (error) {
+          if (error instanceof BodyTooLargeError) {
+            json(res, 413, { error: "payload too large — body cap is 1 MiB" });
+            return;
+          }
+          json(res, 400, { error: "failed to read request body" });
+          return;
+        }
+        let payload: unknown;
+        try {
+          payload = JSON.parse(rawBody);
+        } catch {
+          json(res, 400, { error: "invalid JSON body" });
+          return;
+        }
+        const event = classifyConnectorPayload(payload);
+        // Slack's handshake arrives WITHOUT the bearer — answer it pre-auth.
+        if (event.kind === "challenge") {
+          json(res, 200, { challenge: event.challenge });
+          return;
+        }
+        if (!bearerMatches(req.headers.authorization, tokenHash)) {
+          json(res, 401, { error: "unauthorized" });
+          return;
+        }
+        if (event.kind === "ignore") {
+          json(res, 200, { ok: true, ignored: true });
+          return;
+        }
+        if (isDuplicate(event.eventId)) {
+          json(res, 200, { ok: true, deduped: true });
+          return;
+        }
+        // Ack fast; the agent turn runs async. The webhook caller gets the
+        // receipt, not the result (results arrive in-channel per connector).
+        json(res, 200, { ok: true, relayed: true });
+        relay(event.text);
+      });
+      server.requestTimeout = 30_000;
       await new Promise<void>((resolve) => server.listen(listenPort, "127.0.0.1", resolve));
-      process.stderr.write(`openkai bridge listening on http://127.0.0.1:${listenPort} (Slack/Telegram payloads, token-gated)\n`);
+      process.stderr.write(`openkai bridge listening on http://127.0.0.1:${listenPort} (Slack/Telegram payloads, token-gated, deduped)\n`);
       await new Promise<void>((resolve) => {
         process.once("SIGINT", () => server.close(() => resolve()));
         process.once("SIGTERM", () => server.close(() => resolve()));
@@ -521,7 +589,7 @@ async function main(argv: string[]): Promise<number> {
       const text = line.trim();
       if (!text) return;
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/prompt`, {
+        const res = await fetch(`${hubBase}/prompt`, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
           body: JSON.stringify({ text }),

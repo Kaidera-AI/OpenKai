@@ -15,59 +15,30 @@
  *  - request bodies are capped at 1 MiB (413 beyond).
  */
 
-import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
 import { runChat } from "./chat.js";
+import {
+  allowedHostsFor,
+  bearerDigest,
+  bearerMatches,
+  BodyTooLargeError,
+  isLoopbackHost,
+  readBody,
+  urlHost,
+} from "./http-common.js";
 
 interface HubOptions {
   port: number;
   host?: string;
 }
 
-/** Request bodies are prompts, not files — 1 MiB is generous. */
-const MAX_BODY_BYTES = 1024 * 1024;
-
-class BodyTooLargeError extends Error {
-  override readonly name = "BodyTooLargeError";
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let overflow = false;
-  req.on("data", (c: Buffer) => {
-    size += c.length;
-    if (size > MAX_BODY_BYTES) {
-      if (!overflow) {
-        overflow = true;
-        reject(new BodyTooLargeError("request body exceeds 1 MiB"));
-      }
-      // Keep draining WITHOUT destroying the socket — destroying it here
-      // kills the connection before the 413 response can flush.
-      return;
-    }
-    chunks.push(c);
-  });
-  req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-  req.on("error", reject);
-  return promise;
-}
-
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, { "content-type": "application/json" });
   res.end(payload);
-}
-
-/** Timing-safe bearer compare: both sides hashed to fixed length first. */
-function bearerMatches(header: string | undefined, tokenHash: Buffer): boolean {
-  if (!header?.startsWith("Bearer ")) return false;
-  const presented = createHash("sha256").update(header.slice("Bearer ".length)).digest();
-  return timingSafeEqual(presented, tokenHash);
 }
 
 export async function runHub(options: HubOptions): Promise<number> {
@@ -78,20 +49,14 @@ export async function runHub(options: HubOptions): Promise<number> {
     );
     return 1;
   }
-  const tokenHash = createHash("sha256").update(token).digest();
+  const tokenHash = bearerDigest(token);
   const host = options.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+  if (!isLoopbackHost(host)) {
     process.stderr.write(`openkai serve: refusing non-loopback host ${host} (loopback only).\n`);
     return 1;
   }
-  // IPv6 literals need brackets in URLs.
-  const urlHost = host.includes(":") ? `[${host}]` : host;
   // DNS-rebinding guard: only the loopback hosts this hub binds, with port.
-  const allowedHosts: Record<string, true> = {
-    [`127.0.0.1:${options.port}`]: true,
-    [`localhost:${options.port}`]: true,
-    [`[::1]:${options.port}`]: true,
-  };
+  const allowedHosts = allowedHostsFor(options.port);
 
   const server = createServer(async (req, res) => {
     const reqHost = req.headers.host;
@@ -100,7 +65,7 @@ export async function runHub(options: HubOptions): Promise<number> {
       return;
     }
 
-    const url = new URL(req.url ?? "/", `http://${urlHost}:${options.port}`);
+    const url = new URL(req.url ?? "/", `http://${urlHost(host)}:${options.port}`);
     const authorized = bearerMatches(req.headers.authorization, tokenHash);
 
     if (req.method === "GET" && url.pathname === "/health") {
