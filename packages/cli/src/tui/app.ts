@@ -407,7 +407,8 @@ export class TuiController {
         this.openSettings();
         break;
       case "plan": {
-        this.planMode = !this.planMode;
+        this.transport.setPlanMode(!this.transport.planMode);
+        this.planMode = this.transport.planMode;
         this.status.update({ ...this.status.currentState, plan: this.planMode });
         this.transcript.addNotice(
           this.planMode

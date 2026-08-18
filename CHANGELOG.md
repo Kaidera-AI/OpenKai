@@ -2,6 +2,64 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.5] — v0.1.005 (the harness release: omp functionality, droid feel, Kaidera brand)
+
+Twenty-plus increments (E002–E011) fold the best of omp (functionality) and
+droid (look & feel) onto the Kaidera brand mark, per the CTO formula. The
+CLI and core bump to 0.1.5 in lockstep.
+
+### Brand & boot
+- **Kaidera hex-node mark** (ren): 15-line circuit hexagon for the splash,
+  sharp 8-line compact variant for the boot card; gradient engine lifted from
+  omp (5-stop truecolour diagonal gradient + shine traversals, 256-colour
+  fallback). Splash plays on **every** launch (any key skips; `openkai splash`
+  replays). Boot card: hex + wordmark + capability row + daily tip.
+- **Theme auto-detection** (OSC 11 query, COLORFGBG fallback, 150ms budget);
+  config `theme: auto|dark|light|<pack>`.
+
+### TUI / settings
+- **`/settings` vs `/setup` split**: six-tab config panel (appearance /
+  providers / model / interaction / memory / features) with status-line
+  presets; `/setup` opens onboarding (provider sign-in). `/welcome` removed.
+- **In-TUI sign-in**: OAuth device-flow overlay (Claude Pro/Max, Codex, Kimi,
+  Copilot) + key-entry overlay writing `~/.openkai/.env` (0600). No hand-editing.
+- **Two-sided status line** (omp footer layout): brand glyph + agent +
+  provider + `git:<branch>` + persist + session + state + `plan` + `ctx:%`
+  left, tokens + model right; presets default/minimal/compact/full.
+- **Opaque overlays** (no transcript bleed), `/model` five-level picker
+  (provider→model→effort→partner-provider→partner-model) with ctx+cost
+  columns, `/models` fullscreen hub (recent/all/per-provider scopes).
+- **`/autonomy` picker**, **`/plan`** (Cline Plan/Act: read-only at the gate),
+  **`/goal`** lifecycle, **`.`** keep-going, **Ctrl+R** history search.
+
+### Context & memory
+- **`/compact` `/shake` `/clear` `/context` `/stats`** operate on the real
+  conversation via `transport.getMessages/setMessages/getContextWindow`.
+- **Auto-compact** (OpenCode): elide the middle at 80% context (feature-gated).
+- **`/memory`**: shared multi-agent, multi-instance project memory
+  (`.openkai/memory/`), surfaced on boot; **`/init`** generates AGENTS.md.
+
+### Tools (6 → 12+)
+- `glob`, `web_fetch`, `todo`, **`hashline_edit`** (line-anchored structured
+  edits with content-hash staleness validation), **`task`** (read-only
+  subagent), **`lsp`** (symbol-aware code intelligence), **MCP** proxy
+  (`~/.openkai/mcp.json`, JSON-RPC over stdio).
+
+### Hub & connectors
+- **`openkai serve`**: loopback-only HTTP hub (refuses non-loopback hosts and
+  starts only with `OPENKAI_HUB_TOKEN`); `POST /prompt` bearer-gated, read
+  endpoints token-free on loopback. **`openkai bridge`**: pipe-line chat
+  connector relaying into the hub.
+
+### Security posture (ahead of the K3 adversarial pass)
+- Verified invariants: cwd containment, `.env`/`.ssh` deny floor on read AND
+  write, hashline stale-tag refusal, `bash` never auto-allowed, hub read-only
+  by construction. 225/225 green.
+
+### Packaging
+- npm: `@kaidera/openkai@0.1.5` + `@kaidera/openkai-core@0.1.5` (dist-tag
+  `latest`), release tag `v0.1.005`. Standalone binaries rebuilt.
+
 ## [0.1.4] — Inc 09 parity pack (TUI liveness + activity feed)
 
 Publishes the unpublished Inc 09 delta that main carried under the stale 0.1.3

@@ -145,6 +145,10 @@ export class InProcessTransport implements SessionTransport {
   private readonly cwd: string;
   private readonly mutationHooks: MutationHooks | undefined;
   private readonly onActivity: ((event: SessionEvent) => void) | undefined;
+  /** Stored tool sets for plan/act mode switching (E010). */
+  private readonly fullTools: AgentTool<any>[];
+  private readonly readOnlySet: AgentTool<any>[];
+  private _planMode = false;
 
   /** Stamp + push a permission_request event onto the session queue. */
   private emitPermissionEvent(e: PermissionRequestPayload): void {
@@ -204,6 +208,8 @@ export class InProcessTransport implements SessionTransport {
         }
       : undefined;
     const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, this.mutationHooks, options.modelId) : readOnlyTools(options.cwd));
+    this.fullTools = tools;
+    this.readOnlySet = readOnlyTools(options.cwd);
     const systemPrompt =
       options.systemPrompt ??
       (this.gate
@@ -250,6 +256,15 @@ export class InProcessTransport implements SessionTransport {
     });
   }
 
+  /** Whether plan mode is active (read-only tools only). */
+  get planMode(): boolean { return this._planMode; }
+
+  /** Toggle plan mode: swaps the agent's tool set between full and read-only. */
+  setPlanMode(on: boolean): void {
+    if (this._planMode === on) return;
+    this._planMode = on;
+    this.agent.state.tools = on ? [...this.readOnlySet] : [...this.fullTools];
+  }
   /** The active model id (mutable: `/model` switches mid-session). */
   get modelId(): string {
     return this.currentModelId;

@@ -181,6 +181,10 @@ export interface SessionTransport {
   /** The active model's context window (tokens), or 0 when unknown. */
   getContextWindow(): number;
   close(): Promise<void>;
+  /** Cline's Plan mode: read-only tools only (E010). */
+  readonly planMode: boolean;
+  /** Toggle plan mode on/off. */
+  setPlanMode(on: boolean): void;
 }
 
 /** Options shared by transport constructors. */
