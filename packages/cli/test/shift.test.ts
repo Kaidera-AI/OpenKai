@@ -1101,14 +1101,16 @@ test("modality: image tasks filter to vision-capable models", () => {
     { id: "vision", input: ["text", "image"] as const },
   ];
   const got = filterByModality(models, ["image"]);
-  assert.equal(got.length, 1);
-  assert.equal(got[0]!.id, "vision");
-  assert.ok(isVisionCapable(got[0]!.input));
+  assert.equal(got.models.length, 1);
+  assert.equal(got.models[0]!.id, "vision");
+  assert.equal(got.fellBack, false);
+  assert.ok(isVisionCapable(got.models[0]!.input));
 });
 
-test("modality: fail-open when no model matches (never refuse the task)", () => {
+test("modality: fail-open when no model matches (never refuse the task, but labelled)", () => {
   const models = [{ id: "text-only", input: ["text"] as const }];
   const got = filterByModality(models, ["image"]);
-  assert.equal(got.length, 1);
-  assert.equal(got[0]!.id, "text-only");
+  assert.equal(got.models.length, 1);
+  assert.equal(got.models[0]!.id, "text-only");
+  assert.equal(got.fellBack, true, "the caller learns the filter was exhausted");
 });
