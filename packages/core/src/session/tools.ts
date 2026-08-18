@@ -28,6 +28,7 @@ import type { PermissionPreview } from "./transport.js";
 import { floorDeny, resolveCanonical } from "./permissions.js";
 import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
 import { hashlineEditTool } from "./hashline.js";
+import { taskTool } from "./task.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
 function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
@@ -590,10 +591,11 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
 }
 
 /**
- * The full P4b tool set: read trio + gated write/edit/bash, bound to a cwd and
- * a {@link PermissionGate}. Used by the TUI; `openkai chat` keeps
- * {@link readOnlyTools} (v1-compat — no approval channel in print mode).
+ * The full P4b tool set (E008: + glob/web_fetch/todo/hashline_edit/task),
+ * bound to a cwd and a {@link PermissionGate}. Used by the TUI;
+ * `openkai chat` keeps {@link readOnlyTools}.
  */
-export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks): AgentTool<any>[] {
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string): AgentTool<any>[] {
+  const childModel = modelId ?? "openrouter/google/gemini-2.5-flash-lite";
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), taskTool(cwd, childModel), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }

@@ -203,12 +203,12 @@ export class InProcessTransport implements SessionTransport {
           },
         }
       : undefined;
-    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, this.mutationHooks) : readOnlyTools(options.cwd));
+    const tools = options.tools ?? (this.gate ? gatedTools(options.cwd, this.gate, this.mutationHooks, options.modelId) : readOnlyTools(options.cwd));
     const systemPrompt =
       options.systemPrompt ??
       (this.gate
-        ? "You are OpenKai, a helpful coding assistant. You can read files (read_file, list_files, grep), edit files (write_file, edit_file), and run shell commands (bash). File edits and shell commands require operator approval — if one is denied, report that to the user rather than retrying."
-        : "You are OpenKai, a helpful coding assistant. Use the read-only tools (read_file, list_files, grep) when asked to inspect files.");
+        ? "You are OpenKai, a helpful coding assistant. Read tools: read_file, list_files, grep, glob, web_fetch. Memory: todo (shared project task list). Structured edits: hashline_edit (read then PUT/CUT by line). Delegation: task (read-only subagent). Mutations: write_file, edit_file, bash — these require operator approval; if denied, report it rather than retrying."
+        : "You are OpenKai, a helpful coding assistant. Read-only tools: read_file, list_files, grep, glob, web_fetch, todo. Use them to inspect files when asked.");
 
     this.agent = new Agent({
       sessionId: options.sessionId,
