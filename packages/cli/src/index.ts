@@ -459,6 +459,62 @@ async function main(argv: string[]): Promise<number> {
     const parsed = parseBoundedInt("--port", portRaw, 1, 65535);
     if (typeof parsed === "string") return fail(parsed);
     const port = parsed;
+    // --listen: run a loopback webhook receiver (Slack/Telegram payloads)
+    // and relay normalised prompts into the hub. The sender must present the
+    // hub bearer token, so an open port can never inject prompts.
+    if (getBool("--listen")) {
+      const { createServer } = await import("node:http");
+      const { normaliseConnectorPayload } = await import("./connectors.js");
+      const server = createServer(async (req, res) => {
+        if (req.method !== "POST") {
+          res.writeHead(405, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "method not allowed" }));
+          return;
+        }
+        if (req.headers.authorization !== `Bearer ${token}`) {
+          res.writeHead(401, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "unauthorized" }));
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on("data", (c) => chunks.push(c));
+        await new Promise<void>((resolve) => req.on("end", resolve));
+        let text: string | undefined;
+        try {
+          text = normaliseConnectorPayload(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
+        } catch {
+          text = undefined;
+        }
+        if (!text) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "no prompt text in payload" }));
+          return;
+        }
+        try {
+          const upstream = await fetch(`http://127.0.0.1:${port}/prompt`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+            body: JSON.stringify({ text }),
+          });
+          const body = (await upstream.json()) as { sessionId?: string; error?: string };
+          res.writeHead(upstream.status, { "content-type": "application/json" });
+          res.end(JSON.stringify(body));
+        } catch (error) {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
+      });
+      const listenPortRaw = getString("--listen-port") ?? "8788";
+      const listenPort = parseBoundedInt("--listen-port", listenPortRaw, 1, 65535);
+      if (typeof listenPort === "string") return fail(listenPort);
+      await new Promise<void>((resolve) => server.listen(listenPort, "127.0.0.1", resolve));
+      process.stderr.write(`openkai bridge listening on http://127.0.0.1:${listenPort} (Slack/Telegram payloads, token-gated)\n`);
+      await new Promise<void>((resolve) => {
+        process.once("SIGINT", () => server.close(() => resolve()));
+        process.once("SIGTERM", () => server.close(() => resolve()));
+      });
+      return 0;
+    }
     const { createInterface } = await import("node:readline");
     const rl = createInterface({ input: process.stdin });
     rl.on("line", async (line) => {
