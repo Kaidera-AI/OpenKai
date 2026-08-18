@@ -67,7 +67,7 @@ const DECLARED_RELEASE_KEY: string | undefined =
     ? (OPENKAI_RELEASE_KEY as string)
     : undefined;
 
-export const DEFAULT_MANIFEST_URL = "https://openkai.dev/releases/latest.json";
+export const DEFAULT_MANIFEST_URL = "https://github.com/Kaidera-AI/OpenKai/releases/latest/download/latest.json";
 
 export const KILL_SWITCH_ENV = "OPENKAI_AUTO_UPDATE_ENABLED";
 export const CHANNEL_ENV = "OPENKAI_CHANNEL";
