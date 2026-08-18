@@ -21,7 +21,7 @@ import {
   type ShiftInput,
   type StageConfig,
 } from "./stages.js";
-import { decideTier } from "./tier.js";
+import { decideTier, type Tier, type TierDecisionSource, type TierInput } from "./tier.js";
 import {
   createRedactingSink,
   type ActivitySink,
@@ -432,13 +432,21 @@ export function shiftRoute(
  * The decision carries its `source` (override | tests_passed | dimensions |
  * fall_open) onto the activity feed — Switchyard's observability discipline.
  * Pure over the provided signals; no model call on the hot path.
+ *
+ * The fall-open default tier is per stage (K3): plan/review fall open to the
+ * CAPABLE member (their cast roles are the strong models — an ambiguous
+ * signal must not silently cheapen an architecture turn); build falls open
+ * to efficient. Callers override via `defaultTier` (the OK-9.7 posture dial
+ * plugs in there). NOTE: this is the pure decision seam — it does not run
+ * ShiftRouter's budget guard or fallback chain; production wiring goes
+ * through the orchestration facade (OK-9 W2/W3), not this preview helper.
  */
 export interface TierRouteResult {
   stage: Stage;
-  tier: "efficient" | "capable";
+  tier: Tier;
   model: string;
   provider: string;
-  source: string;
+  source: TierDecisionSource;
   score: number;
   reason: string;
 }
@@ -446,16 +454,25 @@ export interface TierRouteResult {
 export interface TierRouteOptions {
   stageConfig?: StageConfig;
   onActivity?: ActivitySink;
+  /** Override the fall-open tier (default: per stage — plan/review capable, build efficient). */
+  defaultTier?: Tier;
 }
+
+/** The stage's resting tier when no signal speaks (K3: plan/review are capable-resting). */
+const STAGE_DEFAULT_TIER: Record<Stage, Tier> = {
+  plan: "capable",
+  build: "efficient",
+  review: "capable",
+};
 
 export function routeWithTier(
   input: ShiftInput,
-  signals: import("./tier.js").TierInput,
+  signals: TierInput,
   options: TierRouteOptions,
   tiers: { efficient: FallbackTarget; capable: FallbackTarget },
 ): TierRouteResult {
   const stage = classifyStage(input, options.stageConfig);
-  const decision = decideTier(signals, "efficient");
+  const decision = decideTier(signals, options.defaultTier ?? STAGE_DEFAULT_TIER[stage]);
   const pick = decision.tier === "capable" ? tiers.capable : tiers.efficient;
   const sink = options.onActivity ? createRedactingSink(options.onActivity) : undefined;
   sink?.({
