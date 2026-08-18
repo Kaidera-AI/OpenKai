@@ -82,13 +82,28 @@ Three rules make this evidence-true rather than aspirational:
 - Honesty discipline (standing rule): every routing/fusion performance claim ships with its reproducer.
 
 ### OK-9.6 — what we deliberately do NOT build
-
 1. **No prefill/hidden-state routing.** Requires owning the serving stack (vLLM connector); NVIDIA itself ships only the notes. Revisit if we ever self-serve models.
 2. **No RouteLLM-style semantic/text-embedding router as the primary signal.** NVIDIA's own paper shows semantic features can't capture intrinsic difficulty; behavioural signals dominate for agents.
 3. **No panels >3, no debate/vote consensus for code, no raw-concat synthesis** (ReM-MoA's −9.1pp failure mode).
 4. **No model call on the routing hot path** (OK-9.4), and **no `capable_first` equivalent default** until our own quadrant calibration supports it (Switchyard leaves it unbenchmarked; we inherit the caution).
 5. **No weight-level fusion** (FuseLLM): training-run machinery for lab settings; inference-time fusion matches its gains with none of the infra.
 6. **No coupling-blind tuning**: stage→tier assignments are tuned as joint combinations (AgentOpt's coupling warning), not per-stage independently.
+
+### OK-9.7 — Operator priorities: postures and pins, not raw thresholds (CTO request, 2026-08-18)
+
+The user owns the cost↔quality exchange rate — the whole routing literature is that trade-off (RouteLLM's α; BaRP's test-time preference vector; Avengers-Pro's performance/efficiency weight), and Switchyard forces the question by making `confidence_threshold` required with no default. But raw numeric thresholds are calibrated artefacts (OK-9.5), not user input — so the operator surface is two layers:
+
+1. **Posture dial — `shift.posture: quality | balanced | saver`** (default `balanced`). Maps to picker default + calibrated threshold preset: `saver` = efficient-first posture with a lower escalation bar; `quality` = capable-biased. Settable in `/settings` (interaction tab, beside `/autonomy`) and per session via `/shift`. This is the same UX grammar as the autonomy picker.
+2. **Hard pins (deterministic; always beat the learned layer — FU-4 discipline):**
+   - **Floor pins** (`shift.pin.<stage> = capable`): a stage never routes below the pinned tier. Safe direction only — escalation past a floor is always allowed.
+   - **Ceiling pins** (`shift.ceiling = efficient`): never escalate, *including* critical-error/compaction overrides — the documented batch/CI cost-certainty posture. Loud warning when set: the user is accepting quality loss for a hard cost bound.
+   - **Denylists** (`shift.never = [provider/model…]`) and the existing `BudgetConfig` caps.
+
+**Precedence (one line):** pin → override signals (critical/compaction, unless a ceiling pin suppresses them) → posture threshold → bandit prior → stage default.
+
+**Trust requirement:** every routed turn logs its rationale (model, tier, decision_source, one-line reason — Switchyard's `x-model-router-rationale` shape) to the activity feed; `/shift` shows the session's routing ledger. Operators tolerate routing they can inspect and fight routing they can't.
+
+**Accepted interplay risk:** a pinned stage starves the bandit of signal for that stage (priors freeze there). Accepted by construction — a pinned stage has exited the learned loop.
 
 ## 3. Consequences
 
@@ -113,5 +128,6 @@ Three rules make this evidence-true rather than aspirational:
 | OK9-W5 | Bandit reward = gate outcome; priors feed shift tier defaults per (stage × bucket) | W3 |
 | OK9-W6 | Calibration harness: quadrant runner + `research/calibration/` records; threshold sweep; CPT/APGR reporter | W1–W5 running |
 | OK9-W7 | Judge break-even meter on the activity feed | W3 |
+| OK9-W8 | Operator priorities: `shift.posture` config + `/shift` live command + floor/ceiling pins + denylist, per OK-9.7 precedence; routing rationale ledger on the activity feed | W1, W2 |
 
-W1–W5 are the next epic's core; W6–W7 are its acceptance evidence.
+W1–W5 are the next epic's core; W6–W7 are its acceptance evidence; W8 ships with the posture presets locked to W6's calibrated thresholds.
