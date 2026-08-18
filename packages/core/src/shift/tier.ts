@@ -35,6 +35,8 @@ export interface ToolSignal {
   tool: string;
   /** First ~500 chars of the tool result text (for pattern matching). */
   resultText: string;
+  /** The command text for bash calls (enables write-bucketing, K3). */
+  command?: string;
   /** Non-zero exit / isError flag when known. */
   isError?: boolean;
 }
@@ -61,23 +63,57 @@ const CRITICAL_PATTERNS = [
 
 const HARD_PATTERNS = [
   /Traceback \(most recent call last\)/i,
-  /ImportError/i,
-  /ModuleNotFoundError/i,
-  /ValueError/i,
-  /SyntaxError/i,
-  /TypeError/i,
+  // Structural error names — any CamelCase *Error/*Exception (AssertionError,
+  // KeyError, RuntimeError, …), not an enumerated handful (K3: pytest's
+  // AssertionError evaded the list AND the lowercase /error(s)?/ literal).
+  /\b\w*(?:Error|Exception)\b/,
   /command not found/i,
   /No such file or directory/i,
   /file does not exist/i,
   /timed? ?out/i,
-  /permission denied/i,
 ];
 
-const TEST_PASS_PATTERNS = [/\bpass(ed|es)?\b/i, /\ball tests pass\b/i, /✔/, /\bOK\b/];
-const TEST_FAIL_LITERALS = [/\bfail(ed|s|ures)?\b/i, /✖/, /\berror(s)?\b/i];
+/**
+ * The gate's refusal prefix. An operator rejecting a permission request is the
+ * consent layer working, not tool friction — scoring it as severity would
+ * escalate turns precisely because the operator said no (K3).
+ */
+const REFUSAL_PREFIX = /^\s*permission denied:/i;
+
+const SOFT_PATTERNS = [
+  // Plain non-zero exit with no harder pattern (Switchyard: SOFT 0.3 — the
+  // 0.5 threshold was calibrated against it; mapping these to HARD shifted
+  // the operating point upward).
+  /exit(ed)? (code )?[1-9]/i,
+  /permission denied/i, // OS-level EACCES inside command output (gate refusals are stripped first)
+];
+
+// Pass/fail evidence (K3 fidelity fixes): 'failing'/'passing' forms matched
+// (mocha's canonical summary); Jest's ✕ (U+2715) alongside ✖; structural
+// *Error/*Exception names; negated passes stripped before the pass test so
+// 'did not pass' never reads as a pass. Bare 'OK' is NOT pass evidence.
+const TEST_PASS_PATTERNS = [/\bpass(ed|es|ing)?\b/i, /\ball tests pass\b/i, /[✔✓]/];
+const TEST_FAIL_LITERALS = [/\bfail(ed|s|ures|ing)?\b/i, /[✖✕✗✘]/, /\berror(s)?\b/i, /\b\w*(?:Error|Exception)\b/];
+const NEGATED_PASS_STRIP = /\b(did not pass|didn't pass|not passed|not passing)\b/gi;
+/** Non-global twin: /g makes .test() stateful (lastIndex alternation). */
+const NEGATED_PASS_TEST = /\b(did not pass|didn't pass|not passed|not passing)\b/i;
 const NONZERO_COUNT = /([1-9][0-9]*) (failed|failing|errors?)/i;
 
 const WRITE_TOOLS = new Set(["write_file", "edit_file", "hashline_edit", "write", "edit"]);
+
+/**
+ * Bash write patterns (Switchyard buckets these as production; without them a
+ * productive sed/redirect agent reads as "spinning", K3): output redirection,
+ * in-place editors, tee, and file moves/copies into the tree.
+ */
+const BASH_WRITE = /(>>?)|(\bsed\s+-i\b)|(\btee\b)|(\b(mv|cp|touch|mkdir)\b)/;
+
+/** True when the signal is a write-class operation. */
+function isProduction(s: ToolSignal): boolean {
+  if (WRITE_TOOLS.has(s.tool)) return true;
+  if (s.tool === "bash" && s.command !== undefined) return BASH_WRITE.test(s.command);
+  return false;
+}
 
 /** Window size (Switchyard: last 3 tool results). */
 const WINDOW = 3;
@@ -90,14 +126,14 @@ export const TIER_THRESHOLD = 0.5;
 export function windowSeverity(signals: ToolSignal[]): number {
   let severity = 0;
   for (const s of signals.slice(-WINDOW)) {
+    // Gate refusals are the consent layer working, not tool friction.
+    if (REFUSAL_PREFIX.test(s.resultText)) continue;
     if (CRITICAL_PATTERNS.some((p) => p.test(s.resultText))) {
       severity = Math.max(severity, SEVERITY.CRITICAL);
-    } else if (
-      s.isError ||
-      HARD_PATTERNS.some((p) => p.test(s.resultText)) ||
-      /exit(ed)? (code )?[1-9]/i.test(s.resultText)
-    ) {
+    } else if (HARD_PATTERNS.some((p) => p.test(s.resultText))) {
       severity = Math.max(severity, SEVERITY.HARD);
+    } else if (s.isError || SOFT_PATTERNS.some((p) => p.test(s.resultText))) {
+      severity = Math.max(severity, SEVERITY.SOFT);
     }
   }
   return severity;
@@ -108,7 +144,7 @@ export function windowSeverity(signals: ToolSignal[]): number {
 export function productionIntensity(signals: ToolSignal[]): number {
   const recent = signals.slice(-WINDOW);
   if (recent.length === 0) return 0;
-  const writes = recent.filter((s) => WRITE_TOOLS.has(s.tool)).length;
+  const writes = recent.filter(isProduction).length;
   return writes / recent.length;
 }
 
@@ -116,14 +152,16 @@ export function productionIntensity(signals: ToolSignal[]): number {
 export function testsPassed(signals: ToolSignal[]): boolean {
   const recent = signals.slice(-WINDOW);
   if (recent.length === 0) return false;
-  // Zero-count mentions ("0 failed") are guarded out before the fail-literal
-  // test — Switchyard's "0 failed" guard.
+  // Zero-count mentions ("0 failed") are guarded out before the literal tests
+  // (Switchyard's guard). Negated passes ("did not pass") count as FAILURE
+  // evidence — stripping them left "2 passed, 1 did not pass" reading as a
+  // pass (K3).
   const text = recent
     .map((s) => s.resultText)
     .join("\n")
     .replace(/\b0 (failed|failing|errors?)\b/gi, "");
-  const hasPass = TEST_PASS_PATTERNS.some((p) => p.test(text));
-  const hasFailLiteral = TEST_FAIL_LITERALS.some((p) => p.test(text));
+  const hasFailLiteral = TEST_FAIL_LITERALS.some((p) => p.test(text)) || NEGATED_PASS_TEST.test(text);
+  const hasPass = TEST_PASS_PATTERNS.some((p) => p.test(text.replace(NEGATED_PASS_STRIP, "")));
   const hasNonzero = NONZERO_COUNT.test(text);
   return hasPass && !hasFailLiteral && !hasNonzero;
 }
@@ -201,9 +239,12 @@ export type ModelModality = "text" | "image";
  * True when the model accepts every required modality (K3 #2). The catalogue
  * records text/image today; audio/video/STT/TTS/embedding/ranking arrive with
  * the provider substrate — the filter is modality-generic so they slot in.
+ * Tokens are a closed lowercase vocabulary; caller input is normalised (K3:
+ * 'Image' used to silently defeat the filter).
  */
 export function supportsModalities(modelInput: readonly ModelModality[], required: readonly ModelModality[]): boolean {
-  return required.every((m) => modelInput.includes(m));
+  const held = modelInput.map((m) => m.toLowerCase());
+  return required.every((m) => held.includes(m.toLowerCase()));
 }
 
 /** Vision-capable shorthand (image tasks must never route to a text-only model). */
@@ -212,14 +253,16 @@ export function isVisionCapable(modelInput: readonly ModelModality[]): boolean {
 }
 
 /**
- * Filter candidate models by required input modalities; if the filter would
- * empty the pool, return the original pool (fail-open to text-only rather
- * than refuse the task). Pure and deterministic.
+ * Filter candidate models by required input modalities. If the filter would
+ * empty the pool, return the original pool with `fellBack: true` (fail-open to
+ * text-only rather than refuse the task) — the caller can label the routing
+ * event instead of silently handing an image task to a text model (K3).
+ * Pure and deterministic.
  */
 export function filterByModality<T extends { input: readonly ModelModality[] }>(
   models: readonly T[],
   required: readonly ModelModality[],
-): T[] {
+): { models: T[]; fellBack: boolean } {
   const filtered = models.filter((m) => supportsModalities(m.input, required));
-  return filtered.length > 0 ? filtered : [...models];
+  return filtered.length > 0 ? { models: filtered, fellBack: false } : { models: [...models], fellBack: true };
 }
