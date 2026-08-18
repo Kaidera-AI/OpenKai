@@ -1000,3 +1000,62 @@ test("emitShiftRoutingEvents writes exactly ONE routing row per stage", async ()
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+// ── OK-9.1 tier scorer (Switchyard signal machinery) ────────────────────────
+
+import { decideTier, windowSeverity, SEVERITY } from "@kaidera/openkai-core";
+
+test("tier: critical error hard-escalates to capable (override)", () => {
+  const d = decideTier({
+    signals: [{ tool: "bash", resultText: "FATAL: out of memory, killed process 1234" }],
+    turnDepth: 2,
+    compacted: false,
+  });
+  assert.equal(d.tier, "capable");
+  assert.equal(d.source, "override");
+});
+
+test("tier: compaction hard-escalates (Devin Fusion boundary)", () => {
+  const d = decideTier({ signals: [], turnDepth: 1, compacted: true });
+  assert.equal(d.tier, "capable");
+  assert.equal(d.source, "override");
+});
+
+test("tier: settled run de-escalates to efficient (tests_passed)", () => {
+  const d = decideTier({
+    signals: [
+      { tool: "edit_file", resultText: "ok" },
+      { tool: "bash", resultText: "25 passed, 0 failed" },
+    ],
+    turnDepth: 4,
+    compacted: false,
+  });
+  assert.equal(d.tier, "efficient");
+  assert.equal(d.source, "tests_passed");
+});
+
+test("tier: one maxed signal stays below threshold (corroboration by construction)", () => {
+  // severity 0.7 alone → raw 0.1 → tanh(0.5) ≈ 0.4621 < 0.5 → fall_open
+  const sev = windowSeverity([{ tool: "bash", resultText: "Traceback (most recent call last)" }]);
+  assert.equal(sev, SEVERITY.HARD);
+  const d = decideTier({
+    signals: [{ tool: "bash", resultText: "Traceback (most recent call last)" }],
+    turnDepth: 2,
+    compacted: false,
+  });
+  assert.equal(d.source, "fall_open");
+  assert.ok(d.confidence < 0.5);
+});
+
+test("tier: spinning deep run escalates via dimensions", () => {
+  const d = decideTier({
+    signals: [
+      { tool: "bash", resultText: "exit code 1" },
+      { tool: "bash", resultText: "exit code 1" },
+    ],
+    turnDepth: 12,
+    compacted: false,
+  });
+  assert.equal(d.tier, "capable");
+  assert.equal(d.source, "dimensions");
+});

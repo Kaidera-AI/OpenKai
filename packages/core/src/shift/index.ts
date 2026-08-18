@@ -27,3 +27,17 @@ export {
   type RoutingEvent,
   type ActivitySink,
 } from "./activity.js";
+
+export {
+  decideTier,
+  windowSeverity,
+  testsPassed,
+  productionIntensity,
+  SEVERITY,
+  TIER_THRESHOLD,
+  type Tier,
+  type TierDecision,
+  type TierDecisionSource,
+  type TierInput,
+  type ToolSignal,
+} from "./tier.js";
