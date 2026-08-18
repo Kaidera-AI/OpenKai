@@ -32,6 +32,7 @@ import { mapAgentEvent } from "./events.js";
 import { gatedTools, readOnlyTools, bashTool } from "./tools.js";
 import type { MutationHooks } from "./tools.js";
 import { ShadowGit } from "../undo/shadow.js";
+import type { CastConfig } from "../fusion/casts.js";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { shutdownMcp } from "./mcp.js";
 import { shutdownLspClient } from "./lsp.js";
@@ -97,6 +98,8 @@ export interface InProcessTransportOptions extends SessionTransportOptions {
    * {@link InProcessTransport.addExtraTools}.
    */
   extraTools?: AgentTool<any>[];
+  /** Operator cast config (~/.openkai/config.json "casts") for the task tool's stage→model resolution. */
+  castConfig?: CastConfig;
 }
 
 /**
@@ -256,7 +259,7 @@ export class InProcessTransport implements SessionTransport {
     // read-only set without it.
     const extras = options.extraTools ?? [];
     const tools = options.tools ?? (this.gateInstance
-      ? gatedTools(options.cwd, this.gateInstance, this.mutationHooks, options.modelId, extras)
+      ? gatedTools(options.cwd, this.gateInstance, this.mutationHooks, options.modelId, extras, options.castConfig)
       : [...readOnlyTools(options.cwd), ...extras]);
     this.fullTools = tools;
     this.readOnlySet = readOnlyTools(options.cwd);
@@ -394,6 +397,11 @@ export class InProcessTransport implements SessionTransport {
   }
 
   prompt(text: string): Promise<void> {
+    // A closed transport never starts a run (K3: abort+close before prompt
+    // raced a full LLM turn — agent.abort() is a no-op without an active run).
+    if (this.closed) {
+      return Promise.reject(new Error("transport is closed — prompt() refused"));
+    }
     return this.agent.prompt(text);
   }
 

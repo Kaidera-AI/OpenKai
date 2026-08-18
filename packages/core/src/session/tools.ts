@@ -47,6 +47,8 @@ import { hashlineEditTool } from "./hashline.js";
 import { lspTool } from "./lsp.js";
 import { discoverMcpTools, mcpStatusTool } from "./mcp.js";
 import { taskTool } from "./task.js";
+import { DEFAULT_MODEL_ID } from "./local-transport.js";
+import type { CastConfig } from "../fusion/casts.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
 function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
@@ -364,7 +366,7 @@ export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unkn
   label: "Web Fetch",
   description: "Fetch a URL over HTTP(S) and return the response body as text (truncated to maxBytes).",
   parameters: WebFetchParams,
-  async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
+  async execute(_toolCallId, params, signal?: AbortSignal): Promise<AgentToolResult<unknown>> {
     void cwd;
     const max = params.maxBytes ?? 65536;
     let url: URL;
@@ -377,9 +379,14 @@ export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unkn
       return textResult("Error: only http(s) URLs are supported", params.url);
     }
     // 30 s wall-clock timeout + 1 MiB response-read cap: a slow or endless
-    // endpoint must not stall the turn or balloon memory.
+    // endpoint must not stall the turn or balloon memory. The caller's signal
+    // (task timeout / session abort) joins the timeout's (K3: in-flight tools
+    // used to outlive the abort by up to one full fetch).
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
+    const onCallerAbort = (): void => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener("abort", onCallerAbort, { once: true });
     try {
       const res = await fetch(url, { redirect: "follow", signal: controller.signal });
       const CAP = 1 << 20; // 1 MiB read cap
@@ -407,10 +414,11 @@ export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unkn
       return textResult(truncated + suffix, { url: params.url, status: res.status, bytes: body.length, readCapped });
     } catch (error) {
       const isTimeout = error instanceof Error && error.name === "AbortError";
-      const msg = isTimeout ? "timed out after 30s" : error instanceof Error ? error.message : String(error);
+      const msg = isTimeout ? (signal?.aborted ? "aborted" : "timed out after 30s") : error instanceof Error ? error.message : String(error);
       return textResult(`Error fetching ${params.url}: ${msg}`, params.url);
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onCallerAbort);
     }
   },
 });
@@ -714,9 +722,13 @@ function runShell(
  * E009: + lsp, E010: + mcp), bound to a cwd and a {@link PermissionGate}.
  * Used by the TUI; `openkai chat` keeps {@link readOnlyTools}.
  * `extraTools` is for dynamically discovered tools (MCP servers).
+ * `castConfig` feeds the task tool's stage→model resolution (operator casts).
  */
-export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string, extraTools: AgentTool<any>[] = []): AgentTool<any>[] {
-  const childModel = modelId ?? "openrouter/google/gemini-2.5-flash-lite";
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd, gate, hooks), lspTool(cwd), mcpStatusTool(), taskTool(cwd, childModel), ...extraTools, writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string, extraTools: AgentTool<any>[] = [], castConfig?: CastConfig): AgentTool<any>[] {
+  // K3: the fallback child model must resolve under the transport's default
+  // provider — the previous literal ('openrouter/google/…') is not a
+  // catalogue id under openrouter, so a modelId-less construction was dead.
+  const childModel = modelId ?? DEFAULT_MODEL_ID;
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd, gate, hooks), lspTool(cwd), mcpStatusTool(), taskTool(cwd, childModel, { castConfig }), ...extraTools, writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }
 
