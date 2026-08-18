@@ -22,6 +22,7 @@ export const FEATURES: readonly FeatureDef[] = [
   { key: "splash", label: "Brand animation", description: "the once-ever boot shimmer" },
   { key: "autoUpdate", label: "Auto-update", description: "standalone channel self-upgrade (rollback stays)" },
   { key: "telemetry", label: "Fusion telemetry", description: "run records to .openkai/fusion + Cortex artifacts" },
+  { key: "autoCompact", label: "Auto-compact", description: "elide the middle when context crosses 80% (OpenCode)" },
 ];
 
 const configFile = (): string => path.join(homedir(), ".openkai", "config.json");

@@ -207,8 +207,8 @@ export class InProcessTransport implements SessionTransport {
     const systemPrompt =
       options.systemPrompt ??
       (this.gate
-        ? "You are OpenKai, a helpful coding assistant. Read tools: read_file, list_files, grep, glob, web_fetch. Memory: todo (shared project task list). Structured edits: hashline_edit (read then PUT/CUT by line). Delegation: task (read-only subagent). Mutations: write_file, edit_file, bash — these require operator approval; if denied, report it rather than retrying."
-        : "You are OpenKai, a helpful coding assistant. Read-only tools: read_file, list_files, grep, glob, web_fetch, todo. Use them to inspect files when asked.");
+        ? "You are OpenKai, a helpful coding assistant. Read tools: read_file, list_files, grep, glob, web_fetch. Memory: todo (shared project task list). Code intelligence: lsp (definition, references, hover, diagnostics, rename, symbols, code_actions -- use instead of grep for symbol-aware lookups). Structured edits: hashline_edit (read then PUT/CUT by line). Delegation: task (read-only subagent). Mutations: write_file, edit_file, bash -- these require operator approval; if denied, report it rather than retrying."
+        : "You are OpenKai, a helpful coding assistant. Read-only tools: read_file, list_files, grep, glob, web_fetch, todo, lsp (code intelligence). Use them to inspect files when asked.");
 
     this.agent = new Agent({
       sessionId: options.sessionId,

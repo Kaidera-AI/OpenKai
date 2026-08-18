@@ -28,6 +28,7 @@ import type { PermissionPreview } from "./transport.js";
 import { floorDeny, resolveCanonical } from "./permissions.js";
 import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
 import { hashlineEditTool } from "./hashline.js";
+import { lspTool } from "./lsp.js";
 import { taskTool } from "./task.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
@@ -382,9 +383,9 @@ export const todoTool = (cwd: string): AgentTool<typeof TodoParams, unknown> => 
   },
 });
 
-/** The P2 read-only tool set, bound to a cwd (v1-compat path for `openkai chat`). */
+/** The read-only tool set, bound to a cwd (v1-compat path for `openkai chat`). */
 export function readOnlyTools(cwd: string): AgentTool<any>[] {
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), lspTool(cwd)];
 }
 
 // ── P4b gated tools: write_file / edit_file / bash (scope §4) ───────────────
@@ -591,11 +592,11 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
 }
 
 /**
- * The full P4b tool set (E008: + glob/web_fetch/todo/hashline_edit/task),
+ * The full tool set (E008: + glob/web_fetch/todo/hashline_edit/task, E009: + lsp),
  * bound to a cwd and a {@link PermissionGate}. Used by the TUI;
  * `openkai chat` keeps {@link readOnlyTools}.
  */
 export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string): AgentTool<any>[] {
   const childModel = modelId ?? "openrouter/google/gemini-2.5-flash-lite";
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), taskTool(cwd, childModel), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), lspTool(cwd), taskTool(cwd, childModel), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }

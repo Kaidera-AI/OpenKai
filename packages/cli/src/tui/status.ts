@@ -73,6 +73,8 @@ export interface StatusState {
   gitBranch?: string;
   /** Context window usage percent (0-100), when known. */
   ctxPercent?: number;
+  /** Cline's Plan mode active (read-only). */
+  plan?: boolean;
 }
 
 /** Default chrome state for a fresh session. */
@@ -161,8 +163,9 @@ export class StatusLine implements Component {
       persist: textToken.muted(`p:${this.state.persistMode}`),
       provider: this.state.provider ? highlight.base(this.state.provider) : "",
       state: spinnerChip(this.state),
-      git: this.state.gitBranch ? textToken.muted(`git:${this.state.gitBranch}`) : "",
       ctx: this.state.ctxPercent !== undefined ? textToken.muted(`${this.state.ctxPercent}%`) : "",
+      plan: this.state.plan ? highlight.base("plan") : "",
+      git: this.state.gitBranch ? textToken.muted(`git:${this.state.gitBranch}`) : "",
     };
 
     const active = this.chips

@@ -282,6 +282,8 @@ export class TuiController {
   private composer?: Composer;
   /** Droid's `!` bash mode: submissions run through the gated bash tool. */
   bashMode = false;
+  /** Cline's Plan mode: read-only — mutations refused at the gate (E010). */
+  planMode = false;
   private busy = false;
   private done = false;
   /** True while the current turn is a `/btw` side channel (scope §1.5) — persistTurn skips it so the ephemeral exchange never re-persists the prior assistant block. */
@@ -401,6 +403,20 @@ export class TuiController {
       case "retry":
         await this.retry(argument);
         break;
+      case "settings":
+        this.openSettings();
+        break;
+      case "plan": {
+        this.planMode = !this.planMode;
+        this.status.update({ ...this.status.currentState, plan: this.planMode });
+        this.transcript.addNotice(
+          this.planMode
+            ? "plan mode ON — read-only; write_file/edit_file/bash are refused at the gate"
+            : "plan mode OFF — mutations ask for approval as usual",
+        );
+        this.tui.requestRender();
+        break;
+      }
       case "fork": {
         const fork = await forkSession(this.store);
         this.transcript.addNotice(
@@ -1258,6 +1274,14 @@ export class TuiController {
         this.signalAttention("Turn complete");
         break;
       case "permission_request":
+        if (this.planMode) {
+          // Cline's Plan mode: read-only — mutations are refused at the gate
+          // without bothering the operator.
+          this.transport.respond(event.requestId, "reject");
+          this.transcript.addNotice(`plan mode — ${event.toolName} blocked (read-only)`);
+          this.tui.requestRender();
+          break;
+        }
         // P4b: a gated tool is awaiting approval. Show the overlay; the
         // spinner reflects "waiting on you" (scope §5). The overlay's
         // onDecision calls transport.respond + hides the overlay. The event
@@ -1397,6 +1421,17 @@ export class TuiController {
         ? Math.min(100, Math.round((usage.totalTokens / ctxWindow) * 100))
         : undefined;
     this.status.update({ ...state, usage, ctxPercent });
+    // OpenCode's auto-compact: when context crosses 80%, elide the middle of
+    // the transcript so the session keeps going instead of hitting the wall.
+    if (ctxPercent !== undefined && ctxPercent >= 80 && featureEnabled("autoCompact")) {
+      const messages = this.transport.getMessages();
+      if (messages.length >= 6) {
+        const head = messages.slice(0, 1);
+        const tail = messages.slice(-2);
+        this.transport.setMessages([...head, ...tail]);
+        this.transcript.addNotice(`auto-compact — context at ${ctxPercent}%; elided the middle (${messages.length} → ${head.length + tail.length} messages)`);
+      }
+    }
   }
 
   /** Persist the settled assistant text at turn settlement. */
