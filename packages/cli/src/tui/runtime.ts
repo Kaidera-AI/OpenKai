@@ -25,6 +25,7 @@ import {
   InProcessTransport,
   MissingApiKeyError,
   SessionStore,
+  discoverMcpTools,
   fuse,
   listSessions,
   readSessionMessages,
@@ -181,6 +182,9 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     process.stderr.write(`ERROR: model "${modelId}" not found under provider "${provider}".\n`);
     return { code: 2, next: { kind: "quit" } };
   }
+  // Discover MCP tools before creating the transport (E010).
+  const mcpTools = await discoverMcpTools();
+
   try {
     transport = new InProcessTransport({
       sessionId: store.sessionId,
@@ -189,19 +193,14 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       systemPrompt: options.systemPrompt,
       cwd,
       initialMessages: replayMessages,
-      // Enable the permission gate so the TUI exposes write_file / edit_file /
-      // bash behind an approval overlay (scope §4), and so `/undo` (§1.6) has a
-      // shadow repo to restore. `openkai chat` leaves this unset (no approval
-      // channel in print mode).
       enablePermissions: true,
-      // The live activity feed (`openkai tail`): every event, one JSONL row.
+      tools: mcpTools.length > 0 ? mcpTools : undefined,
       onActivity: (event) =>
         appendActivity(cwd, event.kind, {
           toolName: "toolName" in event ? (event.toolName as string) : undefined,
           args: "args" in event ? event.args : undefined,
           isError: "isError" in event ? (event.isError as boolean) : undefined,
           usage: "usage" in event ? (event.usage as { totalTokens?: number }) : undefined,
-          message: "message" in event ? (event.message as string) : undefined,
         }),
     });
   } catch (error) {

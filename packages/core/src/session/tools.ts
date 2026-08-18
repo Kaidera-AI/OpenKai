@@ -29,6 +29,7 @@ import { floorDeny, resolveCanonical } from "./permissions.js";
 import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
 import { hashlineEditTool } from "./hashline.js";
 import { lspTool } from "./lsp.js";
+import { discoverMcpTools, mcpStatusTool } from "./mcp.js";
 import { taskTool } from "./task.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
@@ -592,11 +593,13 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
 }
 
 /**
- * The full tool set (E008: + glob/web_fetch/todo/hashline_edit/task, E009: + lsp),
- * bound to a cwd and a {@link PermissionGate}. Used by the TUI;
- * `openkai chat` keeps {@link readOnlyTools}.
+ * The full tool set (E008: + glob/web_fetch/todo/hashline_edit/task,
+ * E009: + lsp, E010: + mcp), bound to a cwd and a {@link PermissionGate}.
+ * Used by the TUI; `openkai chat` keeps {@link readOnlyTools}.
+ * `extraTools` is for dynamically discovered tools (MCP servers).
  */
-export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string): AgentTool<any>[] {
+export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks, modelId?: string, extraTools: AgentTool<any>[] = []): AgentTool<any>[] {
   const childModel = modelId ?? "openrouter/google/gemini-2.5-flash-lite";
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), lspTool(cwd), taskTool(cwd, childModel), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), lspTool(cwd), mcpStatusTool(), taskTool(cwd, childModel), ...extraTools, writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }
+

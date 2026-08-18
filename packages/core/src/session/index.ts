@@ -16,6 +16,7 @@ export {
   MissingApiKeyError,
 } from "./local-transport.js";
 export { readOnlyTools, gatedTools } from "./tools.js";
+export { discoverMcpTools, mcpStatusTool, shutdownMcp } from "./mcp.js";
 export {
   type PermissionDecision,
   type PermissionRule,

@@ -433,6 +433,40 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // ── splash: replay the brand animation on demand ─────────────────────────
+  if (command === "serve") {
+    const { runHub } = await import("./hub.js");
+    const portRaw = getString("--port") ?? "8787";
+    const parsed = parseBoundedInt("--port", portRaw, 1, 65535);
+    if (typeof parsed === "string") return fail(parsed);
+    return runHub({ port: parsed, host: getString("--host") });
+  }
+
+  // ── bridge: a chat connector relaying pipe lines into the hub ───────────
+  if (command === "bridge") {
+    const token = process.env.OPENKAI_HUB_TOKEN;
+    const port = getString("--port") ?? "8787";
+    if (!token) return fail("bridge requires OPENKAI_HUB_TOKEN.");
+    const { createInterface } = await import("node:readline");
+    const rl = createInterface({ input: process.stdin });
+    rl.on("line", async (line) => {
+      const text = line.trim();
+      if (!text) return;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/prompt`, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text }),
+        });
+        const body = (await res.json()) as { sessionId?: string; error?: string };
+        process.stdout.write(`[${res.status}] ${body.sessionId ?? body.error ?? ""}\n`);
+      } catch (error) {
+        process.stdout.write(`[bridge error] ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    });
+    await new Promise<void>((resolve) => rl.on("close", resolve));
+    return 0;
+  }
+
   if (command === "splash") {
     const { playBrandAnimation } = await import("./tui/brand.js");
     await playBrandAnimation(CLI_VERSION, undefined, { force: true });
