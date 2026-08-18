@@ -65,3 +65,15 @@ Every version ≥0.1.6 uses the GitHub-hosted manifest and self-sustains.
 - 2026-08-18: v0.1.6 (npm + tag + release) published while the CTO considered
   0.1.006 not ready. Left in place (rollback is more disruptive); this SOP
   adopted; 0.1.007 started on `release/0.1.007`.
+
+## Local-binary hygiene (added 2026-08-18)
+
+The "openkai shows 0.1.5 but brew says 0.1.6" incident was **stale local
+binaries**, not a packaging bug: `~/.local/bin/openkai` (an old standalone
+install) shadowed `/opt/homebrew/bin/openkai` on PATH. The released 0.1.6
+tarball and GitHub assets were complete.
+
+After every release, refresh ALL local copies so UAT matches what ships:
+- `cp packages/cli/bin/openkai-darwin-arm64 ~/.local/bin/openkai`
+- `cp packages/cli/bin/openkai-darwin-arm64 ~/.local/bin/openkai-next`
+- verify `which -a openkai` and that each reports the released version.
