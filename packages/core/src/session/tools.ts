@@ -27,6 +27,7 @@ import type { PermissionGate } from "./permission-gate.js";
 import type { PermissionPreview } from "./transport.js";
 import { floorDeny, resolveCanonical } from "./permissions.js";
 import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
+import { hashlineEditTool } from "./hashline.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
 function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
@@ -594,5 +595,5 @@ function runShell(command: string, cwd: string): Promise<{ stdout: string; stder
  * {@link readOnlyTools} (v1-compat — no approval channel in print mode).
  */
 export function gatedTools(cwd: string, gate: PermissionGate, hooks?: MutationHooks): AgentTool<any>[] {
-  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
+  return [readFileTool(cwd), listFilesTool(cwd), grepTool(cwd), globTool(cwd), webFetchTool(cwd), todoTool(cwd), hashlineEditTool(cwd), writeFileTool(cwd, gate, hooks), editFileTool(cwd, gate, hooks), bashTool(cwd, gate, hooks)];
 }
