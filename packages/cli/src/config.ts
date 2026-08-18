@@ -86,6 +86,8 @@ export const STATUSLINE_CHIPS = [
   "persist",
   "provider",
   "state",
+  "git",
+  "ctx",
 ] as const;
 
 export type StatuslineChip = (typeof STATUSLINE_CHIPS)[number];
@@ -95,9 +97,11 @@ export const DEFAULT_STATUSLINE_CHIPS: StatuslineChip[] = [
   "brand",
   "agent",
   "provider",
+  "git",
   "persist",
   "session",
   "state",
+  "ctx",
   "tokens",
   "model",
 ];

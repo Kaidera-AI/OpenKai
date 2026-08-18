@@ -53,6 +53,7 @@ import {
 import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
 import { needsWelcome, readConfig, runWelcome } from "./welcome.js";
+import { detectThemeAsync, setTheme } from "./theme.js";
 import { appendActivity } from "../tail.js";
 import { CLI_VERSION } from "../version.js";
 import { providerKeyStatus, resolveProvider } from "../providers.js";
@@ -209,6 +210,16 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       return { code: 1, next: { kind: "quit" } };
     }
     throw error;
+  }
+
+  // Theme (E008): explicit choice wins; otherwise auto-detect the terminal's
+  // background (OSC 11 → COLORFGBG → dark) before the alt screen takes over.
+  const themeChoice = (readConfig().theme as string | undefined) ?? "auto";
+  if (themeChoice === "auto") {
+    const detected = await detectThemeAsync();
+    setTheme(detected);
+  } else {
+    setTheme(themeChoice);
   }
 
   const terminal = new ProcessTerminal();

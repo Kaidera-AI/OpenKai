@@ -129,7 +129,7 @@ test("statusline config: defaults to all chips in canonical order", () => {
   setupTempHome();
   const chips = readStatuslineChips();
   assert.deepEqual(chips, DEFAULT_STATUSLINE_CHIPS);
-  assert.deepEqual([...DEFAULT_STATUSLINE_CHIPS], ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"]);
+  assert.deepEqual([...DEFAULT_STATUSLINE_CHIPS], ["brand", "agent", "provider", "git", "persist", "session", "state", "ctx", "tokens", "model"]);
 });
 
 test("statusline config: set custom chip order round-trips", () => {
@@ -185,7 +185,7 @@ test("statusline config: empty chip list falls back to defaults", () => {
 });
 
 test("statusline config: STATUSLINE_CHIPS constant matches the spec set", () => {
-  assert.deepEqual([...STATUSLINE_CHIPS], ["brand", "agent", "model", "session", "tokens", "persist", "provider", "state"]);
+  assert.deepEqual([...STATUSLINE_CHIPS], ["brand", "agent", "model", "session", "tokens", "persist", "provider", "state", "git", "ctx"]);
 });
 
 // ── StatusLine TUI component reads chip config ───────────────────────────────

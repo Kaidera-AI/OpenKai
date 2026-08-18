@@ -54,8 +54,13 @@ export function themeNames(): string[] {
   return ["dark", "light", ...Object.keys(THEME_PACKS)];
 }
 
-/** Switch the theme (dark | light | any pack name). Unknown names no-op. */
+/** Switch the theme (dark | light | auto | any pack name). Unknown names no-op. */
 export function setTheme(name: string): void {
+  if (name === "auto") {
+    C = { ...DARK };
+    themeName = "auto";
+    return;
+  }
   if (name === "dark") {
     C = { ...DARK };
   } else if (name === "light") {
@@ -69,6 +74,67 @@ export function setTheme(name: string): void {
   themeName = name;
 }
 
+/** Sync hint from COLORFGBG (e.g. "15;0" — bg is the last field). */
+export function detectThemeSync(): "dark" | "light" {
+  const fgBg = process.env.COLORFGBG;
+  if (fgBg) {
+    const bg = parseInt(fgBg.split(";").pop() ?? "", 10);
+    if (!Number.isNaN(bg)) return bg >= 7 && bg !== 8 && bg !== 0 ? "light" : "dark";
+  }
+  return "dark";
+}
+
+/**
+ * Ask the terminal for its background via OSC 11 (kitty/ghostty/iTerm2/wezterm
+ * all answer), falling back to COLORFGBG, then dark. ~150ms budget so boot
+ * never stalls on a silent terminal.
+ */
+export function detectThemeAsync(): Promise<"dark" | "light"> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+    if (!stdin.isTTY || !stdout.isTTY) {
+      resolve(detectThemeSync());
+      return;
+    }
+    let settled = false;
+    const finish = (value: "dark" | "light"): void => {
+      if (settled) return;
+      settled = true;
+      stdin.off("data", onData);
+      try {
+        stdin.setRawMode(false);
+        stdin.pause();
+      } catch {
+        // already detached
+      }
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(detectThemeSync()), 150);
+    let buffer = "";
+    const onData = (chunk: Buffer): void => {
+      buffer += chunk.toString("utf-8");
+      const match = buffer.match(/\x1b\]11;rgb:([0-9a-f]{2,4})\/([0-9a-f]{2,4})\/([0-9a-f]{2,4})/i);
+      if (match) {
+        clearTimeout(timer);
+        const r = parseInt(match[1]!.slice(0, 2), 16);
+        const g = parseInt(match[2]!.slice(0, 2), 16);
+        const b = parseInt(match[3]!.slice(0, 2), 16);
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        finish(luminance > 127 ? "light" : "dark");
+      }
+    };
+    try {
+      stdin.setRawMode(true);
+      stdin.resume();
+      stdin.on("data", onData);
+      stdout.write("\x1b]11;?\x07");
+    } catch {
+      clearTimeout(timer);
+      finish(detectThemeSync());
+    }
+  });
+}
 /**
  * Curated, distinct 256-colour hues for per-agent visual identity (scope §1.2).
  * A role maps to one of these via a stable hash so the same agent always gets

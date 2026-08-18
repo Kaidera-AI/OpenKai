@@ -10,7 +10,7 @@ import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken, 
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
-import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, type StatuslineChip } from "../config.js";
+import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, type StatuslineChip } from "../config.js";
 
 export interface SettingsActions {
   pickModel: () => void;
@@ -39,7 +39,7 @@ const STATUSLINE_PRESETS: Record<string, { label: string; chips: StatuslineChip[
   default: { label: "brand · agent · provider · persist · state | tokens · model", chips: [...DEFAULT_STATUSLINE_CHIPS] },
   minimal: { label: "brand · state | model", chips: ["brand", "state", "model"] },
   compact: { label: "brand · provider · state | tokens · model", chips: ["brand", "provider", "state", "tokens", "model"] },
-  full: { label: "every chip", chips: ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"] },
+  full: { label: "every chip", chips: ["brand", "agent", "provider", "git", "persist", "session", "state", "ctx", "tokens", "model"] },
 };
 
 function currentPresetName(): string {
@@ -76,7 +76,7 @@ export class SettingsOverlay implements Component {
           {
             value: "theme",
             label: "theme",
-            description: `now: ${themeName} — Enter to cycle (${themeNames().join(" / ")})`,
+            description: `now: ${(readConfigFile().theme as string | undefined) ?? "auto"} — Enter to cycle (auto / ${themeNames().join(" / ")})`,
             action: () => this.actions.toggleTheme(),
           },
           {

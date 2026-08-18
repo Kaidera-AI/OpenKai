@@ -69,6 +69,10 @@ export interface StatusState {
   attention: boolean;
   /** The autonomy axis (off/low/med/high); rendered as a fixed-width chip. */
   autonomy?: string;
+  /** Current git branch (empty when not a repo) — omp's footer segment. */
+  gitBranch?: string;
+  /** Context window usage percent (0-100), when known. */
+  ctxPercent?: number;
 }
 
 /** Default chrome state for a fresh session. */
@@ -157,6 +161,8 @@ export class StatusLine implements Component {
       persist: textToken.muted(`p:${this.state.persistMode}`),
       provider: this.state.provider ? highlight.base(this.state.provider) : "",
       state: spinnerChip(this.state),
+      git: this.state.gitBranch ? textToken.muted(`git:${this.state.gitBranch}`) : "",
+      ctx: this.state.ctxPercent !== undefined ? textToken.muted(`${this.state.ctxPercent}%`) : "",
     };
 
     const active = this.chips

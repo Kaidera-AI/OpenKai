@@ -34,6 +34,7 @@ export function parseSlashCommand(line: string): ResolvedCommand | null {
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "help", description: "Show available commands and keybindings." },
   { name: "model", description: "Show or change the active model (cycling is P4b).", argumentHint: "[model-id]" },
+  { name: "models", description: "Fullscreen model hub: recent / all / per-provider scopes with context + cost." },
   { name: "sessions", description: "List local persisted sessions (.openkai/sessions)." },
   { name: "resume", description: "Resume a session by id (replays the v3 tree).", argumentHint: "<session-id>" },
   { name: "new", description: "Start a fresh session (local branch root)." },

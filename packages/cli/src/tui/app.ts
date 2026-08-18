@@ -36,7 +36,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
-import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, type StatuslineChip } from "../config.js";
+import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, readConfigFile, writeConfigFile, type StatuslineChip } from "../config.js";
 import { initAgentsMd } from "../init.js";
 import { appendLearning, initMemory, memoryStatus } from "../memory.js";
 import { getGoal, setGoal, updateGoal, clearGoal } from "../goal.js";
@@ -46,19 +46,21 @@ const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
   default: [...DEFAULT_STATUSLINE_CHIPS],
   minimal: ["brand", "state", "model"],
   compact: ["brand", "provider", "state", "tokens", "model"],
-  full: ["brand", "agent", "provider", "persist", "session", "state", "tokens", "model"],
+  full: ["brand", "agent", "provider", "git", "persist", "session", "state", "ctx", "tokens", "model"],
 };
 import { ModelPicker } from "./model-picker.js";
 import { LevelPicker } from "./level-picker.js";
 import { HistorySearch } from "./history-search.js";
+import { ModelsHub } from "./models-hub.js";
 import { SettingsOverlay } from "./settings.js";
 import { runWelcome, readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
-import { setTheme, themeName, themeNames } from "./theme.js";
+import { setTheme, themeName, themeNames, detectThemeAsync } from "./theme.js";
 import { changelogHead } from "./changelog.js";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 /** Count installed skills (.agents/skills/, excluding the manifest). */
 function countSkills(): number {
@@ -198,6 +200,18 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
   statusState.agentName = agentName;
   statusState.provider = options.provider ?? "";
+  // omp's footer segment: the current git branch (empty when not a repo).
+  try {
+    statusState.gitBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 500,
+    })
+      .toString()
+      .trim();
+  } catch {
+    statusState.gitBranch = "";
+  }
   const status = new StatusLine(statusState);
 
   const controller = new TuiController(tui, options, transcript, status);
@@ -246,6 +260,10 @@ export class TuiController {
   private readonly store: SessionStore;
   private readonly checkpoint?: CortexCheckpoint;
   private readonly transcript: Transcript;
+  /** The picker's fusion partner (builder model for /fuse), or undefined for self-pairing. */
+  fusionPartner?: { provider: string; modelId: string };
+  /** Recently used models (provider/id), most recent first — the hub's recent scope. */
+  private recentModels: string[] = [];
   private readonly status: StatusLine;
   private readonly sessionId: string;
   private readonly sessionsRoot?: string;
@@ -257,8 +275,6 @@ export class TuiController {
   private readonly runFusion?: (task: string) => Promise<FuseResult>;
   private provider?: string;
   private modelId: string;
-  /** The picker's fusion partner (builder model for /fuse), or undefined for self-pairing. */
-  fusionPartner?: { provider: string; modelId: string };
   private modelSwitch?: (model: Model<Api>) => void;
   private effortSwitch?: { set: (level: "off" | "minimal" | "low" | "medium" | "high") => void; current: () => string };
   private autonomySwitch?: { set: (level: "off" | "low" | "med" | "high") => void; current: () => string };
@@ -357,6 +373,16 @@ export class TuiController {
         }
         this.transcript.addNotice(`resuming ${argument}…`);
         this.onExit?.({ kind: "restart", sessionId: argument });
+        break;
+      case "model":
+        if (argument.length > 0) {
+          this.applyModelSelection(this.provider ?? "openrouter", argument);
+        } else {
+          this.openModelPicker();
+        }
+        break;
+      case "models":
+        this.openModelsHub();
         break;
       case "btw":
         if (argument.length === 0) {
@@ -847,10 +873,16 @@ export class TuiController {
       {
         pickModel: () => this.openModelPicker(),
         toggleTheme: () => {
-          const names = themeNames();
-          const next = names[(names.indexOf(themeName) + 1) % names.length]!;
-          setTheme(next);
-          return `theme: ${next}`;
+          const names = ["auto", ...themeNames()];
+          const current = (readConfigFile().theme as string | undefined) ?? "auto";
+          const next = names[(names.indexOf(current) + 1) % names.length]!;
+          writeConfigFile({ ...readConfigFile(), theme: next });
+          if (next === "auto") {
+            void detectThemeAsync().then((detected) => setTheme(detected));
+          } else {
+            setTheme(next);
+          }
+          return `theme: ${next}${next === "auto" ? " (follows your terminal)" : ""}`;
         },
         setMemory: (mode, project) => {
           if (mode === "cortex") process.env.CORTEX_PROJECT = project;
@@ -968,6 +1000,39 @@ export class TuiController {
     this.tui.showOverlay(picker, { anchor: "center", width: "60%", maxHeight: "70%" });
   }
 
+  /** `/models` — the fullscreen hub (sidebar scopes + metadata model list). */
+  openModelsHub(): void {
+    const catalogue = builtinModels();
+    const hub = new ModelsHub(
+      Object.entries(PROVIDERS).map(([id, info]) => {
+        const status = providerKeyStatus(id);
+        return { id, label: info.label, configured: status.configured };
+      }),
+      (providerId) =>
+        catalogue
+          .getModels(providerId)
+          .map((m) => ({
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow,
+            cost: m.cost ? { input: m.cost.input, output: m.cost.output } : undefined,
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+      this.recentModels,
+      { provider: this.provider ?? "openrouter", modelId: this.modelId },
+      (provider, modelId) => {
+        this.tui.hideOverlay();
+        this.applyModelSelection(provider, modelId);
+        this.refocusComposer();
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(hub, { anchor: "center", width: "80%", maxHeight: "80%" });
+  }
+
   /** Apply a picker selection: switch the session model + update chrome. */
   private applyModelSelection(provider: string, modelId: string): void {
     const catalogue = builtinModels();
@@ -980,12 +1045,12 @@ export class TuiController {
     this.provider = provider;
     this.modelSwitch(model);
     this.status.update({ ...this.status.currentState, modelId });
+    this.recentModels = [`${provider}/${modelId}`, ...this.recentModels.filter((m) => m !== `${provider}/${modelId}`)].slice(0, 8);
     this.transcript.addNotice(`model: ${modelId} (${provider})`);
     // Fusion-first (E002): always surface the pairing suggestion.
     this.transcript.addNotice(suggestFusionPartner(provider, modelId));
     this.tui.requestRender();
   }
-
   /** `/effort [level]` — set or cycle reasoning effort for future turns. */
   cycleEffort(argument: string): void {
     if (!this.effortSwitch) return;
@@ -1326,7 +1391,12 @@ export class TuiController {
 
   private updateUsage(usage: UsageSnapshot): void {
     const state = this.status.currentState;
-    this.status.update({ ...state, usage });
+    const ctxWindow = this.transport.getContextWindow();
+    const ctxPercent =
+      ctxWindow > 0 && usage.totalTokens > 0
+        ? Math.min(100, Math.round((usage.totalTokens / ctxWindow) * 100))
+        : undefined;
+    this.status.update({ ...state, usage, ctxPercent });
   }
 
   /** Persist the settled assistant text at turn settlement. */
