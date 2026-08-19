@@ -16,7 +16,12 @@ import { readShiftConfig } from "../fuse.js";
 
 export interface SettingsActions {
   pickModel: () => void;
-  toggleTheme: () => string;
+  /** Open the theme picker (visible list; E017 UX — no blind cycling). */
+  pickTheme: () => void;
+  /** Open the status-line preset picker. */
+  pickStatusline: () => void;
+  /** Open the routing posture picker. */
+  pickPosture: () => void;
   setMemory: (mode: "local" | "cortex", project?: string) => void;
   currentProject?: string;
   /** Open the in-TUI sign-in flow for a provider (key entry or OAuth). */
@@ -31,6 +36,12 @@ export interface SettingsActions {
 
 interface Row extends SelectItem {
   action?: () => string | undefined;
+  /**
+   * The row opens another overlay (picker, sign-in). The settings overlay
+   * closes BEFORE the action runs — otherwise the close pops the freshly
+   * opened overlay off the stack (hideOverlay pops the topmost).
+   */
+  navigates?: boolean;
 }
 
 const TABS = ["appearance", "providers", "model", "interaction", "memory", "features", "routing"] as const;
@@ -78,18 +89,21 @@ export class SettingsOverlay implements Component {
           {
             value: "theme",
             label: "theme",
-            description: `now: ${(readConfigFile().theme as string | undefined) ?? "auto"} — Enter to cycle (auto / ${themeNames().join(" / ")})`,
-            action: () => this.actions.toggleTheme(),
+            description: `now: ${(readConfigFile().theme as string | undefined) ?? "auto"} — Enter to pick from the list`,
+            navigates: true,
+            action: () => {
+              this.actions.pickTheme();
+              return undefined;
+            },
           },
           {
             value: "statusline",
             label: "status line",
-            description: `now: ${preset} — Enter to cycle (default → minimal → compact → full)`,
+            description: `now: ${preset} — Enter to pick from the list`,
+            navigates: true,
             action: () => {
-              const names = Object.keys(STATUSLINE_PRESETS);
-              const next = names[(names.indexOf(preset) + 1) % names.length]!;
-              this.actions.setStatusline(next);
-              return `status line: ${next} (${STATUSLINE_PRESETS[next]!.label})`;
+              this.actions.pickStatusline();
+              return undefined;
             },
           },
         ];
@@ -108,6 +122,7 @@ export class SettingsOverlay implements Component {
             value: `provider:${id}`,
             label: info.label,
             description: state,
+            ...(info.keyless === true ? {} : { navigates: true }),
             action: () => {
               if (info.keyless === true) {
                 return "keyless lane — nothing to sign in; start the server and pick a model";
@@ -123,6 +138,7 @@ export class SettingsOverlay implements Component {
             value: "model",
             label: "model & effort & fusion partner",
             description: "open the picker",
+            navigates: true,
             action: () => {
               this.actions.pickModel();
               return undefined;
@@ -197,12 +213,11 @@ export class SettingsOverlay implements Component {
           {
             value: "routing:posture",
             label: "posture",
-            description: `now: ${posture} — Enter to cycle (quality → balanced → saver)`,
+            description: `now: ${posture} — Enter to pick from the list`,
+            navigates: true,
             action: () => {
-              const order: readonly ShiftPosture[] = ["quality", "balanced", "saver"];
-              const next = order[(order.indexOf(posture) + 1) % order.length]!;
-              writeShiftPosture(next);
-              return `routing posture: ${next} (applies to the next routed turn)`;
+              this.actions.pickPosture();
+              return undefined;
             },
           },
           {
@@ -223,6 +238,12 @@ export class SettingsOverlay implements Component {
     const list = new SelectList(filtered, 14, paletteSelectTheme);
     list.onSelect = (item) => {
       const row = item as Row;
+      if (row.navigates === true) {
+        // Close settings FIRST, then open the target overlay (stack order).
+        this.onClose();
+        row.action?.();
+        return;
+      }
       const message = row.action?.();
       if (message === undefined) {
         this.onClose(); // an action that navigates away (model picker)

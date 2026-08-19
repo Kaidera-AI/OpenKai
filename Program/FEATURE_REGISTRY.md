@@ -26,7 +26,7 @@
 | `/fork` `/tree` | 0.1.5 | ✅ | v3 parent links |
 | `/autonomy` | 0.1.5 | ✅ | picker over the gate |
 | `/plan` | 0.1.5 | ✅ | gate-enforced 0.1.6; transport-owned |
-| `/theme` | 0.1.5 | ✅ | packs + auto |
+| `/theme` | 0.1.5 | ❌ removed 0.1.7 (CTO) — themes live in /settings as a visible picker list; no separate command | appearance tab |
 | `/goal` | 0.1.5 | ✅ | boot card surface |
 | `/setup` | 0.1.5 | ✅ | onboarding panel |
 | `/settings` | 0.1.5 | ✅ | seven tabs (routing added 0.1.7) |
@@ -107,6 +107,8 @@
 | Role pills (per-agent identity) | 0.1.1 | ✅ | transcript.ts |
 | Tier chip + transition notice (routing visibility) | 0.1.7 | ✅ | status.ts + app.ts applyRoutingEvent (E017 S1) |
 | Fusion role-pill blocks + gate verdict notices | 0.1.7 | ✅ | transcript.ts + app.ts renderGateOutcome (E017 S1) |
+| Terminal crash guard | 0.1.7 | ✅ | uncaughtException/unhandledRejection restore the terminal (alt-screen/raw) + print the error — a TUI crash can never wedge the terminal again |
+| Chip overflow policy | 0.1.7 | ✅ | status line drops low-priority chips (git→ctx→provider→…) before truncating; right side (tokens+model) never loses |
 | Daily tips | 0.1.5 | ✅ | feature-gated |
 | Auto-compact at 80% | 0.1.5 | ✅ | idle-only 0.1.6 |
 | Mermaid→ASCII | 0.1.5 | ✅ | mermaid.ts |

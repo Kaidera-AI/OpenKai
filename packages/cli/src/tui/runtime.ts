@@ -116,7 +116,11 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   // First-run setup (E002 Inc 03): BEFORE provider/model resolution so the
   // operator's answers become this session's defaults. Skipped when explicit
   // flags are passed or when there's no TTY (e2e/pipes).
-  if (needsWelcome() && !options.model && !options.provider && process.stdout.isTTY) {
+  // First-run setup (E002 Inc 03): BEFORE provider/model resolution so the
+  // operator's answers become this session's defaults. Skipped when explicit
+  // flags are passed or when there's no TTY — on EITHER stream (a piped
+  // stdin would hang readline forever, e.g. pty harnesses).
+  if (needsWelcome() && !options.model && !options.provider && process.stdout.isTTY && process.stdin.isTTY) {
     await runWelcome();
   }
   let session = options.session;
@@ -548,6 +552,29 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   terminal.write(FOCUS_REPORT_ENABLE); // enable DEC 1004 focus reporting
   tui.start();
 
+  // Crash guard (CTO report 2026-08-19): an uncaught error inside the
+  // alt-screen app used to kill the process WITHOUT restoring the terminal —
+  // the operator had to kill the window. Restore, report, exit clean.
+  // Removed on the normal teardown path below.
+  const onFatal = (error: unknown): void => {
+    try {
+      tui.stop();
+    } catch {
+      // best effort — the terminal must not stay wedged
+    }
+    try {
+      terminal.write(FOCUS_REPORT_DISABLE);
+    } catch {
+      // best effort
+    }
+    process.stderr.write(
+      `\nopenkai crashed (terminal restored): ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
+    process.exit(1);
+  };
+  process.once("uncaughtException", onFatal);
+  process.once("unhandledRejection", onFatal);
+
   if (!options.quiet) {
     process.stderr.write(`[openkai] tui ready · mode=${runMode.mode} · model=${modelId} · session=${store.sessionId.slice(0, 8)}\n`);
     if (runMode.mode === "local") {
@@ -570,6 +597,8 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   await controller.shutdown();
   await consumePromise.catch(() => undefined);
 
+  process.off("uncaughtException", onFatal);
+  process.off("unhandledRejection", onFatal);
   tui.stop();
   terminal.write(FOCUS_REPORT_DISABLE); // leave the terminal clean
   await terminal.drainInput();

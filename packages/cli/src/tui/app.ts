@@ -46,8 +46,9 @@ import {
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { defaultModels } from "@kaidera/openkai-core";
+import { readShiftConfig } from "../fuse.js";
 import { PROVIDERS, providerKeyStatus, suggestFusionPartner, configuredProviders } from "../providers.js";
-import { DEFAULT_STATUSLINE_CHIPS, writeStatuslineChips, readConfigFile, writeConfigFile, type StatuslineChip } from "../config.js";
+import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, writeStatuslineChips, readConfigFile, writeConfigFile, writeShiftPosture, type StatuslineChip } from "../config.js";
 import { initAgentsMd } from "../init.js";
 import { appendLearning, initMemory, memoryStatus } from "../memory.js";
 import { getGoal, setGoal, updateGoal, clearGoal } from "../goal.js";
@@ -490,14 +491,6 @@ export class TuiController {
       case "autonomy":
         this.openAutonomyPicker(argument);
         break;
-      case "theme": {
-        const names = themeNames();
-        const next = names[(names.indexOf(themeName) + 1) % names.length]!;
-        setTheme(next);
-        this.transcript.addNotice(`theme: ${next} (restart paints every surface; ${names.length} themes cycle with /theme)`);
-        this.tui.requestRender();
-        break;
-      }
       case "setup":
         this.openSetup();
         break;
@@ -969,6 +962,91 @@ export class TuiController {
   }
 
   /** `/autonomy` — open the level picker (Enter applies). Direct arg still works. */
+  /** Status-line preset picker (E017 UX: visible list, no blind cycling). */
+  private openStatuslinePicker(): void {
+    const entries = [
+      { id: "default", label: "default", description: "brand · agent · provider · persist · state | tokens · model" },
+      { id: "minimal", label: "minimal", description: "brand · state | model" },
+      { id: "compact", label: "compact", description: "brand · provider · state | tokens · model" },
+      { id: "full", label: "full", description: "every chip (incl. git, session, ctx)" },
+    ];
+    const active = readStatuslineChips().join(",");
+    const current = Object.entries(STATUSLINE_PRESET_CHIPS).find(([, chips]) => chips.join(",") === active)?.[0] ?? "custom";
+    const picker = new LevelPicker("status line", entries, current, (id) => {
+      this.tui.hideOverlay();
+      writeStatuslineChips(STATUSLINE_PRESET_CHIPS[id] ?? [...DEFAULT_STATUSLINE_CHIPS]);
+      this.status.update({ ...this.status.currentState });
+      this.transcript.addNotice(`status line: ${id}`);
+      this.tui.requestRender();
+      this.refocusComposer();
+    }, () => {
+      this.tui.hideOverlay();
+      this.refocusComposer();
+    });
+    this.tui.showOverlay(picker, { anchor: "center", width: "56%", maxHeight: "60%" });
+  }
+
+  /** Routing posture picker (OK-9.7; visible list). */
+  private openPosturePicker(): void {
+    const entries = [
+      { id: "quality", label: "quality", description: "capable-biased — escalate rarely (threshold 0.6)" },
+      { id: "balanced", label: "balanced", description: "per-stage rest + Switchyard's 0.5 (default)" },
+      { id: "saver", label: "saver", description: "efficient-biased — cheapest tier that holds (0.4)" },
+    ];
+    const current = readShiftConfig(readConfigFile()).posture ?? "balanced";
+    const picker = new LevelPicker("routing posture", entries, current, (id) => {
+      this.tui.hideOverlay();
+      writeShiftPosture(id as "quality" | "balanced" | "saver");
+      this.transcript.addNotice(`routing posture: ${id} (applies to the next routed turn)`);
+      this.tui.requestRender();
+      this.refocusComposer();
+    }, () => {
+      this.tui.hideOverlay();
+      this.refocusComposer();
+    });
+    this.tui.showOverlay(picker, { anchor: "center", width: "56%", maxHeight: "60%" });
+  }
+
+  /** Theme picker (E017 UX): a visible list — no blind cycling. */
+  private openThemePicker(): void {
+    const descriptions: Record<string, string> = {
+      auto: "follows your terminal background (OSC 11 / COLORFGBG)",
+      dark: "Kaidera dark — mint on graphite (default)",
+      light: "Kaidera light",
+      catppuccin: "pastel dark, soft contrast",
+      dracula: "high-contrast purple dark",
+      gruvbox: "warm retro dark",
+      nord: "cool arctic blues",
+      "one-dark": "Atom's classic dark",
+      rosepine: "muted rose-pine dark",
+      solarized: "Solarized precision",
+      tokyonight: "neon night Tokyo",
+    };
+    const current = (readConfigFile().theme as string | undefined) ?? "auto";
+    const entries = ["auto", ...themeNames()].map((id) => ({
+      id,
+      label: id,
+      description: descriptions[id] ?? "theme pack",
+    }));
+    const picker = new LevelPicker("theme", entries, current, (id) => {
+      this.tui.hideOverlay();
+      writeConfigFile({ ...readConfigFile(), theme: id });
+      if (id === "auto") {
+        void detectThemeAsync().then((detected) => setTheme(detected));
+      } else {
+        setTheme(id);
+      }
+      this.transcript.addNotice(`theme: ${id}${id === "auto" ? " (follows your terminal)" : ""}`);
+      this.tui.requestRender();
+      this.refocusComposer();
+    }, () => {
+      this.tui.hideOverlay();
+      this.refocusComposer();
+    });
+    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
+  }
+
+  /** `/autonomy` — open the level picker (droid). */
   private openAutonomyPicker(argument: string): void {
     if (!this.autonomySwitch) {
       this.transcript.addNotice("autonomy: unavailable (permission gate off)");
@@ -1097,17 +1175,17 @@ export class TuiController {
     const overlay = new SettingsOverlay(
       {
         pickModel: () => this.openModelPicker(),
-        toggleTheme: () => {
-          const names = ["auto", ...themeNames()];
-          const current = (readConfigFile().theme as string | undefined) ?? "auto";
-          const next = names[(names.indexOf(current) + 1) % names.length]!;
-          writeConfigFile({ ...readConfigFile(), theme: next });
-          if (next === "auto") {
-            void detectThemeAsync().then((detected) => setTheme(detected));
-          } else {
-            setTheme(next);
-          }
-          return `theme: ${next}${next === "auto" ? " (follows your terminal)" : ""}`;
+        // No hideOverlay here: the settings row returns undefined, its
+        // onSelect calls onClose — which closes settings — and the freshly
+        // opened picker survives (same ordering as pickModel).
+        pickTheme: () => {
+          this.openThemePicker();
+        },
+        pickStatusline: () => {
+          this.openStatuslinePicker();
+        },
+        pickPosture: () => {
+          this.openPosturePicker();
         },
         setMemory: (mode, project) => {
           if (mode === "cortex") process.env.CORTEX_PROJECT = project;

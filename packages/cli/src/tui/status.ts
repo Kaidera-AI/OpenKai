@@ -25,7 +25,7 @@
  * event stream (usage at `turn_end`, turn state from deltas/turn_end).
  */
 
-import { Text, visibleWidth } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import { highlight, rolePill, surface, text as textToken, toolBorder } from "./theme.js";
 import type { UsageSnapshot, Tier } from "@kaidera/openkai-core";
@@ -199,7 +199,12 @@ export class StatusLine implements Component {
       state: spinnerChip(this.state),
       ctx: this.state.ctxPercent !== undefined ? textToken.muted(`${this.state.ctxPercent}%`) : "",
       plan: this.state.plan ? highlight.base("plan") : "",
-      git: this.state.gitBranch ? textToken.muted(`git:${this.state.gitBranch}`) : "",
+      // Cap the whole git chip at 12 cols: a long branch name
+      // (release/0.1.007) otherwise pushes the default chrome past 80 cols
+      // and evicts the session/model chips (0.1.7 golden-frame failure).
+      git: this.state.gitBranch
+        ? textToken.muted(this.state.gitBranch.length > 8 ? `git:${this.state.gitBranch.slice(0, 7)}…` : `git:${this.state.gitBranch}`)
+        : "",
     };
 
     const active = this.chips
@@ -216,13 +221,34 @@ export class StatusLine implements Component {
     if (this.state.autonomy) left.push(textToken.muted(`a:${this.state.autonomy}`));
     if (this.state.tier) left.push(tierChip(this.state));
 
-    const leftText = left.join(` ${sep} `);
     const rightText = right.join(` ${sep} `);
-    if (rightText.length === 0) return leftText;
+    if (rightText.length === 0) return left.join(` ${sep} `);
+
+    // The right side (tokens + model) never loses; contextual chips (tier,
+    // bash, autonomy) are the newest information and also stay. When the line
+    // is too wide, drop the lowest-value CONFIGURABLE chips first (git, ctx,
+    // provider before the identity chips), and only then truncate — a clamp
+    // that cuts a chip in half ("t:…") is worse than a dropped chip.
+    const DROP_ORDER: readonly StatuslineChip[] = ["git", "ctx", "provider", "session", "persist", "agent"];
+    const budget = width - visibleWidth(rightText) - 3;
+    const leftParts = [...left];
+    let leftText = leftParts.join(` ${sep} `);
+    for (const drop of DROP_ORDER) {
+      if (visibleWidth(leftText) <= budget) break;
+      const index = active.findIndex(([chip]) => chip === drop);
+      if (index === -1) continue;
+      const rendered = chipRenderers[drop];
+      const partIndex = leftParts.indexOf(rendered);
+      if (partIndex === -1) continue;
+      leftParts.splice(partIndex, 1);
+      leftText = leftParts.join(` ${sep} `);
+      void index;
+    }
+    const leftClamped = visibleWidth(leftText) > budget ? truncateToWidth(leftText, Math.max(8, budget)) : leftText;
 
     // Right-align the right side within the render width.
-    const pad = Math.max(1, width - visibleWidth(leftText) - visibleWidth(rightText) - 2);
-    return `${leftText}${" ".repeat(pad)}${rightText}`;
+    const pad = Math.max(1, width - visibleWidth(leftClamped) - visibleWidth(rightText) - 2);
+    return `${leftClamped}${" ".repeat(pad)}${rightText}`;
   }
 
   // ── Component ───────────────────────────────────────────────────────────
