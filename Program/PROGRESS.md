@@ -9,7 +9,7 @@
 
 ## Release plan
 
-**Current epic: E017 — Orchestration Composition (v0.1.007).** Spec: `Program/Release_v0.1.007/E017_ORCHESTRATION_COMPOSITION/EPIC_SPEC.md` (opened 2026-08-19, ren@openkai). Goal: wire the composition the research proves — shift predicts, fusion multiplies, the gate verifies, outcomes teach the router — and make it visible in the TUI. 10 increments (TUI visibility slice → orchestration facade → operator priorities → cascade completion → compaction switch → reward loop → synthesis upgrade → calibration harness → release-key signing → release with adversarial gate).
+**Last shipped: E017 — v0.1.007 (2026-08-19).** Next: DeepSeek/Cordis plugin-architecture review (ADR parked in main's checkout: `research/2026-08-19-adr-ok9-deepseek-harness-cordis.md`) + OK-10 served-TUI increments 11.1–11.5. **Current epic: E017 — Orchestration Composition (v0.1.007).** Spec: `Program/Release_v0.1.007/E017_ORCHESTRATION_COMPOSITION/EPIC_SPEC.md` (opened 2026-08-19, ren@openkai). Goal: wire the composition the research proves — shift predicts, fusion multiplies, the gate verifies, outcomes teach the router — and make it visible in the TUI. 10 increments (TUI visibility slice → orchestration facade → operator priorities → cascade completion → compaction switch → reward loop → synthesis upgrade → calibration harness → release-key signing → release with adversarial gate).
 
 | Sprint | Window | Contents | Exit | Status |
 |---|---|---|---|---|
@@ -20,7 +20,7 @@
 | S5 | 2026-08-19 | Inc 07 (P5 learning loops), Inc 08 (P6 packaging) | v1 release: npm + binaries + auto-upgrade + docs | **DONE** — superseded by the E002 line below |
 | E002 | 2026-08-16 → 08-18 | Fusion-first UX (casts, shift router, welcome, parity, capability mgmt, brand) | v0.1.005 shipped | **DONE** |
 | E012–E016 | 2026-08-18 | Adversarial reviews + fixes + research round 2 + release engineering | 0.1.6 on release/0.1.007 | **DONE** (below) |
-| E017 | 2026-08-19 → | Orchestration composition | v0.1.007 | **OPEN** |
+| E017 | 2026-08-19 → 08-19 | Orchestration composition | v0.1.007 | **SHIPPED** (npm 0.1.7 ×2, signed GitHub release, brew, install.sh; upgrade channel proven end-to-end) |
 
 ## 2026-08-18 inventory (ren@openkai — what actually exists)
 
