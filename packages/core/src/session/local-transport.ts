@@ -24,6 +24,14 @@
 
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AgentMessage, AgentTool, AgentEvent } from "@earendil-works/pi-agent-core";
+import {
+  COMPACTION_SUMMARY_PREFIX,
+  COMPACTION_SUMMARY_SUFFIX,
+  DEFAULT_COMPACTION_SETTINGS,
+  estimateContextTokens,
+  findCutPoint,
+  generateSummaryWithUsage,
+} from "@earendil-works/pi-agent-core";
 import type { Message, Model } from "@earendil-works/pi-ai";
 import type { Api } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai";
@@ -195,6 +203,8 @@ export class InProcessTransport implements SessionTransport {
   private readonly fullTools: AgentTool<any>[];
   private readonly readOnlySet: AgentTool<any>[];
   private _planMode = false;
+  /** The models collection the agent streams through (kept for compaction). */
+  private readonly modelsCollection: Models;
 
   /** Stamp + push a permission_request event onto the session queue. */
   private emitPermissionEvent(e: PermissionRequestPayload): void {
@@ -219,6 +229,7 @@ export class InProcessTransport implements SessionTransport {
     // (P4), use it as-is and skip the OpenRouter key requirement — the caller
     // owns provider auth.
     const models = options.models ?? defaultModels();
+    this.modelsCollection = models;
 
     if (!injected && provider === "openrouter" && !process.env.OPENROUTER_API_KEY) {
       throw new MissingApiKeyError("OpenRouter", "OPENROUTER_API_KEY");
@@ -450,6 +461,83 @@ export class InProcessTransport implements SessionTransport {
   }
   getContextWindow(): number {
     return this.agent.state.model?.contextWindow ?? 0;
+  }
+
+  /**
+   * LLM-summarising compaction (E017 contract #1 — replaces the naive
+   * head+last-pair elision). The conversation before pi-agent-core's
+   * `findCutPoint` cut (their `keepRecentTokens` discipline, splitting at a
+   * turn boundary) is summarised by `generateSummaryWithUsage` — the
+   * structured Goal/Progress/Decisions/Next-Steps checkpoint, or its
+   * incremental UPDATE when `previousSummary` is passed. The context becomes
+   * `[summaryMessage, ...retainedTail]`: the summary travels as a user-role
+   * message mirroring pi's `createCompactionSummaryMessage` wire text, so
+   * this transport's role-filtering `convertToLlm` keeps it.
+   *
+   * Returns the raw summary (persist it and pass it back next call for the
+   * incremental path) plus estimated context tokens before/after. Returns
+   * `undefined` when there is nothing worth compacting — fewer than two
+   * messages, or a cut that would summarise nothing / elide nothing.
+   */
+  async compactSession(
+    previousSummary?: string,
+  ): Promise<{ summary: string; before: number; after: number } | undefined> {
+    const messages = this.agent.state.messages;
+    if (messages.length < 2) return undefined;
+
+    const settings = DEFAULT_COMPACTION_SETTINGS;
+    const before = estimateContextTokens(messages).tokens;
+
+    // findCutPoint runs over pi-harness entries; only `type` and `message`
+    // are read, so synthesise minimal message entries around our context.
+    // (The harness Entry type is not in the package's exports map — this is
+    // the structural slice the function consumes.)
+    type CutPointEntry = {
+      type: "message";
+      id: string;
+      seq: number;
+      parentId: string | null;
+      timestamp: number;
+      message: AgentMessage;
+    };
+    const entries: CutPointEntry[] = messages.map((message, index) => ({
+      type: "message",
+      id: `ctx-${index}`,
+      seq: index + 1,
+      parentId: index === 0 ? null : `ctx-${index - 1}`,
+      timestamp: 0,
+      message,
+    }));
+    const cut = findCutPoint(entries as never, 0, entries.length, settings.keepRecentTokens);
+    const historyEnd = cut.isSplitTurn ? cut.turnStartIndex : cut.firstKeptEntryIndex;
+    // historyEnd === 0: nothing before the cut to summarise; === length:
+    // the retained tail would be empty (a split-turn pathological cut).
+    if (historyEnd <= 0 || historyEnd >= messages.length) return undefined;
+
+    const result = await generateSummaryWithUsage(
+      messages.slice(0, historyEnd),
+      this.modelsCollection,
+      this.agent.state.model,
+      settings.reserveTokens,
+      undefined,
+      undefined,
+      previousSummary,
+    );
+    if (!result.ok) throw result.error;
+
+    const summaryMessage: AgentMessage = {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: COMPACTION_SUMMARY_PREFIX + result.value.text + COMPACTION_SUMMARY_SUFFIX,
+        },
+      ],
+      timestamp: Date.now(),
+    };
+    this.agent.state.messages = [summaryMessage, ...messages.slice(historyEnd)];
+    const after = estimateContextTokens(this.agent.state.messages).tokens;
+    return { summary: result.value.text, before, after };
   }
 
   /**

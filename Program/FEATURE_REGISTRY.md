@@ -15,7 +15,9 @@
 | `/help` | 0.1.1 | ✅ | commands.ts |
 | `/model [id]` | 0.1.1; picker 0.1.4; five-level 0.1.5 | ✅ | direct switch fixed 0.1.6 (dead case removed) |
 | `/models` hub | 0.1.5 | ✅ | models-hub.ts |
-| `/sessions` `/resume` `/new` | 0.1.1 | ✅ | store rehydration fixed 0.1.6 |
+| `/sessions` `/resume` `/new` | 0.1.1 | ✅ | store rehydration fixed 0.1.6; bare `/resume` opens the searchable picker 0.1.7; `/sessions` shows names 0.1.7 |
+| `/name <text>` | 0.1.7 | ✅ | `session_name` custom entry (append-only analogue of pi's session_info); surfaces in /sessions, /resume search, /export |
+| `/export [path]` | 0.1.7 | ✅ | self-contained HTML transcript (inline CSS, theme palette hexes); `.jsonl` suffix dumps the raw session file |
 | `/exit` (+`/quit` alias) | 0.1.5 | ✅ | |
 | `/btw` | 0.1.1 | ✅ | side channel, unpersisted |
 | `/undo` | 0.1.1 | ✅ | shadow-git |
@@ -23,7 +25,7 @@
 | `/diff` | 0.1.7 | ✅ | shadow snapshot → work tree overlay (read-only) |
 | `/fuse [task]` | 0.1.5 | ✅ | in-TUI panel |
 | `/retry [model]` | 0.1.5 | ✅ | |
-| `/fork` `/tree` | 0.1.5 | ✅ | v3 parent links |
+| `/fork` `/tree` | 0.1.5 | ✅ | v3 parent links; `/fork` is a rewind-to-message picker 0.1.7 (forkAtEntry + prefill-through-restart) |
 | `/autonomy` | 0.1.5 | ✅ | picker over the gate |
 | `/plan` | 0.1.5 | ✅ | gate-enforced 0.1.6; transport-owned |
 | `/theme` | 0.1.5 | ❌ removed 0.1.7 (CTO) — themes live in /settings as a visible picker list; no separate command | appearance tab |
@@ -32,7 +34,7 @@
 | `/settings` | 0.1.5 | ✅ | seven tabs (routing added 0.1.7) |
 | `/init` | 0.1.5 | ✅ | never overwrites |
 | `/memory` | 0.1.5 | ✅ | .openkai/memory |
-| `/clear` `/copy` `/stats` `/context` `/compact` `/shake` | 0.1.5 | ✅ | real-context ops |
+| `/clear` `/copy` `/stats` `/context` `/compact` `/shake` | 0.1.5 | ✅ | real-context ops; `/compact` is LLM-summarising (summary + retained tail, incremental) 0.1.7 |
 | `/login` | 0.1.5 | ✅ | = /setup providers tab |
 | `/logout <provider>` | 0.1.5 | ✅ | app.ts |
 | `/features` | 0.1.5 | ✅ | app.ts |
@@ -45,7 +47,7 @@
 |---|---|---|---|
 | `openkai` / `tui` (+ bare-flag launch) | 0.1.1 / 0.1.3 | ✅ | keyless boot 0.1.6 |
 | `chat --prompt` | 0.1.1 | ✅ | named exit on missing creds |
-| `sessions` | 0.1.1 | ✅ | |
+| `sessions` | 0.1.1 | ✅ | `--search <query>` 0.1.7 (fuzzy/`"phrase"`/`re:` via tui/session-search.ts); name column 0.1.7 |
 | `events --print` | 0.1.1 | ✅ | SSE bridge |
 | `fuse` (+`--cast`, `--gate`) | 0.1.1 / 0.1.5 | ✅ | |
 | `fusion report` / `advise` / `dashboard` | 0.1.1 / — / 0.1.6 | ✅ | dashboard K3-hardened |
@@ -102,6 +104,8 @@
 | In-TUI sign-in overlays (OAuth device + key entry) | 0.1.5 | ✅ | signin.ts / oauth.ts |
 | **Keyless boot + provider fallback** | 0.1.6 | ✅ | runtime.ts; pty-verified |
 | Permission overlays with inline diffs | 0.1.1 | ✅ | sanitised 0.1.2+ |
+| Permission overlay always-stops: `Always (session)` vs `Always (this project)` — the project stop persists `tools.approval.<tool> = "allow"` | 0.1.7 | ✅ | tui/permission.ts + config.ts (E017 pick 7) |
+| Settings routing tab: read-only per-tool approvals summary row | 0.1.7 | ✅ | settings.ts → config.json `tools.approval` |
 | Opaque overlays | 0.1.5 | ✅ | |
 | Attention notifications (focus-aware) | 0.1.1 | ✅ | attention.ts |
 | Role pills (per-agent identity) | 0.1.1 | ✅ | transcript.ts |
@@ -110,7 +114,15 @@
 | Terminal crash guard | 0.1.7 | ✅ | uncaughtException/unhandledRejection restore the terminal (alt-screen/raw) + print the error — a TUI crash can never wedge the terminal again |
 | Chip overflow policy | 0.1.7 | ✅ | status line drops low-priority chips (git→ctx→provider→…) before truncating; right side (tokens+model) never loses |
 | Daily tips | 0.1.5 | ✅ | feature-gated |
-| Auto-compact at 80% | 0.1.5 | ✅ | idle-only 0.1.6 |
+| Auto-compact at 80% | 0.1.5 | ✅ | idle-only 0.1.6; LLM-summarising swap (transport.compactSession, incremental summary) 0.1.7 — onAutoCompact tier hook preserved |
+| Steer-while-busy (typeahead steering) | 0.1.7 | ✅ | busy submit routes to transport.steer; dim `→ steering` suffix; persisted as a user entry (E017 pick 2) |
+| Word-level diff rows | 0.1.7 | ✅ | diff.ts renderDiff: paired -/+ inverse word highlights (pure-JS LCS, no diff pkg), stable 3-digit gutter, blanked repeats (E017 pick 3) |
+| Bracketed-paste decode + NFC | 0.1.7 | ✅ | tui/paste.ts: csi-u + xterm control-byte decode upstream of the editor (E017 pick 4) |
+| Atomic-token backspace | 0.1.7 | ✅ | composer.ts: cursor inside an unregistered paste marker deletes it whole (E017 pick 5) |
+| History search highlight + age labels | 0.1.7 | ✅ | history-search.ts: per-token accent ranges + now/Nm/Nh/Nd/Nw/Nmo/Ny (E017 pick 6) |
+| Session search picker (`/resume`) | 0.1.7 | ✅ | session-search.ts: fuzzy tokens + quoted phrases + re: regex, relevance + recency tie-break (E017 pick 5) |
+| Fork-from-message picker | 0.1.7 | ✅ | fork-picker.ts over store.listUserMessages/forkAtEntry; picked text restored to composer (E017 pick 3) |
+| Live task progress rows | 0.1.7 | ✅ | transcript.ts consumes tool_update partials: `● task: prompt · N tools · current tool`; settled keeps the stats line (E017 pick 6, contract #3) |
 | Mermaid→ASCII | 0.1.5 | ✅ | mermaid.ts |
 | Prompt stash + frecency history | 0.1.1 | ✅ | stash.ts |
 | Goal lifecycle on boot card | 0.1.5 | ✅ | goal.ts |
@@ -134,7 +146,12 @@
 | Casts | 0.1.5 | ✅ | operator casts 0.1.6 |
 | Shift (stage routing + tier scorer) | 0.1.5/0.1.6 | ✅ | composition wiring = E017 inc 02 |
 | Orchestration facade (`shift.posture`/`shift.pins` config, tier latch, gate-cap cascade retry, gate→bandit reward writeback) | 0.1.7 | ✅ | core orchestrate.ts; fuse.ts on the facade |
+| LLM-summarising compaction engine (`SessionTransport.compactSession(previousSummary?)` → `{summary, before, after}`; structured checkpoint + incremental UPDATE; `findCutPoint`/`keepRecentTokens` retained tail) | 0.1.7 | ✅ | local-transport.ts over pi-agent-core `generateSummaryWithUsage` (E017 contract #1) |
+| Session fork-at-entry (`store.listUserMessages()` + `store.forkAtEntry(entryId)` — root→entry path copied to a fresh session id, re-anchored parentIds, `parentSessionId` provenance) | 0.1.7 | ✅ | session-store.ts (E017 contract #2) |
+| Task live progress channel (tool `onUpdate` partials `{status, currentTool?, toolCount, turnDepth, sessionId, elapsedMs}` → `SessionEvent` kind `tool_update`) | 0.1.7 | ✅ | task.ts + events.ts (E017 contract #3) |
 | Permission engine + deny floor | 0.1.1 | ✅ | floor extended 0.1.6 (F10 closed: `.ssh` node denied) |
+| Persisted per-tool approval policy (`tools.approval.<tool>`: allow/deny; consulted deny-floor → config override → autonomy → session always-cache → ask) | 0.1.7 | ✅ | permission-gate.ts + config.ts (E017 pick 7; revisits session-only `always`) |
+| Headless approval path: `chat` runs the gate; `ask` auto-rejects with an actionable error (tool, config key, autonomy alternative) | 0.1.7 | ✅ | chat.ts `headlessApprovalError` (omp no-UI pattern) |
 | Shadow-git undo | 0.1.1 | ✅ | GIT_* scrub + gitignored capture 0.1.6 |
 | Secrets redaction at all write seams | 0.1.2 | ✅ | |
 | Hub/bridge listener hardening | 0.1.5/0.1.6 | ✅ | http-common.ts |

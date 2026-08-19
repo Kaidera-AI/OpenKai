@@ -10,6 +10,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { SessionStore } from "@kaidera/openkai-core";
+import { filterAndSortSessions, readSessionSearchRows } from "./tui/session-search.js";
 
 /** Options for the `sessions` command. */
 export interface SessionsOptions {
@@ -17,6 +18,12 @@ export interface SessionsOptions {
   root?: string;
   /** Show full entry details for one session id. */
   show?: string;
+  /**
+   * Filter the listing by a search query (E017 dossier pick 5): fuzzy
+   * tokens, `"quoted phrases"`, `re:` regex — the same language as the
+   * TUI's /resume picker (session-search.ts).
+   */
+  search?: string;
 }
 
 /** Run the sessions listing. */
@@ -27,45 +34,28 @@ export async function runSessions(options: SessionsOptions): Promise<number> {
     return showSession(root, options.show);
   }
 
-  let entries: import("node:fs").Dirent[];
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true });
-  } catch {
-    // No sessions dir yet — clean empty state.
+  const rows = await readSessionSearchRows(root, { withText: options.search !== undefined });
+  if (rows.length === 0) {
     process.stdout.write("(no sessions)\n");
     return 0;
   }
 
-  const sessionIds = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-  if (sessionIds.length === 0) {
-    process.stdout.write("(no sessions)\n");
+  // Search ranks by relevance (the picker's order); a plain listing keeps
+  // the legacy alphabetical-by-id order.
+  const filtered =
+    options.search !== undefined
+      ? filterAndSortSessions(rows, options.search, "relevance")
+      : [...rows].sort((a, b) => a.id.localeCompare(b.id));
+  if (filtered.length === 0) {
+    process.stdout.write(`(no sessions matching ${JSON.stringify(options.search)})\n`);
     return 0;
   }
 
-  process.stdout.write("session_id\tentries\tfirst_user_message\n");
-  for (const sessionId of sessionIds.sort()) {
-    const store = new SessionStore({ root, sessionId });
-    try {
-      const storeEntries = await store.readEntries();
-      const header = await store.readHeader();
-      const messageEntries = storeEntries.filter((e) => e.type === "message");
-      const firstUser = messageEntries.find((e) => {
-        if (e.type !== "message") return false;
-        return e.message.role === "user";
-      });
-      const snippet =
-        firstUser && firstUser.type === "message"
-          ? contentSnippet(firstUser.message)
-          : "";
-      const parent = header?.parentSessionId ? ` ← ${header.parentSessionId.slice(0, 8)}` : "";
-      process.stdout.write(
-        `${sessionId}\t${messageEntries.length}\t${snippet}${parent}\n`,
-      );
-    } catch (error) {
-      process.stderr.write(
-        `ERROR reading ${sessionId}: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-    }
+  process.stdout.write("session_id\tname\tentries\tfirst_user_message\n");
+  for (const row of filtered) {
+    const snippet = row.firstUserMessage.replace(/\n/g, " ").slice(0, 60);
+    const parent = row.parentSessionId ? ` ← ${row.parentSessionId.slice(0, 8)}` : "";
+    process.stdout.write(`${row.id}\t${row.name ?? ""}\t${row.messageCount}\t${snippet}${parent}\n`);
   }
   return 0;
 }

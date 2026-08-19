@@ -4,9 +4,12 @@
  *
  * Shown via `tui.showOverlay(...)` when the controller receives a
  * `permission_request`. Renders the tool name + rule, a diff/command preview,
- * a three-item {@link SelectList} (`Allow once` / `Allow always` / `Reject`),
- * and the canonical overlay footer (scope §3.2 + §5: identical footer grammar
- * to every other overlay — ad-hoc literals are a review defect).
+ * a four-item {@link SelectList} (`Allow once` / `Always (session)` /
+ * `Always (this project)` / `Reject`), and the canonical overlay footer
+ * (scope §3.2 + §5: identical footer grammar to every other overlay — ad-hoc
+ * literals are a review defect). The project-scoped always stop persists
+ * `tools.approval.<tool> = "allow"` to config.json (E017 pick 7) and emits a
+ * plain `always` to the controller, so `transport.respond` is untouched.
  *
  * **All colour comes from theme.ts** — removed diff lines use
  * `highlight.danger` (red), added lines use `highlight.base` (cyan); the rule
@@ -23,6 +26,7 @@
 import { SelectList, type SelectItem } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
 import type { PermissionPreview } from "@kaidera/openkai-core";
+import { writeToolApproval } from "../config.js";
 import { sanitizeTerminalText } from "./sanitize.js";
 import { highlight, renderOverlayFooter, surface, text as textToken, toolBorder } from "./theme.js";
 
@@ -41,13 +45,23 @@ function oneLine(value: string): string {
   return sanitizeTerminalText(value).replace(/\n/g, " ");
 }
 
-/** The approval decision the overlay emits to the controller. */
+/**
+ * The approval decision the overlay emits to the controller. Both always
+ * stops emit `always` — the project-scoped stop additionally persists
+ * `tools.approval.<tool> = "allow"` itself, so the controller/gate contract
+ * (`transport.respond`) is unchanged.
+ */
 export type PermissionDecision = "once" | "always" | "reject";
 
-/** The three approval actions surfaced as a SelectList. */
+/**
+ * The approval actions surfaced as a SelectList (E017 pick 7: the single
+ * `always` of P4b splits into two stops — session-scoped cache vs the
+ * persisted per-tool policy key).
+ */
 const APPROVAL_ITEMS: SelectItem[] = [
   { value: "once", label: "Allow once", description: "approve this call only" },
-  { value: "always", label: "Allow always", description: "approve identical calls this session" },
+  { value: "always", label: "Always (session)", description: "approve identical calls this session" },
+  { value: "always-project", label: "Always (this project)", description: "persist tools.approval.<tool> = allow in config.json" },
   { value: "reject", label: "Reject", description: "deny and tell the model" },
 ];
 
@@ -91,6 +105,16 @@ export class PermissionOverlay implements Component {
     this.select.onSelect = (item) => {
       if (this.answered) return;
       this.answered = true;
+      if (item.value === "always-project") {
+        // Persist the per-tool override (the RAW tool name is the config key —
+        // the sanitised display copy must never leak into storage), then emit
+        // the plain session `always` so the gate caches this call signature
+        // too. The gate re-reads the policy map live, so the key applies from
+        // the next request onward.
+        writeToolApproval(options.toolName, "allow");
+        this.onDecision("always");
+        return;
+      }
       this.onDecision(item.value as PermissionDecision);
     };
     this.select.onCancel = () => {

@@ -7,6 +7,12 @@
  * stream to stdout; tool calls and usage are logged to stderr; the settled
  * transcript is persisted and checkpointed at turn settlement.
  *
+ * The permission gate runs here too (E017 pick 7): a persisted
+ * `tools.approval.<tool> = "allow"` override in ~/.openkai/config.json
+ * pre-approves a gated tool for headless/CI runs; anything else that would
+ * prompt is auto-rejected with the actionable {@link headlessApprovalError}
+ * text (no interactive approval channel exists in print mode).
+ *
  * Fail-fast contract: if `OPENROUTER_API_KEY` is missing the command exits 1
  * with a named error before any network or file I/O.
  */
@@ -21,6 +27,7 @@ import {
   CortexCheckpoint,
 } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { readToolApprovals } from "./config.js";
 import { providerKeyStatus, resolveProvider } from "./providers.js";
 
 /** Options for the `chat` command. */
@@ -45,6 +52,22 @@ export interface ChatResult {
 }
 
 const AGENT_NAME_DEFAULT = "openkai";
+
+/**
+ * The actionable headless-approval error (E017 pick 7, omp's no-UI pattern):
+ * names the tool, the exact config key that pre-approves it, and the
+ * autonomy alternative. Printed to stderr when the gate would ask but this
+ * print-mode run has no approval channel to ask through.
+ */
+export function headlessApprovalError(toolName: string): string {
+  return (
+    `Tool "${toolName}" requires approval, but this run is headless — no approval channel is available.\n` +
+    `Options:\n` +
+    `  1. Persist an override: add "tools": { "approval": { "${toolName}": "allow" } } to ~/.openkai/config.json\n` +
+    `  2. Raise the autonomy axis: run interactively and /autonomy high (auto-approves every gated tool)\n` +
+    `  3. Run interactively (\`openkai\`) to approve the call in the permission overlay`
+  );
+}
 
 /** Run a single-prompt chat turn. */
 export async function runChat(options: ChatOptions): Promise<ChatResult> {
@@ -94,6 +117,10 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
   });
 
   // ── 4. Transport (Agent over OpenRouter) ───────────────────────────────
+  // E017 pick 7: the gate is enabled in print mode too, so a persisted
+  // `tools.approval.<tool> = "allow"` override (config.json) unblocks
+  // headless/CI runs. Anything that still resolves to `ask` is auto-rejected
+  // below with the actionable headless error (no approval channel exists here).
   let transport: InProcessTransport;
   try {
     transport = new InProcessTransport({
@@ -102,7 +129,10 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
       provider,
       systemPrompt: options.systemPrompt,
       cwd,
+      enablePermissions: true,
     });
+    // Consult the persisted per-tool policy live (config edits mid-run apply).
+    transport.gate?.setToolPolicySource(() => readToolApprovals());
   } catch (error) {
     if (error instanceof MissingApiKeyError) {
       process.stderr.write(`${error.message}\n`);
@@ -151,6 +181,12 @@ export async function runChat(options: ChatOptions): Promise<ChatResult> {
           break;
         case "tool_call":
           log(`tool_call: ${event.toolName}`);
+          break;
+        case "permission_request":
+          // Headless: nothing can answer the prompt. Reject immediately and
+          // tell the operator exactly how to unblock the tool (omp pattern).
+          process.stderr.write(`${headlessApprovalError(event.toolName)}\n`);
+          transport.respond(event.requestId, "reject");
           break;
         case "tool_result": {
           const summary =

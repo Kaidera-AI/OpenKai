@@ -25,9 +25,28 @@
 
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import type { Component } from "@earendil-works/pi-tui";
+import type { TaskProgress } from "@kaidera/openkai-core";
 import { highlight, markdownTheme, rolePill, text as textToken, toolBorder } from "./theme.js";
 import { sanitizeTerminalText } from "./sanitize.js";
 import { renderMermaidBlocks, type MermaidTheme } from "./mermaid.js";
+
+/**
+ * Narrow a `tool_update` partial to the task tool's progress payload
+ * (E017 contract #3): `partial.details` carries the {@link TaskProgress}.
+ * Returns undefined for any other shape — other tools' partials are ignored.
+ */
+export function extractTaskProgress(partial: unknown): TaskProgress | undefined {
+  if (typeof partial !== "object" || partial === null || !("details" in partial)) return undefined;
+  const details = partial.details;
+  if (typeof details !== "object" || details === null) return undefined;
+  if (!("status" in details) || typeof details.status !== "string") return undefined;
+  if (!("toolCount" in details) || typeof details.toolCount !== "number") return undefined;
+  if (!("turnDepth" in details) || typeof details.turnDepth !== "number") return undefined;
+  if (!("elapsedMs" in details) || typeof details.elapsedMs !== "number") return undefined;
+  // All discriminating fields validated above; the rest are optional strings.
+  const progress: TaskProgress = details as TaskProgress;
+  return progress;
+}
 
 const mermaidTheme: MermaidTheme = {
   borderMuted: (t) => textToken.muted(t),
@@ -120,7 +139,7 @@ type Block =
   | { kind: "thinking"; text: string; revealed: boolean; comp: Text }
   | { kind: "notice"; text: string; comp: Text }
   | { kind: "btw"; question: string; text: string; comp: Markdown }
-  | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result: unknown | null; isError: boolean; settled: boolean; comp: Text };
+  | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result: unknown | null; isError: boolean; settled: boolean; progress?: TaskProgress; comp: Text };
 
 /** A muted left-border prefix for tool cards (scope §3.1). */
 function toolPrefix(): string {
@@ -152,11 +171,14 @@ export class Transcript implements Component {
   private width = 80;
 
   /** Add a user message block at the top of a turn. */
-  addUserMessage(text: string): void {
+  addUserMessage(text: string, suffix?: string): void {
     // Dim marker, not a shouty bold label — the operator's own text needs no
     // emphasis, the model's output does. Sanitised: pastes can carry escapes.
     const clean = sanitizeTerminalText(text);
-    const comp = new Text(`${textToken.dim("You")}\n\n${clean}`, 1, 0);
+    // Steer-while-busy (E017 pick 2): a mid-turn message carries a dim
+    // `→ steering` suffix so the operator sees it landed on the running turn.
+    const tag = suffix !== undefined ? `  ${textToken.dim(suffix)}` : "";
+    const comp = new Text(`${textToken.dim("You")}${tag}\n\n${clean}`, 1, 0);
     this.blocks.push({ kind: "user", text: clean, comp });
   }
 
@@ -327,6 +349,7 @@ export class Transcript implements Component {
     result?: unknown;
     isError?: boolean;
     message?: string;
+    partial?: unknown;
   }): void {
     switch (event.kind) {
       case "connected":
@@ -341,6 +364,9 @@ export class Transcript implements Component {
       }
       case "tool_call":
         this.openTool(event.toolCallId ?? "?", event.toolName ?? "?", event.args);
+        break;
+      case "tool_update":
+        this.updateTool(event.toolCallId ?? "?", event.partial);
         break;
       case "tool_result":
         this.settleTool(event.toolCallId ?? "?", event.result, event.isError ?? false);
@@ -437,6 +463,23 @@ export class Transcript implements Component {
     this.openTools.set(toolCallId, this.blocks.length - 1);
   }
 
+  /**
+   * Apply a `tool_update` partial (E017 contract #3): the task tool streams
+   * live progress (`status · toolCount · currentTool · elapsedMs`) through
+   * the onUpdate channel — the open card re-renders as a live row instead of
+   * a silent wait. Non-task partials are ignored.
+   */
+  private updateTool(toolCallId: string, partial: unknown): void {
+    const progress = extractTaskProgress(partial);
+    if (progress === undefined) return;
+    const index = this.openTools.get(toolCallId);
+    if (index === undefined) return;
+    const block = this.blocks[index]!;
+    if (block.kind !== "tool") return;
+    block.progress = progress;
+    block.comp.setText(this.renderToolCard(block.toolName, block.args, block.result, block.isError, progress));
+  }
+
   /** Settle a tool card with its result. */
   private settleTool(toolCallId: string, result: unknown, isError: boolean): void {
     const index = this.openTools.get(toolCallId);
@@ -446,7 +489,7 @@ export class Transcript implements Component {
     block.result = result;
     block.isError = isError;
     block.settled = true;
-    block.comp.setText(this.renderToolCard(block.toolName, block.args, result, isError));
+    block.comp.setText(this.renderToolCard(block.toolName, block.args, result, isError, block.progress));
     this.openTools.delete(toolCallId);
   }
 
@@ -455,8 +498,14 @@ export class Transcript implements Component {
    * key:value pairs, results unwrapped to their text content (never the raw
    * envelope JSON). World-class means the operator reads WHAT HAPPENED, not
    * the wire shape.
+   *
+   * The task tool renders omp's live subagent row (E017 dossier pick 6):
+   * `● task: <prompt preview> · N tools · <current tool>` while running —
+   * the dot settles accent→plain on completion ("completion reads as a
+   * colour change, not a new glyph") and the settled card keeps the stats
+   * line (tools · elapsed).
    */
-  private renderToolCard(toolName: string, args: unknown, result: unknown | null, isError: boolean): string {
+  private renderToolCard(toolName: string, args: unknown, result: unknown | null, isError: boolean, progress?: TaskProgress): string {
     const status = result === null
       ? highlight.base("● running…")
       : isError
@@ -464,6 +513,11 @@ export class Transcript implements Component {
         : highlight.base("✓ done");
     // The tool name is model-chosen too (E001 finding F6c).
     const safeName = sanitizeTerminalText(toolName).replace(/\n/g, " ");
+
+    if (toolName === "task") {
+      return this.renderTaskCard(args, result, isError, progress);
+    }
+
     const head = `${toolPrefix()}${highlight.base(safeName)} ${textToken.dim("·")} ${status}`;
 
     const argLines = formatArgs(args).map(
@@ -479,6 +533,36 @@ export class Transcript implements Component {
       `${toolPrefix()}  ${isError ? highlight.danger(line) : textToken.muted(line)}`,
     );
     return [head, ...argLines, ...rendered].join("\n");
+  }
+
+  /** The task tool's card: a live subagent row while running, stats when settled. */
+  private renderTaskCard(args: unknown, result: unknown | null, isError: boolean, progress?: TaskProgress): string {
+    let promptPreview = "";
+    if (typeof args === "object" && args !== null && "prompt" in args && typeof args.prompt === "string") {
+      promptPreview = sanitizeTerminalText(args.prompt).replace(/\s+/g, " ").trim();
+    }
+    if (promptPreview.length > 40) promptPreview = `${promptPreview.slice(0, 39)}…`;
+
+    const stats: string[] = [];
+    if (progress !== undefined) {
+      stats.push(`${progress.toolCount} tool${progress.toolCount === 1 ? "" : "s"}`);
+      if (progress.status !== "running") stats.push(progress.status);
+      stats.push(`${(progress.elapsedMs / 1000).toFixed(1)}s`);
+    }
+    const running = result === null;
+    // Running: the dot is accent-bright and the current tool trails the
+    // stats; settled: plain dot ("completion reads as a colour change").
+    const dot = running ? highlight.base("●") : isError ? highlight.danger("✗") : textToken.base("●");
+    const current = running && progress?.currentTool !== undefined ? ` ${textToken.dim("·")} ${textToken.muted(sanitizeTerminalText(progress.currentTool))}` : "";
+    const head = `${toolPrefix()}${dot} ${highlight.base("task")}${promptPreview ? `: ${textToken.base(promptPreview)}` : ""}${stats.length > 0 ? ` ${textToken.dim("·")} ${textToken.dim(stats.join(" · "))}` : ""}${current}`;
+
+    if (result === null) return head;
+
+    const resultLines = extractResultText(result, isError);
+    const rendered = resultLines.map((line) =>
+      `${toolPrefix()}  ${isError ? highlight.danger(line) : textToken.muted(line)}`,
+    );
+    return [head, ...rendered].join("\n");
   }
 
   // ── Component ───────────────────────────────────────────────────────────

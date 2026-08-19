@@ -35,6 +35,7 @@ import {
 } from "@kaidera/openkai-core";
 import { defaultModels } from "@kaidera/openkai-core";
 import { readShiftConfig } from "../fuse.js";
+import { readToolApprovals } from "../config.js";
 import type { RoutingEvent } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildTuiApp, type RunMode, type ExitRequest } from "./app.js";
@@ -76,6 +77,8 @@ export interface RunTuiOptions {
   agent?: string;
   sessionsRoot?: string;
   quiet?: boolean;
+  /** Composer prefill applied after boot (carried across restart exits). */
+  prefill?: string;
 }
 
 /** Resolved run mode + wiring (A1). */
@@ -124,10 +127,12 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     await runWelcome();
   }
   let session = options.session;
+  let prefill = options.prefill;
   for (;;) {
-    const { code, next } = await runSession({ ...options, session });
+    const { code, next } = await runSession({ ...options, session, ...(prefill !== undefined ? { prefill } : {}) });
     if (next.kind === "quit") return code;
     session = next.sessionId;
+    prefill = next.prefill;
   }
 }
 
@@ -300,11 +305,16 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     });
   } catch (error) {
     if (error instanceof MissingApiKeyError) {
-      process.stderr.write(`${error.message}\n`);
-      return { code: 1, next: { kind: "quit" } };
+      process.stderr.write(`${error.message}\n`);      return { code: 1, next: { kind: "quit" } };
     }
     throw error;
   }
+
+  // E017 pick 7: the gate consults the persisted per-tool policy
+  // (config.json tools.approval.<tool>) live — after the deny floor, before
+  // the autonomy axis — so the overlay's "always (this project)" stop and
+  // hand-edited keys apply without a restart.
+  transport.gate?.setToolPolicySource(() => readToolApprovals());
 
   // Discover MCP tools AFTER construction so the proxies execute under the
   // transport's permission gate (E010), then merge them into the gated set —
@@ -461,6 +471,9 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     onExit: requestExit,
   });
   const { root, composer, controller } = app;
+  // A restart exit can carry composer prefill (e.g. the fork picker's picked
+  // user text) — restore it so the text survives the session rebuild.
+  if (options.prefill) composer.prefill(options.prefill);
   // Bind the routing forwarder (declared before the transport so the activity
   // seam could reference it): facade/shift events now reach the chrome live.
   routingToTui = (event) => controller.applyRoutingEvent(event);

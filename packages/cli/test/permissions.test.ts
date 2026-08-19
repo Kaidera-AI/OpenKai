@@ -259,9 +259,11 @@ test("golden-frame: overlay shows the P4a footer grammar and theme-token diff co
   // removed → highlight.danger (red 124). Ad-hoc colour literals are a defect.
   assert.ok(rawFrame.includes("\x1b[38;5;39m"), "added diff lines use the cyan highlight token (39)");
   assert.ok(rawFrame.includes("\x1b[38;5;124m"), "removed diff lines use the red danger token (124)");
-  // The three approval actions are present.
+  // The four approval actions are present (E017 pick 7: the always stop split
+  // into session-scoped and persisted project-scoped).
   assert.ok(frame.includes("Allow once"), "Allow once action present");
-  assert.ok(frame.includes("Allow always"), "Allow always action present");
+  assert.ok(frame.includes("Always (session)"), "Always (session) action present");
+  assert.ok(frame.includes("Always (this project)"), "Always (this project) action present");
   assert.ok(frame.includes("Reject"), "Reject action present");
 
   // Capture the acceptance-evidence overlay frame from THIS run, so the

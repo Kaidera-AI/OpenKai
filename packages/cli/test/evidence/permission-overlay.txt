@@ -12,6 +12,7 @@
 [38;5;39m+ new line two[39m
 [38;5;244m[38;5;241m────────────────────────────────────────────────────────────────────────[39m[39m
 [38;5;39m→ Allow once                      approve this call only[39m
-  Allow always[38;5;244m                    approve identical calls this session[39m
+  Always (session)[38;5;244m                approve identical calls this session[39m
+  Always (this project)[38;5;244m           persist tools.approval.<tool> = allow in con[0m[39m
   Reject[38;5;244m                          deny and tell the model[39m
 [38;5;244m↑/↓ Navigate · Enter Select · ESC Cancel[39m

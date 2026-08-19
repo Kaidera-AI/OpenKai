@@ -56,6 +56,18 @@ export function mapAgentEvent(event: AgentEvent): StrippedSessionEvent[] {
         },
       ];
 
+    case "tool_execution_update":
+      // Partial progress from a running tool (E017 contract #3 — the task
+      // tool's live status/currentTool/toolCount/turnDepth rows).
+      return [
+        {
+          kind: "tool_update",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          partial: event.partialResult,
+        },
+      ];
+
     case "tool_execution_end":
       return [
         {
@@ -94,8 +106,8 @@ export function mapAgentEvent(event: AgentEvent): StrippedSessionEvent[] {
     case "agent_end":
       return [{ kind: "session_end", messageCount: event.messages.length }];
 
-    // turn_start, message_start, message_end, tool_execution_update carry no
-    // information the print-mode consumer needs at P2 granularity.
+    // turn_start, message_start, message_end carry no information the
+    // print-mode consumer needs at P2 granularity.
     default:
       return [];
   }

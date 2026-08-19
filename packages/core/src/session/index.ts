@@ -28,10 +28,12 @@ export {
   type PermissionGate,
   type PermissionOutcome,
   type PushPermissionEvent,
+  type ToolApprovalPolicy,
+  type ToolPolicySource,
   SessionPermissionGate,
   buildDiffPreview,
   readForPreview,
   resolvePreviewPath,
   truncateDiff,
 } from "./permission-gate.js";
-export { taskTool, extractAndValidateJson, steerChild, activeChildren } from "./task.js";
+export { taskTool, extractAndValidateJson, steerChild, activeChildren, type TaskProgress } from "./task.js";

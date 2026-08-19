@@ -153,3 +153,60 @@ export function writeShiftPosture(posture: ShiftPosture): void {
   config["shift"] = { ...existing, posture };
   writeConfigFile(config);
 }
+
+// ── Per-tool approval policy (E017 pick 7, omp tools.approval.<tool> model) ──
+// Shape: "tools": { "approval": { "<toolName>": "allow" | "deny" } }.
+// The absence of a key means prompt-by-default; last write wins. The gate
+// (core permission-gate.ts) consults this live through a ToolPolicySource —
+// after the deny floor, before the autonomy axis. This type mirrors the
+// core `ToolApprovalPolicy` (structurally identical; kept local so the CLI
+// storage layer has no import-order coupling to the core session index).
+
+/** A persisted per-tool approval policy value. */
+export type ToolApprovalPolicy = "allow" | "deny";
+
+/** Read the persisted per-tool approval map (invalid values filtered out). */
+export function readToolApprovals(): Record<string, ToolApprovalPolicy> {
+  const tools = readConfigFile()["tools"];
+  if (!tools || typeof tools !== "object" || Array.isArray(tools)) return {};
+  const approval = (tools as Record<string, unknown>)["approval"];
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) return {};
+  const out: Record<string, ToolApprovalPolicy> = {};
+  for (const [tool, value] of Object.entries(approval as Record<string, unknown>)) {
+    if (value === "allow" || value === "deny") out[tool] = value;
+  }
+  return out;
+}
+
+/**
+ * Persist a per-tool approval policy. `undefined` removes the key (back to
+ * prompt-by-default); empty `approval` / `tools` maps are pruned so the
+ * config never accretes hollow objects.
+ */
+export function writeToolApproval(toolName: string, policy: ToolApprovalPolicy | undefined): void {
+  const config = readConfigFile();
+  const tools = config["tools"];
+  const toolsObj = tools && typeof tools === "object" && !Array.isArray(tools)
+    ? { ...(tools as Record<string, unknown>) }
+    : {};
+  const approval = toolsObj["approval"];
+  const approvalObj = approval && typeof approval === "object" && !Array.isArray(approval)
+    ? { ...(approval as Record<string, unknown>) }
+    : {};
+  if (policy === undefined) {
+    delete approvalObj[toolName];
+  } else {
+    approvalObj[toolName] = policy;
+  }
+  if (Object.keys(approvalObj).length > 0) {
+    toolsObj["approval"] = approvalObj;
+  } else {
+    delete toolsObj["approval"];
+  }
+  if (Object.keys(toolsObj).length > 0) {
+    config["tools"] = toolsObj;
+  } else {
+    delete config["tools"];
+  }
+  writeConfigFile(config);
+}

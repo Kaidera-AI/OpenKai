@@ -348,6 +348,80 @@ export class SessionStore {
       return undefined;
     }
   }
+
+  /**
+   * Every user message in the tree, oldest first, with its entry id (E017
+   * contract #2 — the fork picker's rows). Text is the message's joined text
+   * parts, single-line-normalised for picker display.
+   */
+  async listUserMessages(): Promise<Array<{ entryId: string; text: string; timestamp: number }>> {
+    const entries = await this.readEntries();
+    const out: Array<{ entryId: string; text: string; timestamp: number }> = [];
+    for (const entry of entries) {
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message === null || typeof message !== "object" || !("role" in message) || message.role !== "user") continue;
+      const content = (message as { content?: unknown }).content;
+      let text = "";
+      if (typeof content === "string") {
+        text = content;
+      } else if (Array.isArray(content)) {
+        const parts: string[] = [];
+        for (const part of content as unknown[]) {
+          if (part !== null && typeof part === "object" && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string") {
+            parts.push(part.text);
+          }
+        }
+        text = parts.join("\n");
+      }
+      out.push({ entryId: entry.id, text: text.replace(/\s+/g, " ").trim(), timestamp: entry.timestamp });
+    }
+    return out;
+  }
+
+  /**
+   * Fork at a past entry (E017 contract #2 — rewind-to-point): copy the
+   * root→`entryId` path into a NEW session with a fresh id whose header's
+   * `parentSessionId` names this session. Entry ids are re-minted and
+   * parentIds re-anchored along the copy so the fork is a self-contained
+   * linear tree. Returns the new store (locked open; caller closes).
+   * Throws when `entryId` names no entry in this tree.
+   */
+  async forkAtEntry(entryId: string): Promise<SessionStore> {
+    const entries = await this.readEntries();
+    const byId = new Map<string, Entry>();
+    for (const entry of entries) byId.set(entry.id, entry);
+    // Walk leaf→root from the target, then reverse into root→target order.
+    const pathEntries: Entry[] = [];
+    let cursor: string | null = entryId;
+    while (cursor !== null) {
+      const entry = byId.get(cursor);
+      if (entry === undefined) {
+        throw new SessionFormatError(
+          `fork point ${cursor} is not an entry of session ${this.sessionId}`,
+        );
+      }
+      pathEntries.push(entry);
+      cursor = entry.parentId;
+    }
+    pathEntries.reverse();
+
+    const root = path.dirname(this.dirPath);
+    const fork = new SessionStore({ root, parentSessionId: this.sessionId });
+    await fork.ensure();
+    // Appending in path order re-anchors each entry's parentId onto the
+    // fork's own chain (appendEntry chains to the fork's leafId).
+    for (const entry of pathEntries) {
+      if (entry.type === "message") {
+        await fork.appendMessage(entry.message, entry.terminate);
+      } else if (entry.type === "compaction") {
+        await fork.appendCompaction(entry.summary, entry.retainedTail, entry.tokensBefore, entry.details, entry.usage);
+      } else {
+        await fork.appendCustom(entry.customType, entry.data);
+      }
+    }
+    return fork;
+  }
 }
 
 /** kill(pid, 0) liveness probe: ESRCH = dead, EPERM = alive but not ours. */

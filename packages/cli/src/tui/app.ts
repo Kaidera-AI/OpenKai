@@ -31,8 +31,6 @@ import {
   CortexCheckpoint,
   SessionStore,
   ShadowGit,
-  forkSession,
-  listSessions,
   redactSecrets,
   sessionTree,
   type FuseResult,
@@ -63,6 +61,9 @@ const STATUSLINE_PRESET_CHIPS: Record<string, StatuslineChip[]> = {
 import { ModelPicker } from "./model-picker.js";
 import { LevelPicker } from "./level-picker.js";
 import { HistorySearch } from "./history-search.js";
+import { ForkPicker, type ForkPoint } from "./fork-picker.js";
+import { SessionSearchPicker, readSessionSearchRows, sessionNameFromEntries } from "./session-search.js";
+import { exportSessionToHtml } from "./export-html.js";
 import { ModelsHub } from "./models-hub.js";
 import { SettingsOverlay } from "./settings.js";
 import { runWelcome, readConfig } from "./welcome.js";
@@ -73,6 +74,7 @@ import { changelogHead } from "./changelog.js";
 import { DiffOverlay } from "./diff.js";
 import { activityLogPath } from "../tail.js";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { promises as fsp } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -117,7 +119,7 @@ export type RunMode = "local" | "managed";
 /** What the app is asking the runtime to do next. */
 export type ExitRequest =
   | { kind: "quit" }
-  | { kind: "restart"; sessionId?: string };
+  | { kind: "restart"; sessionId?: string; prefill?: string };
 
 /** Options shared by both entry points. */
 export interface TuiAppOptions {
@@ -404,9 +406,18 @@ export class TuiController {
         this.toggleFast();
         break;
       case "sessions": {
-        const ids = await listSessions(this.sessionsRoot);
+        const root = this.sessionsRoot ?? path.join(this.cwd, ".openkai", "sessions");
+        const rows = await readSessionSearchRows(root, { withText: false });
         this.transcript.addNotice(
-          ids.length === 0 ? "sessions: none yet" : ["sessions:", ...ids.map((id) => `  ${id}${id === this.sessionId ? "  (current)" : ""}`)],
+          rows.length === 0
+            ? "sessions: none yet"
+            : [
+                "sessions:",
+                ...rows.map(
+                  (row) =>
+                    `  ${row.name ? `${row.name} (${row.id.slice(0, 8)})` : row.id} · ${row.messageCount} msgs${row.id === this.sessionId ? "  (current)" : ""}`,
+                ),
+              ],
         );
         break;
       }
@@ -416,7 +427,7 @@ export class TuiController {
         break;
       case "resume":
         if (argument.length === 0) {
-          this.transcript.addNotice("resume: needs a session id — /resume <id> (see /sessions)");
+          await this.openSessionSearch();
           break;
         }
         this.transcript.addNotice(`resuming ${argument}…`);
@@ -467,13 +478,9 @@ export class TuiController {
         this.tui.requestRender();
         break;
       }
-      case "fork": {
-        const fork = await forkSession(this.store);
-        this.transcript.addNotice(
-          `forked → ${fork.sessionId.slice(0, 8)} — resume with: openkai --session ${fork.sessionId}`,
-        );
+      case "fork":
+        await this.openForkPicker();
         break;
-      }
       case "tree": {
         const rows = await sessionTree(this.sessionsRoot);
         if (rows.length === 0) {
@@ -486,6 +493,46 @@ export class TuiController {
           return `${depth}${r.sessionId.slice(0, 8)} · ${r.messages} msgs${current}`;
         });
         this.transcript.addNotice(["session tree:", ...lines]);
+        break;
+      }
+      case "name": {
+        // Session display name (E017 pick 8): persisted as a `session_name`
+        // custom entry (the append-only analogue of pi's session_info entry);
+        // /sessions, the /resume picker, and /export all read it back.
+        const name = argument.trim();
+        if (!name) {
+          const current = sessionNameFromEntries(await this.store.readEntries());
+          this.transcript.addNotice(current ? `/name — this session is "${current}"` : "/name — no name set; usage: /name <display-name>");
+          break;
+        }
+        await this.store.appendCustom("session_name", { name });
+        this.transcript.addNotice(`/name — session named "${name}" (shows in /sessions + /resume search)`);
+        break;
+      }
+      case "export": {
+        // /export [path] (E017 pick 8): a self-contained HTML transcript of
+        // this session (inline CSS, theme colours). A .jsonl suffix dumps
+        // the raw session file instead (pi's convention).
+        const entries = await this.store.readEntries();
+        let target = argument.trim();
+        if (target.length === 0) {
+          target = path.join(this.cwd, `openkai-session-${this.sessionId.slice(0, 8)}.html`);
+        }
+        try {
+          if (target.endsWith(".jsonl")) {
+            await fsp.copyFile(this.store.filePath, target);
+          } else {
+            const html = exportSessionToHtml({
+              sessionId: this.sessionId,
+              name: sessionNameFromEntries(entries),
+              entries,
+            });
+            await fsp.writeFile(target, html, "utf-8");
+          }
+          this.transcript.addNotice(`/export — session exported to: ${target}`);
+        } catch (error) {
+          this.transcript.addError(`/export — failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
         break;
       }
       case "autonomy":
@@ -622,25 +669,24 @@ export class TuiController {
         break;
       }
       case "compact": {
-        // omp's /compact: summarise the conversation into a compact form,
-        // replacing the message history with a single system summary. We
-        // implement the elide variant: keep the system prompt + last
-        // user/assistant pair, drop everything in between into a summary.
-        const messages = this.transport.getMessages();
-        if (messages.length < 4) {
-          this.transcript.addNotice("/compact — not enough context to compact (need 4+ messages)");
+        // Real LLM-summarising compaction (E017 pick 1): the transport runs
+        // pi-agent-core's structured checkpoint summariser (Goal / Progress /
+        // Decisions / Next Steps) over the conversation and swaps in
+        // summary + retained tail. The previous summary is passed along so a
+        // second /compact folds new turns in incrementally instead of
+        // starting cold.
+        if (this.busy) {
+          this.transcript.addNotice("/compact — a turn is running; compact when it settles");
           break;
         }
-        const before = messages.length;
-        // Keep the first system/user message and the last two messages;
-        // everything in between is dropped (the model loses the middle,
-        // keeps the ends — omp's elide compact mode).
-        const head = messages.slice(0, 1);
-        const tail = messages.slice(-2);
-        const compacted = [...head, ...tail];
-        this.transport.setMessages(compacted);
+        const result = await this.transport.compactSession(this.compactSummary);
+        if (result === undefined) {
+          this.transcript.addNotice("/compact — nothing worth compacting yet");
+          break;
+        }
+        this.compactSummary = result.summary;
         this.transcript.addNotice(
-          `/compact — ${before} → ${compacted.length} messages (elided the middle; system + last exchange kept)`,
+          `/compact — ${result.before} → ${result.after} messages (model-written summary + retained tail; the next compact updates it incrementally)`,
         );
         break;
       }
@@ -712,9 +758,24 @@ export class TuiController {
   /** Submit a user prompt: persist + display + fire the transport turn. */
   async submit(text: string): Promise<void> {
     if (this.busy) {
-      // Mirror btw(): never interleave turns — notice only, nothing is
-      // persisted or rendered as a user block.
-      this.transcript.addNotice("a turn is already running — wait for it to settle");
+      // Steer-while-busy (E017 dossier pick 2): route the text into the
+      // RUNNING turn (pi's steering queue drains after the current turn's
+      // tool batch) instead of rejecting it. The message renders with a dim
+      // `→ steering` suffix so the operator sees it landed, and persists as
+      // a real user message so /resume keeps it (pi persists steered
+      // messages as user entries; so do we). Bash mode keeps the old
+      // refusal — a steered `$ …` line would be a text injection, not a shell
+      // run.
+      if (this.bashMode) {
+        this.transcript.addNotice("a turn is already running — wait for it to settle");
+        this.tui.requestRender();
+        return;
+      }
+      const steerMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
+      await this.store.appendMessage(steerMsg);
+      this.transcript.addUserMessage(text, "→ steering");
+      this.recordPrompt(text);
+      this.transport.steer(text);
       this.tui.requestRender();
       return;
     }
@@ -886,8 +947,13 @@ export class TuiController {
       this.tui.requestRender();
       return;
     }
+    // Frecency entries carry lastUsed (scope §1.4) — the overlay shows a
+    // relative-time label when it knows the timestamp (E017 pick 6).
+    const ranked = this.history?.ranked(Date.now()) ?? [];
+    const tsByText = new Map(ranked.map((e) => [e.text, e.lastUsed]));
+    const entries = history.map((text) => ({ text, timestamp: tsByText.get(text) }));
     const search = new HistorySearch(
-      history,
+      entries,
       (text) => {
         this.tui.hideOverlay();
         this.composer?.prefill(text);
@@ -899,6 +965,69 @@ export class TuiController {
       },
     );
     this.tui.showOverlay(search, { anchor: "center", width: "60%", maxHeight: "60%" });
+  }
+
+  /**
+   * `/fork` — the fork-from-message picker (E017 dossier pick 3): every past
+   * user message, newest first. Picking one forks the session AT THAT ENTRY
+   * (contract #2 `store.forkAtEntry`), restores the picked text into the
+   * composer, and switches to the fork via the /resume restart mechanics.
+   */
+  private async openForkPicker(): Promise<void> {
+    const points = await this.store.listUserMessages();
+    if (points.length === 0) {
+      this.transcript.addNotice("/fork — no user messages to fork from yet");
+      this.tui.requestRender();
+      return;
+    }
+    const picker = new ForkPicker(
+      points,
+      (point) => {
+        this.tui.hideOverlay();
+        this.guard(this.forkAt(point), "/fork");
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(picker, { anchor: "center", width: "60%", maxHeight: "60%" });
+  }
+
+  /** Fork at the picked entry, restore its text, and switch sessions. */
+  private async forkAt(point: ForkPoint): Promise<void> {
+    const fork = await this.store.forkAtEntry(point.entryId);
+    // pi restores the forked user text into the editor so the operator can
+    // edit + resubmit from the fork point; the runtime threads `prefill`
+    // through the restart so it survives the session switch.
+    this.composer?.editor.setText(point.text);
+    this.transcript.addNotice(`forked → ${fork.sessionId.slice(0, 8)} at "${point.text.replace(/\s+/g, " ").slice(0, 40)}" — switching…`);
+    this.tui.requestRender();
+    this.onExit?.({ kind: "restart", sessionId: fork.sessionId, prefill: point.text });
+  }
+
+  /** Bare `/resume` — the searchable session picker (E017 dossier pick 5). */
+  private async openSessionSearch(): Promise<void> {
+    const root = this.sessionsRoot ?? path.join(this.cwd, ".openkai", "sessions");
+    const rows = await readSessionSearchRows(root);
+    if (rows.length === 0) {
+      this.transcript.addNotice("resume: no sessions yet");
+      this.tui.requestRender();
+      return;
+    }
+    const picker = new SessionSearchPicker(
+      rows,
+      (sessionId) => {
+        this.tui.hideOverlay();
+        this.transcript.addNotice(`resuming ${sessionId.slice(0, 8)}…`);
+        this.onExit?.({ kind: "restart", sessionId });
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(picker, { anchor: "center", width: "64%", maxHeight: "70%" });
   }
 
   /** Bare `/fuse` — ask what to fuse instead of erroring (CTO feedback). */
@@ -1561,6 +1690,11 @@ export class TuiController {
         this.setActivity(`tool: ${event.toolName ?? "?"}`);
         this.transcript.applyEvent(event);
         break;
+      case "tool_update":
+        // Live task progress (E017 contract #3) — the transcript re-renders
+        // the open card as a live row; the chrome follows the child's tool.
+        this.transcript.applyEvent(event);
+        break;
       case "tool_result":
         this.setActivity("settling");
         this.transcript.applyEvent(event);
@@ -1823,8 +1957,9 @@ export class TuiController {
         ? Math.min(100, Math.round((usage.totalTokens / ctxWindow) * 100))
         : undefined;
     this.status.update({ ...state, usage, ctxPercent });
-    // OpenCode's auto-compact: when context crosses 80%, elide the middle of
-    // the transcript so the session keeps going instead of hitting the wall.
+    // Auto-compact (E017 pick 1): when context crosses 80%, the transport's
+    // LLM-summarising compaction swaps in summary + retained tail so the
+    // session keeps going instead of hitting the wall.
     // Never mid-turn — rewriting the message list under a running agent would
     // corrupt the in-flight loop; defer to turn settlement (turn_end).
     if (ctxPercent !== undefined && ctxPercent >= 80 && featureEnabled("autoCompact")) {
@@ -1840,30 +1975,41 @@ export class TuiController {
   private wantsAutoCompact = false;
 
   /**
-   * Elide the middle of the message list: keep the head + the tail from the
-   * last user message. The user-message boundary means a kept toolResult
-   * always keeps its parent assistant call — no orphaned toolResult whose
-   * call was elided.
+   * The last compaction summary — passed back into the next compact so the
+   * summariser folds new turns into it incrementally (E017 pick 1's
+   * UPDATE_SUMMARIZATION_PROMPT path) instead of re-summarising from cold.
+   */
+  private compactSummary: string | undefined;
+
+  /**
+   * Auto-compact (E017 pick 1): the transport's real LLM-summarising
+   * compaction (pi-agent-core's structured checkpoint summary + retained
+   * tail) replaces the old elide-the-middle heuristic. Only fires when there
+   * is something worth compacting; the summary is kept for the next
+   * incremental update. The {@link onAutoCompact} tier-reeval hook still
+   * fires after the swap (the Devin boundary: compaction is the free
+   * tier-switch point).
    */
   private autoCompact(): void {
-    const messages = this.transport.getMessages();
-    if (messages.length < 6) return;
-    let tailStart = -1;
-    for (let i = messages.length - 1; i >= 1; i -= 1) {
-      if (messages[i]!.role === "user") {
-        tailStart = i;
-        break;
-      }
-    }
-    if (tailStart <= 1) return; // no tail boundary, or nothing in the middle to elide
-    const head = messages.slice(0, 1);
-    const tail = messages.slice(tailStart);
-    this.transport.setMessages([...head, ...tail]);
     const ctxPercent = this.status.currentState.ctxPercent ?? 0;
-    this.transcript.addNotice(`auto-compact — context at ${ctxPercent}%; elided the middle (${messages.length} → ${head.length + tail.length} messages)`);
-    // E017 (Devin boundary): compaction is the free tier-switch point — the
-    // orchestrator re-evaluates with the latch bypassed.
-    this.onAutoCompact?.();
+    void this.transport
+      .compactSession(this.compactSummary)
+      .then((result) => {
+        if (result !== undefined) {
+          this.compactSummary = result.summary;
+          this.transcript.addNotice(
+            `auto-compact — context at ${ctxPercent}%; summarised by the model (${result.before} → ${result.after} messages)`,
+          );
+        }
+        // E017 (Devin boundary): compaction is the free tier-switch point —
+        // the orchestrator re-evaluates with the latch bypassed.
+        this.onAutoCompact?.();
+        this.tui.requestRender();
+      })
+      .catch((error: unknown) => {
+        this.transcript.addError(`auto-compact failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.tui.requestRender();
+      });
   }
 
   /** Persist the settled assistant text at turn settlement. */

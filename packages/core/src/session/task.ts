@@ -30,7 +30,7 @@
  */
 
 import { Type, type Static } from "typebox";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { InProcessTransport } from "./local-transport.js";
@@ -183,6 +183,28 @@ export function extractAndValidateJson(answer: string, schema: string): { json?:
   return { error: "no JSON object found in the subagent's answer" };
 }
 
+/**
+ * Live progress emitted through the tool's `onUpdate` channel while the
+ * child runs (E017 contract #3): the parent turn's `tool_execution_update`
+ * events carry these as `partialResult.details`, letting the TUI render a
+ * live task row instead of a silent wait. The settled result keeps the
+ * pre-E017 shape (`content` text + `details` with `sessionId`).
+ */
+export interface TaskProgress {
+  /** Lifecycle phase of the child run. */
+  status: "running" | "settling" | "timeout" | "aborted" | "error";
+  /** Tool the child is currently executing (last seen), if any. */
+  currentTool?: string;
+  /** Tool calls the child has dispatched so far. */
+  toolCount: number;
+  /** Completed child turns so far. */
+  turnDepth: number;
+  /** The child's session id — the name to steer via {@link steerChild}. */
+  sessionId: string;
+  /** Wall-clock milliseconds since the child run started. */
+  elapsedMs: number;
+}
+
 /** task: run a read-only subagent and return its settled answer. */
 export function taskTool(
   cwd: string,
@@ -204,6 +226,7 @@ export function taskTool(
       _toolCallId: string,
       params: Static<typeof TaskParams>,
       signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback<unknown>,
     ): Promise<AgentToolResult<unknown>> {
       // K3 #6 / OK-9.3: dynamic selection — stage resolves the child model
       // from the active cast (plan→architect, build→builder, review→judge);
@@ -279,14 +302,53 @@ export function taskTool(
           const events = transport.events();
           await transport.prompt(childPrompt);
 
+          // E017 contract #3: live progress over the tool's onUpdate channel.
+          // The child pump counts tool calls and settled turns; every partial
+          // carries the full snapshot so a late-joining renderer needs no
+          // history. Failures inside onUpdate must never kill the child.
+          const startedAt = Date.now();
+          let toolCount = 0;
+          let turnDepth = 0;
+          let currentTool: string | undefined;
+          const emitProgress = (status: TaskProgress["status"]): void => {
+            if (onUpdate === undefined) return;
+            const progress: TaskProgress = {
+              status,
+              ...(currentTool !== undefined ? { currentTool } : {}),
+              toolCount,
+              turnDepth,
+              sessionId,
+              elapsedMs: Date.now() - startedAt,
+            };
+            try {
+              onUpdate({
+                content: [{ type: "text", text: `subagent ${status} — ${toolCount} tool(s), ${turnDepth} turn(s)` } as TextContent],
+                details: progress,
+              });
+            } catch {
+              // a throwing progress consumer must not abort the child run
+            }
+          };
+          emitProgress("running");
+
           for await (const event of events) {
+            if (event.kind === "tool_call") {
+              toolCount += 1;
+              currentTool = event.toolName;
+              emitProgress("running");
+            } else if (event.kind === "turn_end") {
+              turnDepth += 1;
+              emitProgress("running");
+            }
             if (event.kind === "session_end") break;
             if (event.kind === "error") {
+              emitProgress("error");
               return textResult(`subagent error: ${event.message}`, { error: true, sessionId });
             }
           }
 
           if (stopped !== undefined) {
+            emitProgress(stopped);
             return textResult(
               stopped === "timeout"
                 ? `subagent timed out after ${params.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS}s — aborted`
@@ -294,6 +356,7 @@ export function taskTool(
               { error: true, stopped, sessionId },
             );
           }
+          emitProgress("settling");
 
           // The settled transcript's last assistant message is the answer.
           const messages = transport.getMessages();

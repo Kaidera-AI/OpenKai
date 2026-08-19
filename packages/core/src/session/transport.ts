@@ -106,6 +106,22 @@ export type SessionEvent =
       result: unknown;
       isError: boolean;
     }
+  /**
+   * A tool emitted a partial progress update while running (E017 contract
+   * #3): pi-agent-core's `tool_execution_update` bridged through. `partial`
+   * is the tool's own {@link AgentToolResult}-shaped partial — for the `task`
+   * tool its `details` carries `{ status, currentTool?, toolCount, turnDepth,
+   * sessionId, elapsedMs }`. Consumers that don't care may ignore it; the
+   * settled `tool_result` always follows.
+   */
+  | {
+      sessionId: string;
+      seq: number;
+      kind: "tool_update";
+      toolCallId: string;
+      toolName: string;
+      partial: unknown;
+    }
   /** Usage snapshot emitted at turn settlement (after the assistant message). */
   | {
       sessionId: string;
@@ -180,6 +196,21 @@ export interface SessionTransport {
   setMessages(messages: AgentMessage[]): void;
   /** The active model's context window (tokens), or 0 when unknown. */
   getContextWindow(): number;
+  /**
+   * LLM-summarising compaction (E017 contract #1): summarise the settled
+   * conversation into a structured checkpoint summary (pi-agent-core's
+   * `generateSummaryWithUsage` discipline), then replace the context with
+   * `[summaryMessage, ...retainedTail]` where the tail keeps approximately
+   * `keepRecentTokens` of recent context (their `findCutPoint` cut).
+   * Pass the previous summary for the incremental UPDATE path; the caller
+   * owns storing the returned summary for the next call. Returns `undefined`
+   * when there is nothing worth compacting (too few messages, or the cut
+   * point would keep everything). A transport without summarisation support
+   * (e.g. a future network lane) may always return `undefined`.
+   */
+  compactSession(
+    previousSummary?: string,
+  ): Promise<{ summary: string; before: number; after: number } | undefined>;
   close(): Promise<void>;
   /** Cline's Plan mode: read-only tools only (E010). */
   readonly planMode: boolean;

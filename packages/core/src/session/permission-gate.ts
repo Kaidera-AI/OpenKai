@@ -3,13 +3,30 @@
  * pure {@link evaluate} policy engine.
  *
  * The gate is what a gated tool calls before it is allowed to mutate disk or
- * run a shell command. It:
- *  1. resolves the policy decision via {@link evaluateWithReason};
- *  2. for `ask`, checks the session-scoped `always` cache — a prior `always`
- *     for the *same* call signature suppresses the re-prompt (scope §6 test);
- *  3. otherwise emits a {@link permission_request} event (through the injected
- *     `pushEvent` callback) and awaits the matching {@link respond} call;
- *  4. records an `always` decision in the in-memory cache (never on disk).
+ * run a shell command. Consultation order (E017 pick 7, omp approval.ts model
+ * — deliberately revisiting the session-only-`always` decision, see the E017
+ * agent-features dossier pick 7):
+ *  1. plan mode — the outermost refusal (read-only; fail-closed);
+ *  2. the policy engine via {@link evaluateWithReason} — `allow` approves and
+ *     the deny FLOOR is terminal: no override below ever lifts a floor deny;
+ *  3. the persisted per-tool policy (`tools.approval.<toolName>` in
+ *     ~/.openkai/config.json, consulted live through the injected
+ *     {@link ToolPolicySource}) — `"allow"` approves, `"deny"` refuses, a
+ *     missing key means prompt-by-default. This layer sits ABOVE the autonomy
+ *     axis, so a `"deny"` pin holds even at autonomy `high`;
+ *  4. the autonomy axis (operator's live posture: med auto-approves in-cwd
+ *     writes, high also bash);
+ *  5. the session-scoped `always` cache — a prior `always` for the *same*
+ *     call signature suppresses the re-prompt (scope §6 test);
+ *  6. otherwise it emits a {@link permission_request} event (through the
+ *     injected `pushEvent` callback) and awaits the matching {@link respond}
+ *     call; an `always` answer is recorded in the in-memory cache.
+ *
+ * Persistence itself is the CLI's job (config.ts `readToolApprovals` /
+ * `writeToolApproval`); the gate stays storage-agnostic — it is handed a
+ * live {@link ToolPolicySource} and re-consults it per request, so a key
+ * written mid-session (the overlay's "always (this project)" stop) takes
+ * effect immediately.
  *
  * The gate owns no queue of its own — it borrows the transport's event push so
  * the consumer's `events()` stream sees `permission_request` in order with
@@ -91,12 +108,33 @@ export type PushPermissionEvent = (event: {
   rule: string;
 }) => void;
 
+/**
+ * A persisted per-tool approval policy value (`tools.approval.<toolName>` in
+ * ~/.openkai/config.json). The absence of a key means "prompt by default".
+ */
+export type ToolApprovalPolicy = "allow" | "deny";
+
+/**
+ * Live reader for the persisted per-tool policy map. Called on every gated
+ * request (step 3 of the consultation order), so config edits — including
+ * the permission overlay's "always (this project)" stop — take effect
+ * without a restart. Storage lives in the CLI (config.ts); the gate only
+ * knows this shape.
+ */
+export type ToolPolicySource = () => Record<string, ToolApprovalPolicy>;
+
 /** Options for {@link SessionPermissionGate}. */
 export interface SessionPermissionGateOptions {
   /** Working directory — the policy root and the diff preview base. */
   cwd: string;
   /** Transport callback that stamps + pushes the event onto the session queue. */
   pushEvent: PushPermissionEvent;
+  /**
+   * Persisted per-tool policy reader (E017 pick 7). Consulted after the deny
+   * floor and BEFORE the autonomy axis; undefined means no persisted layer
+   * (prompt-by-default everywhere the engine says `ask`).
+   */
+  toolPolicy?: ToolPolicySource;
 }
 
 /** Max lines kept per diff side (head + elision + tail); large diffs are truncated. */
@@ -105,11 +143,15 @@ const DIFF_MAX_LINES = 80;
 /**
  * Session-scoped permission gate. The `always` cache lives in this instance
  * only — a new session gets a new transport → new gate → fresh prompts
- * (scope §6 `always`-scoping test). Nothing here is persisted to disk.
+ * (scope §6 `always`-scoping test). The per-tool POLICY layer is persisted
+ * (via the injected {@link ToolPolicySource}; E017 pick 7 — omp's
+ * `tools.approval.<tool>` model); the cache itself is never written to disk.
  */
 export class SessionPermissionGate implements PermissionGate {
   private readonly cwd: string;
   private readonly pushEvent: PushPermissionEvent;
+  /** Live reader for the persisted per-tool policy (config.json tools.approval). */
+  private toolPolicy: ToolPolicySource | undefined;
   /** Pending approvals: requestId → resolver (payload carries the reject reason). */
   private readonly pending = new Map<
     string,
@@ -133,6 +175,12 @@ export class SessionPermissionGate implements PermissionGate {
   constructor(options: SessionPermissionGateOptions) {
     this.cwd = options.cwd;
     this.pushEvent = options.pushEvent;
+    this.toolPolicy = options.toolPolicy;
+  }
+
+  /** Set / replace the persisted per-tool policy reader (post-construction wiring). */
+  setToolPolicySource(source: ToolPolicySource | undefined): void {
+    this.toolPolicy = source;
   }
 
   /** Set the autonomy axis (operator's live choice; default `low`). */
@@ -169,7 +217,22 @@ export class SessionPermissionGate implements PermissionGate {
 
     const { decision, reason } = evaluateWithReason(toolName, args, this.cwd);
     if (decision === "allow") return { decision: "approve" };
+    // The deny FLOOR is terminal — consulted before every override layer, so
+    // neither a config `allow` nor autonomy `high` ever lifts it.
     if (decision === "deny") return { decision: "reject", reason };
+
+    // Persisted per-tool policy (config.json tools.approval.<toolName>) —
+    // consulted live so mid-session writes take effect. Sits above the
+    // autonomy axis: a `deny` pin holds even at autonomy high, an `allow`
+    // pre-approves even at autonomy off/low (the headless/CI unblock path).
+    const policy = this.toolPolicy?.()[toolName];
+    if (policy === "allow") return { decision: "approve" };
+    if (policy === "deny") {
+      return {
+        decision: "reject",
+        reason: `denied by tools.approval.${toolName} = "deny" in ~/.openkai/config.json`,
+      };
+    }
 
     // The autonomy axis (operator's live posture): med auto-approves in-cwd
     // file mutations; high also auto-approves bash. The floor already

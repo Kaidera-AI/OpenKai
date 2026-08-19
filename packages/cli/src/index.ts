@@ -378,6 +378,7 @@ async function main(argv: string[]): Promise<number> {
   if (command === "sessions") {
     const options: SessionsOptions = {
       show: getString("--show"),
+      search: getString("--search"),
     };
     return runSessions(options);
   }

@@ -11,7 +11,7 @@ import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken, 
 import { PROVIDERS, providerKeyStatus } from "../providers.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
-import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, writeShiftPosture, type StatuslineChip } from "../config.js";
+import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, readToolApprovals, writeShiftPosture, type StatuslineChip } from "../config.js";
 import { readShiftConfig } from "../fuse.js";
 
 export interface SettingsActions {
@@ -61,6 +61,13 @@ function currentPresetName(): string {
     if (preset.chips.join(",") === active) return name;
   }
   return "custom";
+}
+
+/** One-line summary of the persisted per-tool approval overrides (E017 pick 7). */
+function toolApprovalsSummary(): string {
+  const approvals = Object.entries(readToolApprovals());
+  if (approvals.length === 0) return "none (prompt-by-default)";
+  return approvals.map(([tool, policy]) => `${tool}=${policy}`).join(" · ");
 }
 
 /** The settings panel (omp's tabbed shape): appearance/providers/model/interaction/memory/features/routing. */
@@ -225,6 +232,12 @@ export class SettingsOverlay implements Component {
             label: "model pins (read-only)",
             description: `${pinsSummary} — edit ~/.openkai/config.json shift.pins`,
             action: () => `pins: ${pinsSummary}`,
+          },
+          {
+            value: "routing:approvals",
+            label: "tool approvals (read-only)",
+            description: `${toolApprovalsSummary()} — edit ~/.openkai/config.json tools.approval`,
+            action: () => `tool approvals: ${toolApprovalsSummary()}`,
           },
         ];
       }
