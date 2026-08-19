@@ -2,7 +2,7 @@
 
 **Epic:** E017_ORCHESTRATION_COMPOSITION
 **Release:** v0.1.007 (0.1.7 — ships on the release rule: explicit CTO consent, per docs/RELEASE_SOP.md)
-**Owner:** kai@openkai (lead) · adversarial gate: ren@openkai (CPO)
+**Owner:** kai@openkai (lead) · **TUI lane: ren@openkai (design + implementation + review, CTO directive 2026-08-19 — the TUI is not a split task)** · adversarial gate: ren@openkai (CPO)
 **Opened:** 2026-08-19
 **Inputs:** OK-9 ADR (`research/2026-08-18-shift-fusion-orchestration-ADR.md`, ratification requested) · ren's integration review (`research/2026-08-18-e015-research-match-integration-review.md`, S1–S5) · the K3-fixed E014/E015 machinery on release/0.1.007 · deep-dive evidence base (`research/2026-08-18-switchyard-routing-fusion-deep-dive.md`)
 
@@ -36,6 +36,7 @@ The composition law (arXiv:2410.10347): **route when you can predict, cascade wh
 | 08 | **Calibration harness (OK-9 W6/W7)** | quadrant runner (RESCUE/LOSS/SAFE/HARD over ~60–95 instrumented runs), threshold sweep, CPT/APGR report, judge break-even meter on the feed | `openkai fusion calibrate` produces the quadrant table + recommended threshold; records in research/calibration/ |
 | 09 | **Release-key signing** | Ed25519 keypair generated (CTO custody); `OPENKAI_RELEASE_KEY` pinned at build; manifests signed; `<asset>.sha256` sidecars published | unsigned/tampered manifest refused by a pinned build; install.sh verifies sidecar |
 | 10 | **v0.1.007 release** | version bump (0.1.7 lockstep + core pin), CHANGELOG, K3-style adversarial gate on the epic diff, **feature-registry audit** (Program/FEATURE_REGISTRY.md — every ✅/🔁 row verified against the build, evidence in the release notes), binaries, brew, npm | full channel verification; adversarial return accepted; registry audit recorded |
+| 11 | **Served TUI (OK-10)** | `openkai serve` hosts the TUI against a headless terminal and streams frames over a token-gated WS attach channel (read-only watch + read-write attach, settled-frame replay on connect) — KOS's multi-agent grid consumes it; OpenKai stays fully independent (independence invariants pinned). ADR: `research/2026-08-19-served-tui-attach-ADR.md` | attach hello replays the settled frame; ro/rw token scopes enforced; terminal TUI untouched; contract doc `docs/attach-protocol.md` |
 
 ## 4. Standing invariants
 
