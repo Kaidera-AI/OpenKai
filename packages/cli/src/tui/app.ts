@@ -71,6 +71,7 @@ import { readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { setTheme, themeName, themeNames, detectThemeAsync } from "./theme.js";
+import { ThemePicker } from "./theme-picker.js";
 import { changelogHead } from "./changelog.js";
 import { DiffOverlay } from "./diff.js";
 import { activityLogPath } from "../tail.js";
@@ -1316,39 +1317,24 @@ export class TuiController {
 
   /** Theme picker (E017 UX): a visible list — no blind cycling. */
   private openThemePicker(): void {
-    const descriptions: Record<string, string> = {
-      auto: "follows your terminal background (OSC 11 / COLORFGBG)",
-      dark: "Kaidera dark — mint on graphite (default)",
-      light: "Kaidera light",
-      catppuccin: "pastel dark, soft contrast",
-      dracula: "high-contrast purple dark",
-      gruvbox: "warm retro dark",
-      nord: "cool arctic blues",
-      "one-dark": "Atom's classic dark",
-      rosepine: "muted rose-pine dark",
-      solarized: "Solarized precision",
-      tokyonight: "neon night Tokyo",
-    };
-    const current = (readConfigFile().theme as string | undefined) ?? "auto";
-    const entries = ["auto", ...themeNames()].map((id) => ({
-      id,
-      label: id,
-      description: descriptions[id] ?? "theme pack",
-    }));
-    const picker = new LevelPicker("theme", entries, current, (id) => {
-      this.tui.hideOverlay();
-      writeConfigFile({ ...readConfigFile(), theme: id });
-      if (id === "auto") {
-        void detectThemeAsync().then((detected) => setTheme(detected));
-      } else {
-        setTheme(id);
-      }
-      this.transcript.addNotice(`theme: ${id}${id === "auto" ? " (follows your terminal)" : ""}`);
-      this.tui.requestRender();
-      this.refocusComposer();
-    }, () => {
-      this.tui.hideOverlay();
-      this.refocusComposer();
+    const picker = new ThemePicker({
+      onApply: (id) => {
+        this.tui.hideOverlay();
+        writeConfigFile({ ...readConfigFile(), theme: id });
+        if (id === "auto") {
+          void detectThemeAsync().then((detected) => setTheme(detected));
+        } else {
+          setTheme(id);
+        }
+        this.transcript.addNotice(`theme: ${id}${id === "auto" ? " (follows your terminal)" : ""}`);
+        this.tui.requestRender();
+        this.refocusComposer();
+      },
+      onCancel: () => {
+        this.tui.hideOverlay();
+        this.tui.requestRender();
+        this.refocusComposer();
+      },
     });
     this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
   }
