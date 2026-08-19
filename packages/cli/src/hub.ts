@@ -29,10 +29,14 @@ import {
   readBody,
   urlHost,
 } from "./http-common.js";
+import { HostedTui } from "./tui/headless-host.js";
+import { handshakeResponseHeaders, WsChannel } from "./ws.js";
 
 interface HubOptions {
   port: number;
   host?: string;
+  /** Optional abort signal (tests embed the hub and stop it cleanly). */
+  signal?: AbortSignal;
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -57,6 +61,73 @@ export async function runHub(options: HubOptions): Promise<number> {
   }
   // DNS-rebinding guard: only the loopback hosts this hub binds, with port.
   const allowedHosts = allowedHostsFor(options.port);
+
+  // ── OK-10 served TUI: hosted sessions + WS attach channel ──────────────
+  const hosted = new Map<string, HostedTui>();
+
+  /** Register the WS attach channel on the HTTP server (called post-create). */
+  const registerAttachChannel = (srv: ReturnType<typeof createServer>): void => {
+    srv.on("upgrade", (req, socket, head) => {
+      const fail = (status: number, message: string): void => {
+        socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
+        socket.destroy();
+      };
+      try {
+        const reqHost = req.headers.host;
+        if (!reqHost || allowedHosts[reqHost] !== true) return fail(403, "Forbidden");
+        if (!bearerMatches(req.headers.authorization, tokenHash)) return fail(401, "Unauthorized");
+        const url = new URL(req.url ?? "/", `http://${urlHost(host)}:${options.port}`);
+        const match = /^\/attach\/([^/?]+)(?:\?.*)?$/.exec(url.pathname);
+        if (!match) return fail(404, "Not Found");
+        const hostedSession = hosted.get(match[1]!);
+        if (!hostedSession) return fail(404, "Not Found");
+        const mode = url.searchParams.get("mode") === "rw" ? "rw" : "ro";
+      const key = req.headers["sec-websocket-key"];
+      if (typeof key !== "string") return fail(400, "Bad Request");
+      socket.write(handshakeResponseHeaders(key));
+      if (head.length > 0) socket.unshift(head);
+
+      const channel = new WsChannel(socket, (msg) => {
+        if (msg.kind !== "text") return;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(msg.text);
+        } catch {
+          return;
+        }
+        if (parsed === null || typeof parsed !== "object" || !("type" in parsed)) return;
+        // S5: input is rw-scoped at the seam; ro attaches may only resize.
+        if (parsed.type === "input" && mode === "rw" && "data" in parsed && typeof parsed.data === "string") {
+          hostedSession.input(parsed.data);
+        } else if (parsed.type === "resize" && "columns" in parsed && "rows" in parsed) {
+          const columns = Number(parsed.columns);
+          const rows = Number(parsed.rows);
+          if (Number.isFinite(columns) && Number.isFinite(rows) && columns >= 20 && rows >= 4) {
+            hostedSession.resize(columns, rows);
+          }
+        }
+      }, () => {
+        // Socket closed — attaches are ephemeral; the hosted session lives on.
+      });
+
+      // Attach hello (S3): the settled frame at the client's width, then the
+      // live frame/state streams via the host's tap registry.
+      const widthParam = Number(url.searchParams.get("width") ?? "100");
+      const width = Number.isFinite(widthParam) && widthParam >= 20 ? widthParam : 100;
+      channel.send(JSON.stringify({ type: "hello", sessionId: hostedSession.sessionId, mode, frame: hostedSession.settledFrame(width) }));
+      hostedSession.addTap(
+        (frame) => channel.send(JSON.stringify({ type: "frame", data: frame })),
+        (state) => channel.send(JSON.stringify({ type: "state", state })),
+      );
+    } catch {
+      try {
+        socket.destroy();
+      } catch {
+        // best effort
+      }
+    }
+  });
+  };
 
   const server = createServer(async (req, res) => {
     const reqHost = req.headers.host;
@@ -106,6 +177,42 @@ export async function runHub(options: HubOptions): Promise<number> {
       return;
     }
 
+    // OK-10: create a hosted TUI session (attach target for browsers).
+    if (req.method === "POST" && url.pathname === "/sessions") {
+      let raw: string;
+      try {
+        raw = await readBody(req);
+      } catch (error) {
+        if (error instanceof BodyTooLargeError) {
+          json(res, 413, { error: "payload too large — body cap is 1 MiB" });
+          return;
+        }
+        json(res, 400, { error: "failed to read request body" });
+        return;
+      }
+      let body: { model?: string; provider?: string };
+      try {
+        body = JSON.parse(raw || "{}") as typeof body;
+      } catch {
+        json(res, 400, { error: "invalid JSON body" });
+        return;
+      }
+      const modelId = body.model ?? process.env.OPENKAI_MODEL ?? "nvidia/nemotron-3-nano-30b-a3b:free";
+      try {
+        const host = await HostedTui.start({
+          cwd: process.cwd(),
+          modelId,
+          ...(body.provider !== undefined ? { provider: body.provider } : {}),
+          onFrame: () => undefined, // attaches tap their own listeners
+        });
+        hosted.set(host.sessionId, host);
+        json(res, 200, { sessionId: host.sessionId, attach: `/attach/${host.sessionId}?mode=ro|rw` });
+      } catch (error) {
+        json(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/prompt") {
       let raw: string;
       try {
@@ -147,14 +254,20 @@ export async function runHub(options: HubOptions): Promise<number> {
   });
 
   const listening = Promise.withResolvers<void>();
+  registerAttachChannel(server);
   server.listen(options.port, host, listening.resolve);
   await listening.promise;
-  process.stderr.write(`openkai hub listening on http://${urlHost}:${options.port} (bearer-gated; /health open)\n`);
-  // Keep the process alive until SIGINT/SIGTERM.
+  process.stderr.write(`openkai hub listening on http://${urlHost(host)}:${options.port} (bearer-gated; /health open; /attach for hosted TUI)\n`);
+  // Keep the process alive until SIGINT/SIGTERM (or an embedding test aborts).
   const shutdown = Promise.withResolvers<void>();
   process.on("SIGINT", shutdown.resolve);
   process.on("SIGTERM", shutdown.resolve);
+  if (options.signal) {
+    if (options.signal.aborted) shutdown.resolve();
+    else options.signal.addEventListener("abort", () => shutdown.resolve(), { once: true });
+  }
   await shutdown.promise;
   server.close();
+  await Promise.allSettled([...hosted.values()].map((h) => h.close()));
   return 0;
 }

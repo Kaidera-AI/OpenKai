@@ -58,7 +58,8 @@
 | `info` | 0.1.1 | ✅ | always exit 0 |
 | `upgrade` / `update` | 0.1.1 / 0.1.4 | ✅ | witness + rollback + kill-switch; release-key seam 0.1.6 |
 | `skills` `mcp` `statusline` | 0.1.5 | ✅ | capability management |
-| `serve` | 0.1.5 | ✅ | hardened 0.1.6 |
+| `serve` | 0.1.5 | ✅ | hardened 0.1.6; 0.1.7(+OK-10): hosts served TUI sessions (POST /sessions) with the WS attach channel (hello replay, ro/rw scopes, frame/state streams — docs/attach-protocol.md) |
+| served TUI (hosted session + attach) | 0.1.7 | ✅ | a real TuiController per hosted session; browser xterm.js is a dumb client; KOS grid consumes it |
 | `bridge` (`--listen` 0.1.6) | 0.1.5 | ✅ | K3-hardened: dedup, ack-fast, self-loop guard |
 | `splash` | 0.1.5 | ✅ | replays brand animation |
 | `help [topic]` | 0.1.5 | ✅ | |
