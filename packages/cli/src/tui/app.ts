@@ -302,6 +302,8 @@ export class TuiController {
   private readonly transcript: Transcript;
   /** The picker's fusion partner (builder model for /fuse), or undefined for self-pairing. */
   fusionPartner?: { provider: string; modelId: string };
+  /** Fusion architect (model 1) when explicitly configured via /fuse's pair picker; undefined = the session model (default). */
+  fusionArchitect?: { provider: string; modelId: string };
   /** Recently used models (provider/id), most recent first — the hub's recent scope. */
   private recentModels: string[] = [];
   private readonly status: StatusLine;
@@ -660,7 +662,7 @@ export class TuiController {
           `/stats — session ${this.sessionId.slice(0, 8)}`,
           `messages: ${msgCount} in context · blocks: ${counts.user ?? 0} user · ${counts.assistant ?? 0} assistant · ${counts.tool ?? 0} tool`,
           `model: ${this.modelId} (${this.provider ?? "?"}) · ${tokens} tokens · ${ctxPct}`,
-          `fusion partner: ${this.fusionPartner ? `${this.fusionPartner.modelId} (${this.fusionPartner.provider})` : "none (self-pair)"}`,
+          `fusion pair: ${this.fusionPairLabel()}`,
         ]);
         break;
       }
@@ -1072,13 +1074,19 @@ export class TuiController {
   /** Bare `/fuse` — ask what to fuse instead of erroring (CTO feedback). */
   private openFuseMenu(): void {
     const last = this.transcript.lastUserText();
+    const pair = this.fusionPairLabel();
     const entries = [
       ...(last ? [{ id: "last", label: "fuse the last prompt", description: last.slice(0, 40) }] : []),
+      { id: "config", label: "configure fusion models", description: pair },
       { id: "type", label: "type a task", description: "drops /fuse <task> into the composer" },
       { id: "cancel", label: "cancel", description: "back to the app" },
     ];
     const picker = new LevelPicker("fuse", entries, "", (id) => {
       this.tui.hideOverlay();
+      if (id === "config") {
+        this.openFusionPairPicker();
+        return;
+      }
       if (id === "last" && last) {
         void this.fuse(last);
       } else if (id === "type") {
@@ -1092,6 +1100,137 @@ export class TuiController {
       this.refocusComposer();
     });
     this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "60%" });
+  }
+
+  /** The active fusion pair as a one-line label (menu + notices). */
+  private fusionPairLabel(): string {
+    const architect = this.fusionArchitect ? `${this.fusionArchitect.modelId} (${this.fusionArchitect.provider})` : `${this.modelId} (session)`;
+    const builder = this.fusionPartner ? `${this.fusionPartner.modelId} (${this.fusionPartner.provider})` : "same as model 1 (self-pair)";
+    return `model 1: ${architect} · model 2: ${builder}`;
+  }
+
+  /**
+   * The fusion pair picker (CTO): model 1 = provider → model, then model 2 =
+   * provider → model — two explicit provider-first steps, never an implicit
+   * session-model assumption. Top entries reset: step 1 offers the session
+   * model (default), step 2 offers self-pair.
+   */
+  private openFusionPairPicker(): void {
+    const stepProvider = (
+      title: string,
+      entries: { id: string; label: string; description: string }[],
+      onPick: (providerId: string | undefined) => void,
+    ): void => {
+      const picker = new LevelPicker(title, entries, "", (id) => {
+        this.tui.hideOverlay();
+        onPick(id.startsWith("p:") ? id.slice(2) : undefined);
+      }, () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      });
+      this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
+    };
+
+    const stepModel = (title: string, providerId: string, onPick: (modelId: string) => void): void => {
+      const models = this.fusionModelRows(providerId);
+      if (models.length === 0) {
+        this.transcript.addNotice(`fusion: no models in catalogue for ${providerId}`);
+        this.refocusComposer();
+        return;
+      }
+      const picker = new LevelPicker(title, models, "", (id) => {
+        this.tui.hideOverlay();
+        onPick(id.slice(2));
+      }, () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      });
+      this.tui.showOverlay(picker, { anchor: "center", width: "56%", maxHeight: "70%" });
+    };
+
+    // Step 1 — model 1 (architect): the session-model reset, then every provider.
+    stepProvider(
+      "fusion model 1 (architect) — pick provider",
+      [
+        { id: "_session", label: `session model (default) — ${this.modelId}`, description: "use the session's current model" },
+        ...this.fusionProviderRows(),
+      ],
+      (providerId) => {
+        if (providerId === undefined) {
+          this.fusionArchitect = undefined;
+          this.afterArchitectPicked();
+          return;
+        }
+        stepModel(`fusion model 1 — ${PROVIDERS[providerId]?.label ?? providerId}`, providerId, (modelId) => {
+          this.fusionArchitect = { provider: providerId, modelId };
+          this.afterArchitectPicked();
+        });
+      },
+    );
+  }
+
+  /** Provider rows for the fusion pair pickers (one shape, both steps). */
+  private fusionProviderRows(): { id: string; label: string; description: string }[] {
+    return Object.entries(PROVIDERS).map(([id, info]) => {
+      const status = providerKeyStatus(id);
+      return {
+        id: `p:${id}`,
+        label: info.label,
+        description: status.oauth ? "subscription" : status.configured ? "key set" : info.keyless ? "keyless" : "no key",
+      };
+    });
+  }
+
+  /** Model rows for one provider in the fusion pair pickers. */
+  private fusionModelRows(providerId: string): { id: string; label: string; description: string }[] {
+    return defaultModels().getModels(providerId).map((m) => ({
+      id: `m:${m.id}`,
+      label: m.name ?? m.id,
+      description: [m.id, m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k ctx` : ""].filter(Boolean).join(" · "),
+    }));
+  }
+
+  /** Step 2 — model 2 (builder), offered after model 1 settles. */
+  private afterArchitectPicked(): void {
+    const picker = new LevelPicker(
+      "fusion model 2 (builder) — pick provider",
+      [
+        { id: "_self", label: "self-pair — same as model 1", description: "both roles use model 1 (E016's replicated default)" },
+        ...this.fusionProviderRows(),
+      ],
+      "",
+      (id) => {
+        this.tui.hideOverlay();
+        if (id === "_self") {
+          this.fusionPartner = undefined;
+          this.transcript.addNotice(`fusion pair set — ${this.fusionPairLabel()}`);
+          this.refocusComposer();
+          return;
+        }
+        const providerId = id.slice(2);
+        const models = this.fusionModelRows(providerId);
+        if (models.length === 0) {
+          this.transcript.addNotice(`fusion: no models in catalogue for ${providerId}`);
+          this.refocusComposer();
+          return;
+        }
+        const modelPicker = new LevelPicker(`fusion model 2 — ${PROVIDERS[providerId]?.label ?? providerId}`, models, "", (modelPick) => {
+          this.tui.hideOverlay();
+          this.fusionPartner = { provider: providerId, modelId: modelPick.slice(2) };
+          this.transcript.addNotice(`fusion pair set — ${this.fusionPairLabel()}`);
+          this.refocusComposer();
+        }, () => {
+          this.tui.hideOverlay();
+          this.refocusComposer();
+        });
+        this.tui.showOverlay(modelPicker, { anchor: "center", width: "56%", maxHeight: "70%" });
+      },
+      () => {
+        this.tui.hideOverlay();
+        this.refocusComposer();
+      },
+    );
+    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
   }
 
   /** Bash-mode turn: run the command through the gated tool; render the outcome. */

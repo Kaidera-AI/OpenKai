@@ -452,15 +452,19 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     // fusion partner becomes the builder when set (cross-provider duet),
     // otherwise self-pairing (E016's replicated first step).
     runFusion: (task) => {
+      const architectPick = app.controller.fusionArchitect;
+      const architect = architectPick
+        ? fusionModels.getModel(architectPick.provider, architectPick.modelId) ?? fusionModel
+        : fusionModel;
       const partner = app.controller.fusionPartner;
       const builder = partner
-        ? fusionModels.getModel(partner.provider, partner.modelId) ?? fusionModel
-        : fusionModel;
+        ? fusionModels.getModel(partner.provider, partner.modelId) ?? architect
+        : architect;
       return fuse(
         (m, ctx, opts) => defaultModels().streamSimple(m, ctx, opts),
         {
           task,
-          architectModel: fusionModel,
+          architectModel: architect,
           builderModel: builder,
         },
       );

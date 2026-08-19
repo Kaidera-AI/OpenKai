@@ -23,7 +23,7 @@
 | `/undo` | 0.1.1 | ✅ | shadow-git |
 | `/shift` | 0.1.7 | ✅ | routing ledger over activity.jsonl (OK-9.7 trust surface) |
 | `/diff` | 0.1.7 | ✅ | shadow snapshot → work tree overlay (read-only) |
-| `/fuse [task]` | 0.1.5 | ✅ | in-TUI panel |
+| `/fuse [task]` | 0.1.5 | ✅ | in-TUI panel; 0.1.7: bare `/fuse` menu gains "configure fusion models" — two-step provider→model pickers for model 1 (architect) and model 2 (builder), session-model and self-pair resets; `/stats` shows the pair |
 | `/retry [model]` | 0.1.5 | ✅ | |
 | `/fork` `/tree` | 0.1.5 | ✅ | v3 parent links; `/fork` is a rewind-to-message picker 0.1.7 (forkAtEntry + prefill-through-restart) |
 | `/autonomy` | 0.1.5 | ✅ | picker over the gate |

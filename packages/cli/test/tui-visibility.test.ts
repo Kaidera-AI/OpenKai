@@ -456,3 +456,24 @@ test("/rename registers as a command (with /name kept as alias)", () => {
   assert.ok(names.includes("rename"), "/rename registered");
   assert.ok(helpText().join("\n").includes("/rename"), "help lists /rename");
 });
+
+// ── Fusion pair picker (CTO two-step provider→model flow) ───────────────────
+
+test("fusion pair label: session default, self-pair, explicit two-model pair", async () => {
+  const { app } = await buildVisibilityApp({ sessionId: "fuse1" });
+  const label = () => (app.controller as unknown as { fusionPairLabel(): string }).fusionPairLabel();
+
+  assert.match(label(), /model 1: faux-1 \(session\)/, "model 1 defaults to the session model");
+  assert.match(label(), /model 2: same as model 1 \(self-pair\)/, "model 2 defaults to self-pair");
+
+  app.controller.fusionArchitect = { provider: "anthropic", modelId: "claude-opus-4.8" };
+  assert.match(label(), /model 1: claude-opus-4.8 \(anthropic\)/, "explicit architect shows");
+
+  app.controller.fusionPartner = { provider: "openrouter", modelId: "kimi-k2.7" };
+  assert.match(label(), /model 2: kimi-k2.7 \(openrouter\)/, "explicit builder shows");
+
+  app.controller.fusionPartner = undefined;
+  assert.match(label(), /self-pair/, "clearing the builder returns to self-pair");
+  app.controller.fusionArchitect = undefined;
+  assert.match(label(), /model 1: faux-1 \(session\)/, "reset returns to the session model");
+});
