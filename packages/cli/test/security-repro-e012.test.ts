@@ -67,16 +67,17 @@ function resultText(result: { content: unknown }): string {
   return parts.filter((c) => c.type === "text" && typeof c.text === "string").map((c) => c.text).join("\n");
 }
 
-/** Macrotask tick (rule: withResolvers over executor form). */
-function tick(): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setImmediate(resolve);
-  return promise;
-}
-
-/** Poll a condition across macrotasks (async preview builders need several). */
-async function until(cond: () => boolean, tries = 50): Promise<void> {
-  for (let i = 0; i < tries && !cond(); i += 1) await tick();
+/** Bounded condition poll — robust on slow CI (async preview builds can lag
+ * dozens of macrotask ticks; a pure setImmediate loop starves there). */
+async function until(cond: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (cond()) return;
+    if (Date.now() >= deadline) return;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setTimeout(resolve, 5);
+    await promise;
+  }
 }
 
 // ── C1: hashline_edit is gated, floored, and confined ───────────────────────

@@ -360,6 +360,7 @@ test("CLI: standalone upgrade applies with kill-switch unset; --check reports av
       env: { OPENKAI_CHANNEL: "standalone" },
       currentBinary: bin,
       currentVersion: "0.0.0",
+      target: "darwin-arm64", // pin: detectTarget() follows the CI host's platform
       deps,
     });
     assert.equal(check.exitCode, 0);
@@ -371,6 +372,7 @@ test("CLI: standalone upgrade applies with kill-switch unset; --check reports av
       env: { OPENKAI_CHANNEL: "standalone" },
       currentBinary: bin,
       currentVersion: "0.0.0",
+      target: "darwin-arm64",
       deps,
     });
     assert.equal(up.exitCode, 0);
