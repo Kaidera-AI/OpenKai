@@ -60,7 +60,7 @@ import {
 } from "./attention.js";
 import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
-import { needsWelcome, readConfig, runWelcome } from "./welcome.js";
+import { readConfig } from "./welcome.js";
 import { detectThemeAsync, setTheme } from "./theme.js";
 import { featureEnabled } from "./features.js";
 import { appendActivity } from "../tail.js";
@@ -120,13 +120,12 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   // First-run setup (E002 Inc 03): BEFORE provider/model resolution so the
   // operator's answers become this session's defaults. Skipped when explicit
   // flags are passed or when there's no TTY (e2e/pipes).
-  // First-run setup (E002 Inc 03): BEFORE provider/model resolution so the
-  // operator's answers become this session's defaults. Skipped when explicit
-  // flags are passed or when there's no TTY — on EITHER stream (a piped
-  // stdin would hang readline forever, e.g. pty harnesses).
-  if (needsWelcome() && !options.model && !options.provider && process.stdout.isTTY && process.stdin.isTTY) {
-    await runWelcome();
-  }
+  // No boot-time wizard (CTO directive, restated 2026-08-19): the TUI
+  // launches regardless of credential state and everything is configured
+  // INSIDE — /setup, the settings panel, and the keyless-boot sign-in
+  // overlay (setupNeeded in runSession) carry first-run setup. The old
+  // readline welcome asked for API keys on every start whenever
+  // config.onboarded was unset — exactly the blocking behaviour this removes.
   let session = options.session;
   let prefill = options.prefill;
   for (;;) {

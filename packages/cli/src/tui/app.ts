@@ -67,7 +67,7 @@ import { SessionSearchPicker, readSessionSearchRows, sessionNameFromEntries } fr
 import { exportSessionToHtml } from "./export-html.js";
 import { ModelsHub } from "./models-hub.js";
 import { SettingsOverlay } from "./settings.js";
-import { runWelcome, readConfig } from "./welcome.js";
+import { readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { setTheme, themeName, themeNames, detectThemeAsync } from "./theme.js";
