@@ -2,60 +2,88 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
-## [0.1.7] — v0.1.007 (E017: orchestration composition — shift predicts, fusion multiplies, the gate verifies)
+## [0.1.7] — v0.1.007 (E017: orchestration composition — and the operator-polish release)
 
-The composition epic: the 0.1.6 machinery (K3-certified but callerless) is
-now wired end-to-end, visible in the TUI, and learning from its own gate
-outcomes. Design base: OK-9 (`research/2026-08-18-shift-fusion-orchestration-ADR.md`).
-**326/326 tests green; typecheck clean.**
+Two epics in one line: the OK-9 composition (shift predicts, fusion
+multiplies, the gate verifies — machinery that was callerless in 0.1.6 is
+now wired end-to-end and visible), and the E017 operator-polish round
+(crash guard, settings pickers, keyless boot done right, fusion pair
+configuration, provider write path, and the architecture standards both
+OpenKai and KOS now build against). Design base:
+`research/2026-08-18-shift-fusion-orchestration-ADR.md` (OK-9),
+`research/2026-08-19-served-tui-attach-ADR.md` (OK-10),
+`docs/ARCHITECTURE_STANDARDS.md` (S-series).
+**377/377 tests + 3/3 e2e + security-audit PASSED.**
 
 ### Orchestration (E017)
-- **`Orchestrator` facade** (`core/orchestrate.ts`): one decision layer —
-  stage classify → per-stage tier latch (no mid-phase thrash) → override
-  rules → corroborative scorer → pin clamps → posture default. Session
-  sessions route through it: tool signals accumulate from the event stream
-  and the tier is decided before each prompt (evidence-only: no signals, no
-  switch); compaction re-evaluates with the latch bypassed (the free switch
-  point).
+- **`Orchestrator` facade** (`core/orchestrate.ts`): stage classify → per-stage
+  tier latch → override rules → corroborative scorer → pin clamps → posture
+  default. In-session: tool signals accumulate from the event stream, the
+  tier is decided before each prompt (evidence-only), compaction
+  re-evaluates (the Devin free switch point).
 - **Cascade completion**: a fusion gate halt escalates the stage one tier
-  and retries exactly once, labelled on the feed (FrugalGPT's move).
-- **Reward loop**: gate outcomes write bandit posteriors per bucket
-  (`noteGateOutcome`); priors feed cast/pair selection.
-- **Operator priorities (OK-9.7)**: `shift.posture` (quality/balanced/saver)
-  + floor/ceiling pins + `never` denylists in `~/.openkai/config.json`;
-  settings gains a **routing tab**; precedence: pin → override → posture →
-  bandit → stage default.
-- **Synthesis (OK-9 W4)**: compare-then-compose contract (pairwise
-  comparison, then the merge); synthesiser resolved as judge-first, never a
-  panel member; parse failure keeps both role outputs, flagged.
-- **Calibration (OK-9 W6/W7)**: `openkai fusion calibrate` — RESCUE/LOSS/
-  SAFE/HARD quadrant table, threshold sweep with the Switchyard selection
-  rule, CPT/APGR report, judge break-even meter; dated records under
-  `research/calibration/`.
+  and retries exactly once.
+- **Reward loop**: gate outcomes write bandit posteriors; priors feed
+  cast/pair selection.
+- **Operator priorities (OK-9.7)**: `shift.posture` + floor/ceiling pins +
+  denylists in `~/.openkai/config.json`; settings **routing tab**.
+- **Synthesis (OK-9 W4)**: compare-then-compose; judge-first resolution,
+  never self-grading; parse failure keeps both role outputs.
+- **Calibration (OK-9 W6/W7)**: `openkai fusion calibrate` — quadrants,
+  threshold sweep, CPT/APGR, judge break-even.
 
-### TUI visibility (S1)
-- **Tier chip** in the status line with transition flash (`t:eff▸cap`) fed
-  by live routing events.
-- **Fusion role pills** on panel blocks; failed roles keep their pill with
-  the attributed error; gate verdicts render as notices.
-- **`/shift`** — the session routing ledger (stage/tier/source/rationale
-  from the activity feed). **`/diff`** — scrollable overlay diffing the
-  latest shadow snapshot against the work tree (ren's TUI research item).
+### TUI visibility & chrome
+- **Tier chip** with transition flash; **fusion role pills**; gate verdict
+  notices; **`/shift`** routing ledger; **`/diff`** shadow-snapshot overlay.
+- **Settings pickers everywhere**: theme / status-line / posture rows open
+  visible lists (no blind cycling); `/theme` removed — themes live in
+  settings.
+- **`/rename`**: session display name on the line directly above the input
+  bar (Claude Code grammar), shown in /resume, /sessions, /export.
+- **Status-line overflow policy**: low-priority chips drop before any
+  truncation; tokens+model never lose.
+- **Crash guard**: uncaught errors restore the terminal and print the
+  stack — a TUI crash can never wedge the terminal again.
+- **Brand splash restored** (the shimmer regression is in the registry ledger).
 
-### Providers & steering
-- **Ollama lanes**: `ollama` (keyless local, live-probed) and `ollama-cloud`
-  (`OLLAMA_API_KEY`) — dynamic model lists via `/api/tags`.
-- **Provider table completeness**: huggingface, baseten, google-vertex,
-  cloudflare lanes, opencode/-go, ant-ling, regional token plans and more —
-  with deliberate skips (bedrock/azure ambient auth) recorded.
-- **Subagent steering**: `steerChild`/`activeChildren` — the parent can
-  steer a live child by session id; task results carry the id.
-- Feature toggle `shift` (default on) for in-session tier routing.
+### Boot & providers
+- **Keyless boot, done right**: the boot-time wizard is gone entirely; the
+  TUI launches regardless of credential state, and sign-in happens inside
+  (overlay auto-opens when unconfigured). Single-key provider fallback.
+- **Fusion pair configuration**: `/fuse` menu → two-step provider→model
+  pickers for model 1 (architect) and model 2 (builder), session-model and
+  self-pair resets; cross-provider pairs work end-to-end.
+- **Provider-config write path** (KOS consult): `openkai provider
+  list|set|unset` + `provider-config.ts` — one atomic, comment-preserving,
+  0600 code path for the TUI, the CLI, and KOS Settings; aliases
+  (ollama_cloud→ollama-cloud, moonshot→moonshotai); OPENKAI_HOME honoured
+  everywhere.
+- **Ollama lanes** (`ollama` keyless local + `ollama-cloud`) and the full
+  provider-table completeness pass.
 
-### Registry & process
-- `Program/FEATURE_REGISTRY.md` is the release gate (E017 inc 10 walks it).
-  The brand splash regression is recorded and restored; `duet`/`search`/
-  guided-teaching-turn formally retired (CTO, 2026-08-19).
+### Cherry-picks from the omp/pi code-mining dossiers
+- **Real LLM compaction** (`transport.compactSession()` — pi-agent-core's
+  summarising engine; elision deleted) for `/compact` and auto-compact.
+- **Steer-while-busy**: mid-turn input steers the running turn.
+- **Fork picker** (rewind to any past user message), **session search**
+  (`re:`/quoted/fuzzy) + `/resume` picker, **`/export`** (self-contained
+  HTML transcript), **word-level diffs**, **bracketed-paste decode**,
+  **atomic paste-marker backspace**, **history-search highlighting**,
+  **live subagent progress rows**.
+- **Persisted per-tool approvals** (`tools.approval.<tool>`) with the
+  overlay's session-vs-project split and an actionable headless error.
+
+### Design & process
+- **ADRs**: OK-9 (orchestration), OK-10 (served TUI — browser attach as a
+  product-owned surface; OpenKai stays fully independent; KOS consumes,
+  never co-owns).
+- **`docs/ARCHITECTURE_STANDARDS.md` (S-series)**: the binding design law
+  for OpenKai and KOS.
+- **`Program/FEATURE_REGISTRY.md`**: the release gate walked it — every
+  ✅/🔁 row verified against this build.
+- **Release trust root**: Ed25519 release key pinned into standalone
+  builds; manifests signed by the release pipeline (fail-closed on
+  unsigned).
 
 ## [0.1.6] — v0.1.006 (K3 adversarial review + keyless boot)
 

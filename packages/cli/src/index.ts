@@ -104,6 +104,14 @@ Commands:
                          tokens — what the agent is doing right now
                          (.openkai/activity.jsonl). -f follows like tail -f.
 
+  serve                  Loopback HTTP hub (token-gated): POST /prompt,
+                         /sessions, /memory; /health open. Requires
+                         OPENKAI_HUB_TOKEN.
+  bridge [--listen]      Chat connector: pipe lines into the hub, or run a
+                         loopback webhook receiver (Slack/Telegram) with
+                         --listen (token-gated, deduped).
+  splash                 Replay the brand animation.
+
   info                   Self-check: version, run mode (standalone-local /
                          KOS-managed), Cortex reachability, model catalogue,
                          local state counts. Always exits 0.
@@ -483,7 +491,7 @@ async function main(argv: string[]): Promise<number> {
     return runTail({ follow: getBool("--follow") || getBool("-f"), lines });
   }
 
-  // ── splash: replay the brand animation on demand ─────────────────────────
+  // ── serve: the loopback HTTP hub (token-gated) ───────────────────────────
   if (command === "serve") {
     const { runHub } = await import("./hub.js");
     const portRaw = getString("--port") ?? "8787";

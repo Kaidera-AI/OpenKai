@@ -1,6 +1,6 @@
 {
   "name": "@kaidera/openkai",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "OpenKai CLI + TUI — the operator surface for the OpenKai harness.",
   "type": "module",
   "bin": {
@@ -39,7 +39,7 @@
     "@earendil-works/pi-agent-core": "0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@earendil-works/pi-tui": "0.84.2",
-    "@kaidera/openkai-core": "0.1.6",
+    "@kaidera/openkai-core": "0.1.7",
     "grok-mermaid": "^0.2.3"
   },
   "license": "MIT",

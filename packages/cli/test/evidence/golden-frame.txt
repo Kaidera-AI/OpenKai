@@ -4,7 +4,7 @@
 # Chrome usage: {"input":65,"output":2,"cacheRead":49,"cacheWrite":65,"totalTokens":181,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
 
  ▎    ┌────────┐                                                                
- ▎   /  ●    ●  \ OpenKai 0.1.6                                                 
+ ▎   /  ●    ●  \ OpenKai 0.1.7                                                 
  ▎  /  ●  \ /  ●  \ by Kaidera                                                  
  ▎ /    \   ●   /    \ /help · Ctrl+K palette                                   
  ▎ \    /   ●   \    /                                                          
