@@ -40,11 +40,14 @@ The composition law (arXiv:2410.10347): **route when you can predict, cascade wh
 
 ## 4. Standing invariants
 
+**Governing standard: `docs/ARCHITECTURE_STANDARDS.md` (S-series, binding for OpenKai and KOS, adopted 2026-08-19).** The invariants below are the epic-scoped applications of it.
+
 - **No model call on the routing hot path.** The LLM capability judge stays off by default until calibration shows the signal tier misrouting (OK-9.4; judge cost is a budget line, break-even enforced).
 - **Panel = 2, self-pair default, third-party synthesis, gate arbitrates.** The evidence is settled (Self-MoA, LLM-Blender, judge-bias line); do not relitigate without new data.
 - **Gate errors fail closed on mutations; routing judges fail cheap; synthesis parse failure keeps both role outputs.** Fail-direction is per-algorithm and deliberate.
-- **Every routing decision carries a rationale** to the activity feed. Operators tolerate routing they can see.
-- **Honesty discipline:** every performance claim ships with its reproducer; calibration numbers quote the quadrant table they came from.
+- **Every routing decision carries a rationale** to the activity feed (S6). Operators tolerate routing they can see.
+- **Component ship gate (S2/S3/S5):** renders through the terminal seam, replay-reconstructible state, ro/rw-scoped input — all three, or it doesn't ship.
+- **Honesty discipline (S9):** every performance claim ships with its reproducer; calibration numbers quote the quadrant table they came from.
 - **ren A2 stands:** protocol changes go through CPO review first. K3-style adversarial gate is this epic's release gate (inc 10).
 
 ## 5. Explicitly not here (parked, with reasons)

@@ -56,10 +56,13 @@ Authorization: Bearer <OPENKAI_HUB_TOKEN>            (rw: separate scope)
 
 ## 4. Independence invariants (testable)
 
-1. `openkai` and `openkai serve` run with no KOS/Cortex env present (already true; pinned by the mode-matrix tests).
-2. The attach channel is additive: removing it changes nothing about the terminal TUI.
-3. No KOS-specific code, headers, or behaviour anywhere in packages/** — the attach surface is generic xterm.js-over-WS.
-4. The served TUI is byte-identical in behaviour to the terminal TUI (same TuiController, same input path) — the host is a terminal, not a second renderer (ADR §3's "same transport, second renderer" rule, now with a third consumer of the same rendering, not a new one).
+The governing standards live in `docs/ARCHITECTURE_STANDARDS.md` (S-series, binding for OpenKai and KOS). OK-10's invariants are S1/S2/S3/S4/S5/S6/S8 applied to this surface:
+
+1. `openkai` and `openkai serve` run with no KOS/Cortex env present (S8; pinned by the mode-matrix tests).
+2. The attach channel is additive: removing it changes nothing about the terminal TUI (S1).
+3. No KOS-specific code, headers, or behaviour anywhere in packages/** — the attach surface is generic xterm.js-over-WS (S8).
+4. The served TUI is byte-identical in behaviour to the terminal TUI (same TuiController, same input path) — the host is a terminal, not a second renderer (S1/S2).
+5. Every component renders through the terminal seam, is replay-reconstructible, and respects ro/rw input scopes (S2/S3/S5 — the three-question ship gate).
 
 ## 5. Ownership map
 
