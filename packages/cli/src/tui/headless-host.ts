@@ -13,6 +13,7 @@
  */
 
 import type { TUI, Component } from "@earendil-works/pi-tui";
+import { compositeTuiLine } from "@earendil-works/pi-tui";
 import type { Models } from "@earendil-works/pi-ai";
 import {
   InProcessTransport,
@@ -78,13 +79,22 @@ class VirtualTui {
   setFocus(component: Component | undefined): void {
     this.focusedComponent = component;
   }
+  private readonly focusStack: Array<Component | undefined> = [];
+
   showOverlay(component: Component, options?: OverlayEntry["options"]): void {
+    this.focusStack.push(this.focusedComponent);
     this.overlayStack.push({ component, options });
     this.setFocus(component);
     this.dirty = true;
   }
   hideOverlay(): void {
     this.overlayStack.pop();
+    // pi-tui restores the pre-overlay focus on pop (overlayFocusRestore);
+    // without it, rw-attach input routes into the popped component (E017
+    // review: permission decisions ate the composer's focus).
+    const restore = this.focusStack.pop();
+    const top = this.topOverlay();
+    this.setFocus(top !== undefined ? top.component : restore);
     this.dirty = true;
   }
   hasOverlay(): boolean {
@@ -123,14 +133,17 @@ function compositeFrame(app: TuiApp, tui: VirtualTui, width: number): string {
   const base = app.root.render(width);
   const overlay = tui.topOverlay();
   if (!overlay) return base.join("\n");
-  const oWidth = overlayWidth(overlay.options?.width, width);
+  // pi-tui's compositeTuiLine preserves base content left/right of the
+  // overlay — the previous whole-row replacement blanked the transcript
+  // beside every picker/prompt in served frames.
+  const oWidth = Math.min(overlayWidth(overlay.options?.width, width), width);
   const oLines = overlay.component.render(oWidth);
   const maxHeight = overlay.options?.maxHeight !== undefined ? Number.parseInt(overlay.options.maxHeight, 10) : undefined;
   const clipped = maxHeight !== undefined && !Number.isNaN(maxHeight) ? oLines.slice(0, Math.max(1, Math.floor((maxHeight / 100) * base.length))) : oLines;
   const padLeft = Math.max(0, Math.floor((width - oWidth) / 2));
   const startRow = Math.max(0, Math.floor((base.length - clipped.length) / 2));
   for (let i = 0; i < clipped.length && startRow + i < base.length; i += 1) {
-    base[startRow + i] = " ".repeat(padLeft) + clipped[i]!;
+    base[startRow + i] = compositeTuiLine(base[startRow + i]!, clipped[i]!, padLeft, oWidth, width);
   }
   return base.join("\n");
 }
@@ -149,14 +162,20 @@ export class HostedTui {
   private readonly virtual = new VirtualTui();
   private app!: TuiApp; // assigned in start() after buildTuiApp
   private readonly transport: SessionTransport;
-  private readonly pump: NodeJS.Timeout;
   private lastState = "";
   private ended = false;
+
+  private pump: NodeJS.Timeout | undefined;
 
   private constructor(transport: SessionTransport, store: SessionStore, private readonly options: HostedTuiOptions) {
     this.transport = transport;
     this.sessionId = store.sessionId;
-    const interval = Math.max(20, Math.round(1000 / (options.fps ?? 15)));
+  }
+
+  /** Start the frame pump — called once `app` exists (never before: a tick
+   *  with no app would throw inside the interval and kill the process). */
+  private begin(): void {
+    const interval = Math.max(20, Math.round(1000 / (this.options.fps ?? 15)));
     this.pump = setInterval(() => this.tick(), interval);
     this.pump.unref();
   }
@@ -186,18 +205,25 @@ export class HostedTui {
     // The runtime focuses the composer at boot; the host does the same —
     // without it, injected input has nowhere to land.
     host.virtual.setFocus(app.composer.editor);
+    host.begin();
     // ONE consumer of the event stream: the controller's own consume loop.
     void app.controller.consume().catch(() => undefined);
     void (async () => {
-      // Watch for the stream's end via the controller's done flag.
+      // Watch for the stream's end via the controller's done flag. The
+      // watcher exits with the host too (a rejected consume() must not pin
+      // the event loop on a dead session), and the timer is unref'd.
       for (;;) {
-        if ((app.controller as unknown as { done?: boolean }).done === true) break;
+        if ((app.controller as unknown as { done?: boolean }).done === true) {
+          host.ended = true;
+          options.onEnd?.();
+          return;
+        }
+        if (host.ended) return;
         const { promise, resolve } = Promise.withResolvers<void>();
-        setTimeout(resolve, 200);
+        const timer = setTimeout(resolve, 200);
+        timer.unref();
         await promise;
       }
-      host.ended = true;
-      options.onEnd?.();
     })();
     return host;
   }
@@ -239,34 +265,46 @@ export class HostedTui {
 
   private readonly taps = new Set<{ onFrame: (frame: string) => void; onState?: (state: HostState) => void }>();
 
-  /** Resize the virtual terminal (an attach with different geometry). */
+  /** Resize the virtual terminal (an attach with different geometry).
+   *  Clamped: an unbounded width turns the next render's padding into an
+   *  OOM/RangeError (E017 review — one frame killed the whole hub). */
+  static readonly MAX_COLUMNS = 500;
+  static readonly MAX_ROWS = 200;
+
   resize(columns: number, rows: number): void {
-    this.virtual.terminal.columns = columns;
-    this.virtual.terminal.rows = rows;
+    this.virtual.terminal.columns = Math.min(HostedTui.MAX_COLUMNS, Math.max(20, Math.floor(columns)));
+    this.virtual.terminal.rows = Math.min(HostedTui.MAX_ROWS, Math.max(4, Math.floor(rows)));
     this.virtual.dirty = true;
   }
 
   private tick(): void {
     if (this.ended) return;
-    if (this.virtual.dirty) {
+    // Containment: a render throw inside setInterval is an uncaught
+    // exception that kills the hub process. Degrade one frame instead.
+    try {
+      if (this.virtual.dirty) {
+        this.virtual.dirty = false;
+        const frame = this.settledFrame(this.virtual.terminal.columns);
+        this.options.onFrame(frame);
+        for (const tap of this.taps) tap.onFrame(frame);
+      }
+      const current = JSON.stringify(this.state());
+      if (current !== this.lastState) {
+        this.lastState = current;
+        const state = this.state();
+        this.options.onState?.(state);
+        for (const tap of this.taps) tap.onState?.(state);
+      }
+    } catch (error) {
       this.virtual.dirty = false;
-      const frame = this.settledFrame(this.virtual.terminal.columns);
-      this.options.onFrame(frame);
-      for (const tap of this.taps) tap.onFrame(frame);
-    }
-    const current = JSON.stringify(this.state());
-    if (current !== this.lastState) {
-      this.lastState = current;
-      const state = this.state();
-      this.options.onState?.(state);
-      for (const tap of this.taps) tap.onState?.(state);
+      process.stderr.write(`hosted-tui tick: frame degraded (${error instanceof Error ? error.message : String(error)})\n`);
     }
   }
 
   /** Shut the host down (pump, transport). */
   async close(): Promise<void> {
     this.ended = true;
-    clearInterval(this.pump);
+    if (this.pump !== undefined) clearInterval(this.pump);
     await this.transport.close();
   }
 }

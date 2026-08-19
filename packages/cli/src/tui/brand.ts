@@ -5,8 +5,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+import { openkaiHome } from "@kaidera/openkai-core";
 
 import { gradientLogo, introLogoFrame } from "./gradient.js";
 
@@ -96,7 +96,7 @@ interface SplashState {
 }
 
 const statePath = (): string =>
-  path.join(homedir(), ".openkai", "state.json");
+  path.join(openkaiHome(), "state.json");
 
 /** The splash plays once per VERSION — every upgrade earns the brand moment. */
 export function shouldShowSplash(version: string): boolean {

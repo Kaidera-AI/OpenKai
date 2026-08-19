@@ -120,10 +120,10 @@ export class SettingsOverlay implements Component {
           const status = providerKeyStatus(id);
           const state = info.keyless === true
             ? "keyless — no API key; the local server must be running"
-            : status.oauth === true
-              ? "OAuth lane"
-              : status.configured
-                ? `✓ via ${status.via}`
+            : status.configured && status.via
+              ? `✓ via ${status.via}`
+              : status.oauth === true
+                ? "OAuth lane"
                 : `set ${status.needsKey}`;
           return {
             value: `provider:${id}`,
@@ -158,6 +158,7 @@ export class SettingsOverlay implements Component {
             value: "autonomy",
             label: "autonomy",
             description: `now: ${this.actions.currentAutonomy()} — Enter to pick a level`,
+            navigates: true,
             action: () => {
               this.actions.pickAutonomy();
               return undefined;

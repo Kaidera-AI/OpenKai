@@ -60,7 +60,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       "Cortex mode (CORTEX_PROJECT set): every run checkpoints into shared",
       "  project memory — searchable via openkai events and your other tools.",
       "  Unreachable Cortex ⇒ local mode, nothing breaks.",
-      "Choose/re-choose any time: /welcome",
+      "Choose/re-choose any time: /settings (memory tab).",
     ],
     seeAlso: ["sessions"],
   },

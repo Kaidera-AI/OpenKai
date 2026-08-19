@@ -586,9 +586,13 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     } catch {
       // best effort
     }
-    process.stderr.write(
-      `\nopenkai crashed (terminal restored): ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
-    );
+    try {
+      process.stderr.write(
+        `\nopenkai crashed (terminal restored): ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+      );
+    } catch {
+      // stderr may be destroyed (EPIPE) — the terminal is already restored
+    }
     process.exit(1);
   };
   process.once("uncaughtException", onFatal);
@@ -601,25 +605,30 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     }
   }
 
-  // 0.1.6 keyless boot: no credentials → open sign-in inside the running
-  // shell (the CTO directive: configure after launch, never block boot).
-  if (setupNeeded) {
-    controller.beginProviderSetup(provider);
+  try {
+    // 0.1.6 keyless boot: no credentials → open sign-in inside the running
+    // shell (the CTO directive: configure after launch, never block boot).
+    if (setupNeeded) {
+      controller.beginProviderSetup(provider);
+    }
+
+    const consumePromise = controller.consume();
+    const next = await Promise.race([
+      exitRequested,
+      consumePromise.then((): ExitRequest => ({ kind: "quit" })).catch((): ExitRequest => ({ kind: "quit" })),
+    ]);
+
+    await controller.shutdown();
+    await consumePromise.catch(() => undefined);
+
+    tui.stop();
+    terminal.write(FOCUS_REPORT_DISABLE); // leave the terminal clean
+    await terminal.drainInput();
+    return { code: 0, next };
+  } finally {
+    // The guard stays live through tui.stop()/drainInput — exactly the
+    // window it was built for — and is always removed on exit.
+    process.off("uncaughtException", onFatal);
+    process.off("unhandledRejection", onFatal);
   }
-
-  const consumePromise = controller.consume();
-  const next = await Promise.race([
-    exitRequested,
-    consumePromise.then((): ExitRequest => ({ kind: "quit" })).catch((): ExitRequest => ({ kind: "quit" })),
-  ]);
-
-  await controller.shutdown();
-  await consumePromise.catch(() => undefined);
-
-  process.off("uncaughtException", onFatal);
-  process.off("unhandledRejection", onFatal);
-  tui.stop();
-  terminal.write(FOCUS_REPORT_DISABLE); // leave the terminal clean
-  await terminal.drainInput();
-  return { code: 0, next };
 }

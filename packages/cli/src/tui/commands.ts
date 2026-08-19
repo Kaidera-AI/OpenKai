@@ -57,6 +57,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "stats", description: "Show session stats: block counts, model, tokens, fusion partner." },
   { name: "context", description: "Show token usage for this session." },
   { name: "login", description: "Sign in to a provider (opens the onboarding panel)." },
+  { name: "logout", description: "Remove a provider credential (env/OAuth).", argumentHint: "<provider>" },
+  { name: "features", description: "List or toggle feature flags (default-on posture).", argumentHint: "[key]" },
   { name: "compact", description: "Compact the conversation context (model-written summary + retained tail; incremental)." },
   { name: "shake", description: "Strip heavy tool results from context to reclaim tokens (omp's /shake elide)." },
   { name: "undo", description: "Undo the last gated mutation (restore the previous shadow snapshot)." },

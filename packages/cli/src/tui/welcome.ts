@@ -5,12 +5,12 @@
  * regardless of credential state and everything is configured inside it —
  * /setup, the settings panel, and the keyless-boot sign-in overlay carry
  * first-run setup. `/welcome` was already retired as a duplicate of /setup.
+ *
+ * The file IO itself is the canonical config.ts layer (single path, single
+ * shape); this module keeps only the typed onboarding view.
  */
 
-
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { openkaiHome } from "@kaidera/openkai-core";
+import { readConfigFile } from "../config.js";
 
 export interface OpenKaiConfig {
   onboarded?: boolean;
@@ -21,24 +21,6 @@ export interface OpenKaiConfig {
   [key: string]: unknown;
 }
 
-// openkaiHome honours OPENKAI_HOME (embedded/container deployments) — the
-// consult Q3 answer depends on every path going through it.
-const configPath = (): string => path.join(openkaiHome(), "config.json");
-const envPath = (): string => path.join(openkaiHome(), ".env");
-
 export function readConfig(): OpenKaiConfig {
-  try {
-    if (!existsSync(configPath())) return {};
-    return JSON.parse(readFileSync(configPath(), "utf-8")) as OpenKaiConfig;
-  } catch {
-    return {};
-  }
-}
-
-function writeConfig(config: OpenKaiConfig): void {
-  // Same posture as config.ts writeConfigFile: operator-only dir + file, and
-  // the chmod repairs pre-existing loose files.
-  mkdirSync(path.dirname(configPath()), { recursive: true, mode: 0o700 });
-  writeFileSync(configPath(), `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
-  chmodSync(configPath(), 0o600);
+  return readConfigFile() as OpenKaiConfig;
 }

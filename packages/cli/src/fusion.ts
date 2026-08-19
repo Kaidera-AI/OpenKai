@@ -11,7 +11,7 @@ import {
   defaultFusionLogPath,
   defaultModels,
   judgeBreakEven,
-  readCalibrationRuns,
+  readCalibrationRunsDetailed,
   readFusionRuns,
   renderCalibrationReport,
   resolveCast,
@@ -136,20 +136,27 @@ export async function runFusionCalibrate(
 ): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
   const runsPath = path.resolve(cwd, options.runs ?? defaultFusionLogPath(cwd));
-  const pooled = await readCalibrationRuns(runsPath);
+  const pooledRead = await readCalibrationRunsDetailed(runsPath);
+  const pooled = pooledRead.runs;
+  let skipped = pooledRead.skipped;
   let baselineNote = "";
   if (options.baseline) {
     const baselinePath = path.resolve(cwd, options.baseline);
-    const baseline = await readCalibrationRuns(baselinePath);
-    pooled.push(...baseline);
+    const baselineRead = await readCalibrationRunsDetailed(baselinePath);
+    pooled.push(...baselineRead.runs);
+    skipped += baselineRead.skipped;
     baselineNote = ` + ${baselinePath}`;
   }
   if (pooled.length === 0) {
     process.stdout.write(
       `no calibration runs recorded (${runsPath}${baselineNote})\n` +
+        (skipped > 0 ? `note: ${skipped} line(s) were skipped as off-shape — the file is not the expected JSONL record shape\n` : "") +
         "record shape (JSONL): {\"taskId\":\"…\",\"tier\":\"capable\"|\"efficient\",\"score\":0..1,\"outcome\":\"pass\"|\"fail\"}\n",
     );
     return 0;
+  }
+  if (skipped > 0) {
+    process.stderr.write(`[openkai] calibrate: ${skipped} off-shape line(s) skipped from the pooled history\n`);
   }
 
   const { capableRuns, efficientRuns } = splitCalibrationArms(pooled);

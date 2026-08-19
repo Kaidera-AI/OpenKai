@@ -5,9 +5,7 @@
  */
 
 import { readConfig } from "./welcome.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import { readConfigFile, writeConfigFile } from "../config.js";
 
 export interface FeatureDef {
   key: string;
@@ -27,8 +25,6 @@ export const FEATURES: readonly FeatureDef[] = [
   { key: "shift", label: "Shift tier routing", description: "in-session tier decisions from tool signals (Switchyard pattern); posture in /settings routing" },
 ];
 
-const configFile = (): string => path.join(homedir(), ".openkai", "config.json");
-
 /** Is a feature on? Absent means ON — default-on is the posture. */
 export function featureEnabled(key: string): boolean {
   const features = readConfig()["features"];
@@ -40,16 +36,11 @@ export function featureEnabled(key: string): boolean {
 
 /** Flip a feature; returns the new state. */
 export function setFeature(key: string, enabled: boolean): void {
-  const file = configFile();
-  let config: Record<string, unknown> = {};
-  try {
-    if (existsSync(file)) config = JSON.parse(readFileSync(file, "utf-8")) as Record<string, unknown>;
-  } catch {
-    config = {};
-  }
+  // Canonical write path (config.ts): single path + mode bits. The earlier
+  // bespoke write here bypassed OPENKAI_HOME and dropped the 0o600 posture.
+  const config = readConfigFile();
   const features = { ...((config["features"] as Record<string, unknown>) ?? {}) };
   features[key] = enabled;
   config["features"] = features;
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  writeConfigFile(config);
 }

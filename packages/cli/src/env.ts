@@ -19,8 +19,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+import { openkaiHome } from "@kaidera/openkai-core";
 
 /** Names a project-local .env may set: credential-shaped provider keys. */
 const PROJECT_KEY_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)$/i;
@@ -78,5 +78,5 @@ export function loadDotEnv(cwd: string = process.cwd()): void {
   // Project file first: only credential-shaped provider keys are honoured,
   // and the first set wins, so these beat the global file below.
   loadFile(path.join(cwd, ".env"), true);
-  loadFile(path.join(homedir(), ".openkai", ".env"), false);
+  loadFile(path.join(openkaiHome(), ".env"), false);
 }

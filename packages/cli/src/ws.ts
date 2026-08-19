@@ -7,7 +7,7 @@
  * per-message deflate (the attach protocol sends small JSON + ANSI chunks).
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Duplex } from "node:stream";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -60,13 +60,40 @@ function encodeFrame(opcode: number, payload: Buffer): Buffer {
   return Buffer.concat([header, payload]);
 }
 
-/** Incremental decoder for client→server frames (masked). */
+/** Incremental decoder for client→server frames (masked).
+ *
+ * The attach protocol is small JSON, so the decoder enforces it: payloads
+ * are capped (a declared 2^63 length used to pin whatever the client
+ * dribbled — per-connection memory DoS), client frames MUST be masked
+ * (RFC 6455 §5.1; unmasked is a protocol error), and fragmented data
+ * frames are rejected outright (1002) instead of being silently mangled.
+ */
+export const WS_MAX_PAYLOAD = 4 * 1024 * 1024; // 4 MiB — far above any attach message
+
+export class WsProtocolError extends Error {
+  constructor(message: string, readonly closeCode: number) {
+    super(message);
+    this.name = "WsProtocolError";
+  }
+}
+
 export class WsDecoder {
   private buffer: Buffer = Buffer.alloc(0);
 
-  /** Feed bytes; returns every complete message they contained. */
+  /**
+   * @param expectMasked RFC 6455 §5.1 direction: a SERVER decoding client
+   *   frames requires masked (true); a client decoding server frames
+   *   requires unmasked (false). The hub's WsChannel passes true.
+   */
+  constructor(private readonly expectMasked = false) {}
+
+  /** Feed bytes; returns every complete message they contained.
+   *  Throws WsProtocolError on a protocol violation — the caller closes. */
   push(chunk: Buffer): WsMessage[] {
     this.buffer = Buffer.concat([this.buffer, chunk]);
+    if (this.buffer.length > WS_MAX_PAYLOAD * 2) {
+      throw new WsProtocolError("decoder buffer cap exceeded", 1009);
+    }
     const out: WsMessage[] = [];
     for (;;) {
       const frame = this.tryReadFrame();
@@ -79,6 +106,7 @@ export class WsDecoder {
   private tryReadFrame(): WsMessage | null {
     const buf = this.buffer;
     if (buf.length < 2) return null;
+    const fin = (buf[0]! & 0x80) !== 0;
     const opcode = buf[0]! & 0x0f;
     const masked = (buf[1]! & 0x80) !== 0;
     let len = buf[1]! & 0x7f;
@@ -91,6 +119,16 @@ export class WsDecoder {
       if (buf.length < offset + 8) return null;
       len = Number(buf.readBigUInt64BE(offset));
       offset += 8;
+    }
+    if (len > WS_MAX_PAYLOAD) {
+      throw new WsProtocolError(`payload ${len} exceeds the ${WS_MAX_PAYLOAD}-byte cap`, 1009);
+    }
+    if ((opcode === 0x1 || opcode === 0x2 || opcode === 0x0) && !fin) {
+      // No reassembly — the attach protocol never fragments.
+      throw new WsProtocolError("fragmented data frames are not supported", 1002);
+    }
+    if (this.expectMasked && !masked) {
+      throw new WsProtocolError("client frames must be masked", 1002);
     }
     const maskLen = masked ? 4 : 0;
     if (buf.length < offset + maskLen + len) return null;
@@ -117,14 +155,27 @@ export class WsDecoder {
 
 /** A raw-text WS channel over a socket: send text/control, receive messages. */
 export class WsChannel {
-  private readonly decoder = new WsDecoder();
+  private readonly decoder = new WsDecoder(true);
+  private closing = false;
   constructor(
     private readonly socket: Duplex,
     private readonly onMessage: (msg: WsMessage) => void,
     private readonly onClose: () => void,
   ) {
     socket.on("data", (chunk: Buffer) => {
-      for (const msg of this.decoder.push(chunk)) {
+      if (this.closing) return; // nothing dispatches after a close frame
+      let messages: WsMessage[];
+      try {
+        messages = this.decoder.push(chunk);
+      } catch (error) {
+        if (error instanceof WsProtocolError) {
+          this.close(error.closeCode, error.message);
+          return;
+        }
+        throw error;
+      }
+      for (const msg of messages) {
+        if (this.closing) break;
         if (msg.kind === "ping") this.sendRaw(encodeControlFrame(0xa, msg.payload));
         else if (msg.kind === "close") this.close(msg.code, msg.reason);
         else this.onMessage(msg);
@@ -143,15 +194,18 @@ export class WsChannel {
   }
 
   close(code = 1000, reason = ""): void {
+    if (this.closing) return;
+    this.closing = true;
     if (!this.socket.destroyed) {
       const payload = Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason, "utf-8")]);
       this.sendRaw(encodeControlFrame(0x8, payload));
+      // Half-close and give the peer a beat to echo the close frame; the
+      // socket's own close event releases the channel either way.
       this.socket.end();
+      const guard = setTimeout(() => {
+        if (!this.socket.destroyed) this.socket.destroy();
+      }, 1000);
+      guard.unref();
     }
   }
-}
-
-/** Unique attachment id for the hello/auth handshake (unpredictable per attach). */
-export function attachNonce(): string {
-  return randomBytes(8).toString("hex");
 }

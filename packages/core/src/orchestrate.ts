@@ -85,7 +85,10 @@ export interface OrchestratorOptions {
 const POSTURE_THRESHOLD: Record<ShiftPosture, number> = {
   quality: 0.6,
   balanced: TIER_THRESHOLD,
-  saver: 0.4,
+  // 0.47, not 0.4: the saver dial must stay ABOVE the largest single-signal
+  // score or one weak signal flips a stage on its own — the corroborative
+  // property the scorer exists for (E017 review).
+  saver: 0.47,
 };
 
 /** The stage's resting tier under the balanced posture (K3: plan/review are capable-resting). */
@@ -277,11 +280,20 @@ export class Orchestrator {
    * pin suppresses the escalation (same documented posture as overrides).
    */
   escalate(stage: Stage): TierRouteResult {
+    // Budget spent: return the latched decision UNCHANGED — re-forcing
+    // capable here would escalate a stage whose one retry already ran
+    // (E017 review: the old path re-escalated and only noted it in prose).
+    if (this.escalatedStages.has(stage) && this.latch !== undefined && this.latch.stage === stage) {
+      const latched = this.lastDecision;
+      if (latched !== undefined && latched.stage === stage) {
+        return {
+          ...latched,
+          reason: `${latched.reason}; escalation budget for this stage already spent — returning the latched decision`,
+        };
+      }
+    }
     let tier: Tier = "capable";
     let reason = "cascade escalation after gate halt (OK-9.3 rule 2 — one retry)";
-    if (this.escalatedStages.has(stage)) {
-      reason += "; escalation budget for this stage already spent — returning the latched escalation";
-    }
     this.escalatedStages.add(stage);
     if (this.pins.ceiling !== undefined && TIER_RANK[tier] > TIER_RANK[this.pins.ceiling]) {
       tier = this.pins.ceiling;
@@ -326,6 +338,9 @@ export class Orchestrator {
     } else if (raw.confidence >= this.threshold) {
       tier = raw.score > 0 ? "capable" : "efficient";
       source = "dimensions";
+      // decideTier gates at TIER_THRESHOLD; the posture gate can be lower —
+      // raw.reason would then say "below threshold" on a flip (E017 review).
+      reason = `corroborative score ${raw.score.toFixed(3)} past the ${this.posture} posture threshold (${raw.confidence.toFixed(3)} ≥ ${this.threshold})`;
     } else {
       tier = postureDefault;
       source = "fall_open";
@@ -360,9 +375,22 @@ export class Orchestrator {
    * cast/pair selection via {@link FusionBandit.recommend}; tier defaults
    * stay posture-driven until calibration (W6) supports moving them.
    */
-  noteGateOutcome(outcome: "pass" | "fail", bucket: string): void {
-    if (this.lastDecision === undefined) return;
-    this.bandit.noteOutcome(bucket, this.lastDecision.model, outcome === "pass");
+  /**
+   * Reward writeback. `servedModels` names the models that ACTUALLY served
+   * the attempt — the caller (fuse) knows its panel; decide() is advisory
+   * and its pick may never have touched the panel (E017 review: crediting
+   * lastDecision.model trained phantom arms the panel never used).
+   */
+  noteGateOutcome(outcome: "pass" | "fail", bucket: string, servedModels?: string[]): void {
+    const models =
+      servedModels !== undefined && servedModels.length > 0
+        ? [...new Set(servedModels)]
+        : this.lastDecision !== undefined
+          ? [this.lastDecision.model]
+          : [];
+    for (const model of models) {
+      this.bandit.noteOutcome(bucket, model, outcome === "pass");
+    }
   }
 
   /** Read one bandit arm's posterior back (calibration/inspection; a copy). */

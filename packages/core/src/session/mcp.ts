@@ -22,12 +22,12 @@
 
 import { spawn as cpSpawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
 import type { PermissionGate } from "./permission-gate.js";
 import { scrubbedChildEnv } from "../procenv.js";
+import { openkaiHome } from "../credentials.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,7 +62,9 @@ interface McpConnection {
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const CONFIG_PATH = path.join(homedir(), ".openkai", "mcp.json");
+// openkaiHome honours OPENKAI_HOME — mcp.json follows the same
+// relocation rule as config.json (credentials.ts is the single definition).
+const CONFIG_PATH = path.join(openkaiHome(), "mcp.json");
 
 function loadMcpConfig(): McpServerConfig[] {
   try {

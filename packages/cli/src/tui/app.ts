@@ -70,7 +70,7 @@ import { SettingsOverlay } from "./settings.js";
 import { readConfig } from "./welcome.js";
 import { helpIndex, helpTopic } from "../help.js";
 import { FEATURES, featureEnabled, setFeature } from "./features.js";
-import { setTheme, themeName, themeNames, detectThemeAsync } from "./theme.js";
+import { setTheme, themeName, themeNames, detectThemeAsync, detectThemeSync } from "./theme.js";
 import { ThemePicker } from "./theme-picker.js";
 import { changelogHead } from "./changelog.js";
 import { DiffOverlay } from "./diff.js";
@@ -820,9 +820,14 @@ export class TuiController {
    private header?: Text;
    private sessionName: string | undefined;
 
-   /** Set (or change) the session display name live — the /rename surface. */
+   /** Set (or change) the session display name live — the /rename surface.
+    *  The name is rendered raw into the header and the /resume picker, so it
+    *  passes the same sanitiser as every other model-/file-sourced string
+    *  (review: an on-disk session_name with escape bytes was an injection
+    *  vector — OSC 52 clipboard writes, title spoofs, screen clears). */
    setSessionName(name: string | undefined): void {
-     this.sessionName = name?.trim() ? name.trim() : undefined;
+     const clean = name !== undefined ? sanitizeTerminalText(name).replace(/\s+/g, " ").trim() : "";
+     this.sessionName = clean === "" ? undefined : clean;
      this.renderHeader();
      this.tui.requestRender();
    }
@@ -834,9 +839,14 @@ export class TuiController {
 
    private renderHeader(): void {
      if (!this.header) return;
-     const label = this.sessionName ?? `session ${this.sessionId.slice(0, 8)}`;
-     const styled = this.sessionName ? highlight.base(label) : textToken.dim(label);
-     this.header.setText(` ${styled}${this.sessionName ? textToken.dim(` · ${this.sessionId.slice(0, 8)}`) : ""}`);
+     // Bound the always-visible chrome: long names truncate with an
+     // ellipsis instead of hard-clipping against the session-id suffix.
+     const MAX_NAME = 48;
+     const name = this.sessionName;
+     const clipped = name !== undefined && name.length > MAX_NAME ? `${name.slice(0, MAX_NAME - 1)}…` : name;
+     const label = clipped ?? `session ${this.sessionId.slice(0, 8)}`;
+     const styled = clipped ? highlight.base(label) : textToken.dim(label);
+     this.header.setText(` ${styled}${clipped ? textToken.dim(` · ${this.sessionId.slice(0, 8)}`) : ""}`);
    }
 
    /** `/btw` side channel (scope §1.5): the question is sent to the model but is
@@ -1322,7 +1332,9 @@ export class TuiController {
         this.tui.hideOverlay();
         writeConfigFile({ ...readConfigFile(), theme: id });
         if (id === "auto") {
-          void detectThemeAsync().then((detected) => setTheme(detected));
+          // Mid-session: never re-query OSC 11 on the TUI's stdin — the sync
+          // COLORFGBG hint is enough here (the full query stays at boot).
+          setTheme(detectThemeSync());
         } else {
           setTheme(id);
         }
@@ -1528,7 +1540,12 @@ export class TuiController {
       this.tui.requestRender();
       this.openSettings(); // back to the list with fresh status
     };
-    if (info?.oauth && !status.configured) {
+    // OAuth lanes: route to the device flow whenever no credential SOURCE is
+    // visible (status.via names one when an env key/OAuth token actually
+    // exists). providerKeyStatus.configured is NOT the gate — it is true
+    // unconditionally for oauth lanes (review: the OAuth overlay was dead
+    // code and Codex/Copilot lanes printed a false "already signed in").
+    if (info?.oauth && !status.via) {
       this.tui.showOverlay(
         new OAuthOverlay(this.tui, { providerId, providerLabel: info.label, onDone: done }),
         { anchor: "center", width: "64%", maxHeight: "80%" },
@@ -1537,7 +1554,12 @@ export class TuiController {
     }
     const envKey = status.needsKey ?? info?.envKeys[0];
     if (!envKey) {
-      this.transcript.addNotice(`${providerId}: already signed in`);
+      if (info?.oauth) {
+        // Credential already present (via names the source) — honest notice.
+        this.transcript.addNotice(`${providerId}: already signed in (${status.via})`);
+      } else {
+        this.transcript.addNotice(`${providerId}: keyless lane — no sign-in needed`);
+      }
       this.tui.requestRender();
       return;
     }

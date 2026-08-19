@@ -160,6 +160,16 @@ export function readShiftConfig(raw: Record<string, unknown>): { posture?: Shift
     if (typeof ceiling === "string" && SHIFT_TIERS.includes(ceiling)) {
       pins.ceiling = ceiling as "efficient" | "capable";
     }
+    // Floor-above-ceiling is an operator error the clamp would silently
+    // invert (the floor wins, the ceiling becomes a lie) — say so.
+    if (pins.floor !== undefined && pins.ceiling === "efficient") {
+      const offenders = Object.entries(pins.floor).filter(([, tier]) => tier === "capable");
+      if (offenders.length > 0) {
+        process.stderr.write(
+          `[openkai] shift config: floor ${offenders.map(([stage]) => stage).join("/")}=capable sits above ceiling=efficient — the ceiling wins at route time; fix the pins\n`,
+        );
+      }
+    }
     const never = (pinsRaw as Record<string, unknown>)["never"];
     if (Array.isArray(never)) {
       const list = never.filter((m): m is string => typeof m === "string");
@@ -318,8 +328,16 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     // to the escalated (capable-tier) model as a self-pair (E016 default).
     let panel = { architectModel: architect, builderModel: builder, judgeModel: judge };
     let cascadeSpent = false;
+    // Set when the cascade block already recorded this attempt's fail — the
+    // bottom writeback must not double-count it (E017 review). Reset per
+    // attempt at the loop top.
+    let attemptRecorded = false;
+    // True while the escalated cascade attempt runs — approveGate asks for
+    // fresh consent on a TTY instead of reusing the original --yes.
+    let cascadeActive = false;
 
     for (;;) {
+      attemptRecorded = false;
       // Judge break-even meter (OK-9 W7): logged per run attempt from live
       // catalogue pricing — the judge arbitrates the cheap↔dear gap between
       // the builder and architect tiers of the CURRENT panel (the cascade
@@ -347,13 +365,23 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
           maxRounds: options.maxRounds,
           // Consent parity (E001 §2): the gate's checks are model-authored
           // shell with operator privileges. Print them; only --yes executes.
+          // --yes covers ONE attempt: the cascade retry is a second, dearer
+          // panel and asks again on a TTY (non-TTY keeps the flag's consent —
+          // there is nobody to ask). E017 review.
           approveGate: (checks) => {
+            const isCascadeAttempt = cascadeActive;
             process.stderr.write("\n[openkai] validator-designed gate (model-authored shell):\n");
             for (const [i, c] of checks.entries()) {
               process.stderr.write(`  ${i + 1}. ${c.name}\n     $ ${c.command}\n`);
             }
             if (!options.yes) {
               process.stderr.write("gate REFUSED — rerun with --yes to execute these checks.\n");
+              return false;
+            }
+            if (isCascadeAttempt && process.stdin.isTTY) {
+              process.stderr.write(
+                "cascade retry (escalated panel) — original --yes does not carry over; refusing. Re-run interactively to approve.\n",
+              );
               return false;
             }
             process.stderr.write("gate approved via --yes.\n");
@@ -378,8 +406,12 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
         stage !== undefined &&
         !cascadeSpent
       ) {
-        orchestrator.noteGateOutcome("fail", bucket);
+        // Credit the models that SERVED the halted attempt, not the
+        // orchestrator's advisory pick (E017 review: phantom arms).
+        orchestrator.noteGateOutcome("fail", bucket, [panel.architectModel.id, panel.builderModel.id]);
+        attemptRecorded = true;
         cascadeSpent = true;
+        cascadeActive = true;
         const escalation = orchestrator.escalate(stage);
         if (escalation.tier === "capable") {
           const escalatedModel = models.getModel(escalation.provider, escalation.model);
@@ -402,9 +434,17 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
       }
 
       // Reward writeback (OK-9 W5): only real verdicts teach the router —
-      // refused/weak-gate/not-run carry no evidence.
-      if (orchestrator !== undefined && (result.gate.outcome === "pass" || result.gate.outcome === "halt")) {
-        orchestrator.noteGateOutcome(result.gate.outcome === "pass" ? "pass" : "fail", bucket);
+      // refused/weak-gate/not-run carry no evidence. Credit the panel that
+      // served this attempt.
+      if (
+        orchestrator !== undefined &&
+        !attemptRecorded &&
+        (result.gate.outcome === "pass" || result.gate.outcome === "halt")
+      ) {
+        orchestrator.noteGateOutcome(result.gate.outcome === "pass" ? "pass" : "fail", bucket, [
+          panel.architectModel.id,
+          panel.builderModel.id,
+        ]);
       }
 
       // Managed mode (ren A1): with a project attached, also export the run

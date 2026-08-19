@@ -119,23 +119,38 @@ export function isCalibrationRun(value: unknown): value is CalibrationRun {
  * reads as empty.
  */
 export async function readCalibrationRuns(logPath: string): Promise<CalibrationRun[]> {
+  return (await readCalibrationRunsDetailed(logPath)).runs;
+}
+
+/**
+ * Same read, with the skip count surfaced: a default runs file full of
+ * off-shape lines looks identical to an empty one without it (E017 review).
+ */
+export async function readCalibrationRunsDetailed(
+  logPath: string,
+): Promise<{ runs: CalibrationRun[]; skipped: number }> {
   let text: string;
   try {
     text = await fs.readFile(logPath, "utf-8");
   } catch {
-    return [];
+    return { runs: [], skipped: 0 };
   }
   const runs: CalibrationRun[] = [];
+  let skipped = 0;
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     try {
       const parsed: unknown = JSON.parse(line);
-      if (isCalibrationRun(parsed)) runs.push(parsed);
+      if (isCalibrationRun(parsed)) {
+        runs.push(parsed);
+      } else {
+        skipped += 1;
+      }
     } catch {
-      // skip the corrupt line, keep the rest of the history
+      skipped += 1; // corrupt line — keep the rest of the history
     }
   }
-  return runs;
+  return { runs, skipped };
 }
 
 /** Split pooled records into the two arms by their recorded tier. */
@@ -232,7 +247,9 @@ export function runCalibration(input: {
       strongCallFraction: paired === 0 ? 0 : escalated.length / paired,
       routedQuality,
       qualityGapClosed:
-        qualityGap === 0 ? undefined : (routedQuality - efficientQuality) / qualityGap,
+        // A negative gap (efficient outscoring capable in this sample) makes
+        // "gap closed" meaningless — same n/a posture as the zero gap.
+        qualityGap <= 0 ? undefined : (routedQuality - efficientQuality) / qualityGap,
     };
   });
 

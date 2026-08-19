@@ -10,6 +10,7 @@ export {
   judgeBreakEvenEvent,
   judgeBreakEvenLine,
   readCalibrationRuns,
+  readCalibrationRunsDetailed,
   renderCalibrationReport,
   runCalibration,
   splitCalibrationArms,

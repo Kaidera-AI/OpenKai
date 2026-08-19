@@ -23,6 +23,7 @@ import { SessionStore } from "@kaidera/openkai-core";
 import type { Entry } from "@kaidera/openkai-core";
 import { highlight, opaquePanel, paletteSelectTheme, renderOverlayFooter, text as textToken } from "./theme.js";
 import { relativeTime } from "./history-search.js";
+import { sanitizeTerminalText } from "./sanitize.js";
 
 /** One searchable session row (the TUI + CLI listing shape). */
 export interface SessionSearchRow {
@@ -343,7 +344,9 @@ export class SessionSearchPicker implements Component {
       : this.rows;
     const items: SelectItem[] = filtered.map((row) => ({
       value: row.id,
-      label: row.name?.trim() ? row.name.trim() : row.id.slice(0, 8),
+      // The name is file-sourced — sanitise before it hits the terminal
+      // (same choke point as app.ts setSessionName).
+      label: row.name?.trim() ? sanitizeTerminalText(row.name).replace(/\s+/g, " ").trim() : row.id.slice(0, 8),
       description: `${row.firstUserMessage.replace(/\s+/g, " ").slice(0, 40)} · ${row.messageCount} msgs · ${relativeTime(row.modified)}`,
     }));
     const list = new SelectList(items, 10, paletteSelectTheme);

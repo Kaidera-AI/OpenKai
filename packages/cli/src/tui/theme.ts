@@ -97,14 +97,20 @@ export function detectThemeAsync(): Promise<"dark" | "light"> {
       resolve(detectThemeSync());
       return;
     }
+    // TUI-safety (E017 review, critical): this function may run WHILE a TUI
+    // owns stdin (theme picker applying "auto" mid-session). Preserve and
+    // restore the raw-mode state, and never pause a shared stream — the
+    // previous behaviour (setRawMode(false) + pause()) killed TUI keyboard
+    // input and could wedge the terminal in the alt screen.
+    const wasRaw = stdin.isRaw === true;
     let settled = false;
     const finish = (value: "dark" | "light"): void => {
       if (settled) return;
       settled = true;
       stdin.off("data", onData);
       try {
-        stdin.setRawMode(false);
-        stdin.pause();
+        stdin.setRawMode(wasRaw);
+        if (stdin.listenerCount("data") === 0) stdin.pause();
       } catch {
         // already detached
       }

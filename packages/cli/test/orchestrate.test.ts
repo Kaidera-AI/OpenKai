@@ -12,7 +12,7 @@
  *      the floor; a ceiling suppresses override escalation (documented
  *      OK-9.7 cost-certainty posture).
  *   6. Posture mapping — quality = fall-open capable @ 0.6, balanced =
- *      per-stage defaults @ 0.5, saver = fall-open efficient @ 0.4.
+ *      per-stage defaults @ 0.5, saver = fall-open efficient @ 0.47.
  *   7. Cascade — escalate() forces capable once, labelled, and latches;
  *      the ceiling pin suppresses it.
  *   8. Compaction hook — reevaluate() returns a decision only on a flip.
@@ -70,7 +70,7 @@ const MILD: TierInput = {
   compacted: false,
 };
 
-/** One HARD error: score ≈ 0.4621 — above saver (0.4), below balanced (0.5) and quality (0.6). */
+/** One HARD error: score ≈ 0.4621 — below every posture threshold (saver 0.47, balanced 0.5, quality 0.6). */
 const SINGLE_HARD: TierInput = {
   signals: [{ tool: "bash", resultText: "cat: missing.ts: No such file or directory" }],
   turnDepth: 1,
@@ -250,14 +250,22 @@ test("posture: balanced rests per-stage (plan/review capable, build efficient) a
   assert.equal(d.tier, "efficient");
 });
 
-test("posture: saver falls open efficient and escalates at 0.4", () => {
+test("posture: saver falls open efficient and escalates at 0.47", () => {
   const orch = new Orchestrator({ cwd: "/tmp", castConfig: CASTS, posture: "saver" });
   const d = orch.decide(PLAN, NO_SIGNALS);
   assert.equal(d.tier, "efficient", "saver posture: even plan falls open efficient");
 
-  // 0.4621 ≥ 0.4: the same lone hard error DOES escalate under saver.
+  // 0.4621 < 0.47: a LONE hard error stays fall_open even under saver — the
+  // corroborative property holds at every posture (E017 review: 0.4 let one
+  // weak signal flip a stage on its own).
   const orch2 = new Orchestrator({ cwd: "/tmp", castConfig: CASTS, posture: "saver" });
-  const escalated = orch2.decide(BUILD, SINGLE_HARD);
+  const single = orch2.decide(BUILD, SINGLE_HARD);
+  assert.equal(single.source, "fall_open");
+  assert.equal(single.tier, "efficient");
+
+  // Corroborated distress (≈0.762) still escalates under saver.
+  const orch3 = new Orchestrator({ cwd: "/tmp", castConfig: CASTS, posture: "saver" });
+  const escalated = orch3.decide(BUILD, CORROBORATED);
   assert.equal(escalated.tier, "capable");
   assert.equal(escalated.source, "dimensions");
 });
@@ -281,13 +289,14 @@ test("escalate forces capable once, labels the move, and latches it", () => {
   const held = orch.decide(BUILD, MILD);
   assert.equal(held.tier, "capable");
 
-  // Escalate-once: a repeat call is the latched escalation, budget spent.
+  // Escalate-once: a repeat call returns the latched decision unchanged
+  // (budget spent) and does NOT re-emit a routing event.
   const repeat = orch.escalate("build");
   assert.equal(repeat.tier, "capable");
   assert.match(repeat.reason, /escalation budget for this stage already spent/);
 
-  // Every step — decide, escalate, held — emitted a tier-labelled event.
-  assert.equal(events.length, 4);
+  // decide, escalate, held — the repeat escalate emits nothing.
+  assert.equal(events.length, 3);
   assert.equal(events[1]?.tier, "capable");
   assert.equal(events[1]?.source, "override");
 });

@@ -34,10 +34,32 @@ test("ws codec: server frames are unmasked; extended lengths encode", () => {
   const big = encodeTextFrame("x".repeat(70000));
   assert.equal(big[1], 127, "64-bit length form");
   const decoder = new WsDecoder();
-  // Feed an UNMASKED server frame — decoder must accept it too.
+  // Client-side decoding (default): server frames arrive unmasked.
   const messages = decoder.push(big);
   assert.equal(messages.length, 1);
   assert.equal((messages[0] as { text: string }).text.length, 70000);
+});
+
+test("ws codec: the server-side decoder enforces RFC 6455 client rules", () => {
+  // Server side (expectMasked): an unmasked client frame is a 1002 protocol
+  // error — before this, the hub silently accepted them.
+  const strict = new WsDecoder();
+  const unmasked = encodeTextFrame("hello"); // FIN|text, len 5, no mask
+  const serverDecoder = new WsDecoder(true);
+  assert.throws(() => serverDecoder.push(unmasked), /must be masked/);
+  // …while the lenient (client-side) decoder still accepts server frames.
+  assert.equal(strict.push(encodeTextFrame("hello")).length, 1);
+
+  // Fragmented data frames are rejected (1002), not silently mangled.
+  const frag = Buffer.from([0x01, 0x85, 1, 2, 3, 4, 1 ^ 1, 2 ^ 2, 3 ^ 3, 4 ^ 4, 5 ^ 1]);
+  assert.throws(() => new WsDecoder(true).push(frag), /fragmented/);
+
+  // A declared payload past the cap is a 1009 — never buffered.
+  const huge = Buffer.alloc(10);
+  huge[0] = 0x81;
+  huge[1] = 0xff; // masked, 64-bit length follows
+  huge.writeBigUInt64BE(BigInt(1) << BigInt(40), 2);
+  assert.throws(() => new WsDecoder(true).push(huge), /exceeds/);
 });
 
 test("ws handshake: accept value follows RFC 6455", () => {

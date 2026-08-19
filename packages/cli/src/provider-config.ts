@@ -71,10 +71,20 @@ function applyEnvEdit(key: string, value: string | undefined): void {
 
 /**
  * Write (or replace) one KEY=VALUE entry and sync the live environment.
- * The single mutation entry point for every surface.
+ * The single mutation entry point for every surface. Values are single-line
+ * by contract — a newline would inject arbitrary lines into the store
+ * (including harness knobs the project-.env trust boundary exists to block).
  */
 export function writeProviderKey(key: string, value: string): void {
-  applyEnvEdit(key, value);
+  if (/[\r\n]/.test(value)) {
+    throw new Error("key values must be single-line (no newlines)");
+  }
+  // Values with whitespace or '#' are quoted on write — both readers (this
+  // module and env.ts's loader) round-trip quoted values; unquoted they
+  // skew on next boot (truncated at the first space). A value containing
+  // its own double quote falls back to the legacy unquoted form.
+  const stored = /[\s#]/.test(value) && !value.includes('"') ? `"${value}"` : value;
+  applyEnvEdit(key, stored);
   process.env[key] = value;
 }
 
@@ -89,7 +99,12 @@ export function canonicalEnvKey(providerId: string): string | undefined {
   const id = resolveProviderId(providerId);
   const info = PROVIDERS[id];
   if (info?.envKeys[0] !== undefined) return info.envKeys[0];
-  // Unknown-to-us providers follow the <PROVIDER>_API_KEY convention.
+  // Keyless (ollama) and OAuth-only lanes take NO env key — never fabricate
+  // one (the <ID>_API_KEY for a keyless lane would be another lane's real
+  // credential: ollama → OLLAMA_API_KEY = ollama-cloud's key. Proven in
+  // review).
+  if (info !== undefined) return undefined;
+  // Unknown-to-the-registry providers follow the <PROVIDER>_API_KEY convention.
   return `${id.replace(/-/g, "_").toUpperCase()}_API_KEY`;
 }
 

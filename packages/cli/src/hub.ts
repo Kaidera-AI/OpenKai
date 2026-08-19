@@ -64,13 +64,19 @@ export async function runHub(options: HubOptions): Promise<number> {
 
   // ── OK-10 served TUI: hosted sessions + WS attach channel ──────────────
   const hosted = new Map<string, HostedTui>();
+  /** Live attach sockets — destroyed on shutdown (server.close() doesn't
+   *  touch upgraded sockets, so the hub would hang with any attach open). */
+  const attachSockets = new Set<import("node:stream").Duplex>();
+  /** Cap concurrent hosted sessions — each is a full Agent + 15fps pump. */
+  const MAX_HOSTED = 16;
 
   /** Register the WS attach channel on the HTTP server (called post-create). */
   const registerAttachChannel = (srv: ReturnType<typeof createServer>): void => {
     srv.on("upgrade", (req, socket, head) => {
       const fail = (status: number, message: string): void => {
-        socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
-        socket.destroy();
+        // end() flushes the response before closing; destroy() could
+        // discard the buffered 401/403.
+        socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
       };
       try {
         const reqHost = req.headers.host;
@@ -86,7 +92,9 @@ export async function runHub(options: HubOptions): Promise<number> {
       if (typeof key !== "string") return fail(400, "Bad Request");
       socket.write(handshakeResponseHeaders(key));
       if (head.length > 0) socket.unshift(head);
+      attachSockets.add(socket);
 
+      let untap: (() => void) | undefined;
       const channel = new WsChannel(socket, (msg) => {
         if (msg.kind !== "text") return;
         let parsed: unknown;
@@ -107,7 +115,11 @@ export async function runHub(options: HubOptions): Promise<number> {
           }
         }
       }, () => {
-        // Socket closed — attaches are ephemeral; the hosted session lives on.
+        // Socket closed — detach the frame tap (the earlier no-op leaked
+        // every attach: dead taps kept stringifying every frame forever)
+        // and release the socket from the shutdown registry.
+        untap?.();
+        attachSockets.delete(socket);
       });
 
       // Attach hello (S3): the settled frame at the client's width, then the
@@ -115,7 +127,7 @@ export async function runHub(options: HubOptions): Promise<number> {
       const widthParam = Number(url.searchParams.get("width") ?? "100");
       const width = Number.isFinite(widthParam) && widthParam >= 20 ? widthParam : 100;
       channel.send(JSON.stringify({ type: "hello", sessionId: hostedSession.sessionId, mode, frame: hostedSession.settledFrame(width) }));
-      hostedSession.addTap(
+      untap = hostedSession.addTap(
         (frame) => channel.send(JSON.stringify({ type: "frame", data: frame })),
         (state) => channel.send(JSON.stringify({ type: "state", state })),
       );
@@ -151,16 +163,10 @@ export async function runHub(options: HubOptions): Promise<number> {
     }
 
     if (req.method === "GET" && url.pathname === "/sessions") {
-      const dir = path.join(process.env.OPENKAI_HOME ?? path.join(homedir(), ".openkai"), "sessions");
-      let sessions: string[] = [];
-      try {
-        sessions = readdirSync(dir, { withFileTypes: true })
-          .filter((d) => d.isDirectory())
-          .map((d) => d.name);
-      } catch {
-        sessions = [];
-      }
-      json(res, 200, { sessions });
+      // The live hosted map is the truth — the earlier directory listing
+      // read ~/.openkai/sessions, but hosted sessions persist under
+      // <cwd>/.openkai/sessions, so the listing never matched reality.
+      json(res, 200, { sessions: [...hosted.keys()] });
       return;
     }
 
@@ -197,6 +203,10 @@ export async function runHub(options: HubOptions): Promise<number> {
         json(res, 400, { error: "invalid JSON body" });
         return;
       }
+      if (hosted.size >= MAX_HOSTED) {
+        json(res, 429, { error: `too many hosted sessions (cap ${MAX_HOSTED}) — close one first` });
+        return;
+      }
       const modelId = body.model ?? process.env.OPENKAI_MODEL ?? "nvidia/nemotron-3-nano-30b-a3b:free";
       try {
         const host = await HostedTui.start({
@@ -204,6 +214,12 @@ export async function runHub(options: HubOptions): Promise<number> {
           modelId,
           ...(body.provider !== undefined ? { provider: body.provider } : {}),
           onFrame: () => undefined, // attaches tap their own listeners
+          onEnd: () => {
+            // Evict ended sessions — they used to live in the map forever,
+            // attachable but silent (and unbounded in memory).
+            const ended = host.sessionId;
+            void host.close().finally(() => hosted.delete(ended));
+          },
         });
         hosted.set(host.sessionId, host);
         json(res, 200, { sessionId: host.sessionId, attach: `/attach/${host.sessionId}?mode=ro|rw` });
@@ -260,14 +276,22 @@ export async function runHub(options: HubOptions): Promise<number> {
   process.stderr.write(`openkai hub listening on http://${urlHost(host)}:${options.port} (bearer-gated; /health open; /attach for hosted TUI)\n`);
   // Keep the process alive until SIGINT/SIGTERM (or an embedding test aborts).
   const shutdown = Promise.withResolvers<void>();
-  process.on("SIGINT", shutdown.resolve);
-  process.on("SIGTERM", shutdown.resolve);
+  const onSigint = (): void => shutdown.resolve();
+  const onSigterm = (): void => shutdown.resolve();
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
   if (options.signal) {
     if (options.signal.aborted) shutdown.resolve();
     else options.signal.addEventListener("abort", () => shutdown.resolve(), { once: true });
   }
   await shutdown.promise;
+  process.off("SIGINT", onSigint);
+  process.off("SIGTERM", onSigterm);
   server.close();
+  // Upgraded WS sockets survive server.close() — without this the process
+  // hung forever with any attach open (proven: alive 6s after SIGINT).
+  for (const socket of attachSockets) socket.destroy();
+  attachSockets.clear();
   await Promise.allSettled([...hosted.values()].map((h) => h.close()));
   return 0;
 }

@@ -33,10 +33,10 @@ export function runProvider(options: ProviderCliOptions): number {
       const status = providerKeyStatus(id);
       const state = info.keyless === true
         ? "keyless (local server)"
-        : status.oauth === true
-          ? "OAuth lane"
-          : status.configured
-            ? `✓ via ${status.via}`
+        : status.configured && status.via
+          ? `✓ via ${status.via}`
+          : status.oauth === true
+            ? "OAuth lane"
             : "—";
       return `${id.padEnd(20)} ${state}`;
     });
@@ -61,8 +61,13 @@ export function runProvider(options: ProviderCliOptions): number {
       process.stderr.write(`openkai provider set requires --key <value>\n`);
       return 2;
     }
+    const key = options.key.trim();
+    if (key === "") {
+      process.stderr.write(`empty key — pass the credential value to --key\n`);
+      return 2;
+    }
     try {
-      const envKey = setProviderKey(resolved, options.key);
+      const envKey = setProviderKey(resolved, key);
       process.stdout.write(`${resolved}: ${envKey} written to the credential store (0600)\n`);
       return 0;
     } catch (error) {
@@ -75,6 +80,14 @@ export function runProvider(options: ProviderCliOptions): number {
     try {
       const envKey = unsetProviderKey(resolved);
       process.stdout.write(`${resolved}: ${envKey} removed\n`);
+      // Sibling lanes share env vars (ollama-cloud → OLLAMA_API_KEY is the
+      // proven collision). Warn when another known lane reads the same var.
+      const siblings = Object.entries(PROVIDERS)
+        .filter(([otherId, other]) => otherId !== resolved && other.envKeys.includes(envKey))
+        .map(([otherId]) => otherId);
+      if (siblings.length > 0) {
+        process.stdout.write(`note: ${envKey} is shared with ${siblings.join(", ")} — their credential changed too\n`);
+      }
       return 0;
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
