@@ -9,9 +9,8 @@
 
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
-
+import { openkaiHome } from "@kaidera/openkai-core";
 
 export interface OpenKaiConfig {
   onboarded?: boolean;
@@ -22,8 +21,10 @@ export interface OpenKaiConfig {
   [key: string]: unknown;
 }
 
-const configPath = (): string => path.join(homedir(), ".openkai", "config.json");
-const envPath = (): string => path.join(homedir(), ".openkai", ".env");
+// openkaiHome honours OPENKAI_HOME (embedded/container deployments) — the
+// consult Q3 answer depends on every path going through it.
+const configPath = (): string => path.join(openkaiHome(), "config.json");
+const envPath = (): string => path.join(openkaiHome(), ".env");
 
 export function readConfig(): OpenKaiConfig {
   try {

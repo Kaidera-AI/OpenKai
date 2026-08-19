@@ -32,6 +32,7 @@ import { runSkillsAdd, runSkillsBind, runSkillsList, runSkillsRemove } from "./s
 import { runMcpAdd, runMcpList, runMcpRemove, runMcpTest } from "./mcp.js";
 import { runStatusline } from "./statusline.js";
 import { CLI_VERSION } from "./version.js";
+import { runProvider } from "./provider-cli.js";
 import { createServer, type ServerResponse } from "node:http";
 import { classifyConnectorPayload } from "./connectors.js";
 import {
@@ -119,6 +120,11 @@ Commands:
                          (~/.openkai/config.json mcpServers). \`add <name>
                          --command <cmd>\` (stdio) or \`--url <url>\` (remote);
                          \`test <name>\` spawns --help or probes the URL.
+
+  provider [list|set|unset]        Manage provider credentials — the single
+                         write path shared with the TUI and KOS Settings.
+                         \`set <id> --key <value>\` writes to the 0600 store;
+                         \`unset <id>\` removes it. Non-interactive.
 
   statusline             Show/configure status chrome chips:
                          --set <a,b,c> | --hide <chip> | --show <chip> | --reset
@@ -643,6 +649,15 @@ async function main(argv: string[]): Promise<number> {
       return fail("login requires a provider — e.g. openkai login openai-codex");
     }
     return runLogin({ provider });
+  }
+
+  // ── provider (provider-config write path, consult Q1) ──────────────────
+  if (command === "provider") {
+    return runProvider({
+      sub: positional[0],
+      args: positional.slice(1),
+      key: getString("--key"),
+    });
   }
 
   // ── info (Inc 08) ────────────────────────────────────────────────────────

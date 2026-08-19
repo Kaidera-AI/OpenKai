@@ -1,30 +1,19 @@
 /**
  * Provider sign-in overlay — the omp-grade path: enter a key in-app and it's
- * written to ~/.openkai/.env; OAuth lanes hand off to the device-code login
- * flow. Nobody edits a file by hand (CTO directive 2026-08-17).
+ * written to the credential store via the SINGLE write path
+ * (provider-config.ts — the same code path the `openkai provider` CLI and
+ * KOS's Settings UI use). OAuth lanes hand off to the device-code login flow.
+ * Nobody edits a file by hand (CTO directive 2026-08-17).
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
 import { Input, Text } from "@earendil-works/pi-tui";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { highlight, renderOverlayFooter, text as textToken, opaquePanel } from "./theme.js";
+import { writeProviderKey } from "../provider-config.js";
 
-const envFile = (): string => path.join(homedir(), ".openkai", ".env");
-
-/** Write or replace one KEY=VALUE line in ~/.openkai/.env. */
+/** Write or replace one KEY=VALUE line via the shared provider-config path. */
 export function writeEnvKey(key: string, value: string): void {
-  const file = envFile();
-  mkdirSync(path.dirname(file), { recursive: true });
-  const lines = existsSync(file) ? readFileSync(file, "utf-8").split("\n") : [];
-  const entry = `${key}=${value}`;
-  const index = lines.findIndex((l) => l.startsWith(`${key}=`));
-  if (index >= 0) lines[index] = entry;
-  else lines.push(entry);
-  writeFileSync(file, lines.filter((l) => l.trim().length > 0).join("\n") + "\n", { mode: 0o600 });
-  chmodSync(file, 0o600); // mode only applies at creation — repair loose pre-existing files
-  process.env[key] = value;
+  writeProviderKey(key, value);
 }
 
 export interface SignInOverlayOptions {

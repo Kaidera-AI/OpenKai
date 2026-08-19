@@ -63,6 +63,7 @@
 | `splash` | 0.1.5 | ✅ | replays brand animation |
 | `help [topic]` | 0.1.5 | ✅ | |
 | `version` | 0.1.1 | ✅ | |
+| `openkai provider` (list/set/unset) | 0.1.7 | ✅ | the single provider-config write path (TUI + CLI + KOS Settings share it); atomic, comment-preserving, 0600, OPENKAI_HOME-honouring |
 | `openkai duet` (rename of fuse) | 0.1.5 | ❌ retired 2026-08-19 (CTO) — `fusion` is the product term; no alias | E002 §2 |
 | `openkai search` | — | ❌ retired 2026-08-19 (CTO) — session search stays out of scope | E001 Inc 09 item 9 |
 

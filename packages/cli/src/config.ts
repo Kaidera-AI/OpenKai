@@ -12,13 +12,12 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { ShiftPosture } from "@kaidera/openkai-core";
+import { openkaiHome, type ShiftPosture } from "@kaidera/openkai-core";
 
-
-/** The OpenKai home directory (~/.openkai or $OPENKAI_HOME for tests). */
-export function openkaiHome(): string {
-  return process.env.OPENKAI_HOME ?? path.join(homedir(), ".openkai");
-}
+// openkaiHome is defined ONCE in @kaidera/openkai-core (credentials.ts) and
+// re-exported here for cli callers — no second definition (consult Q3 needs
+// exactly one place honouring OPENKAI_HOME).
+export { openkaiHome };
 
 /** Path to the config file. */
 export function configFilePath(): string {
