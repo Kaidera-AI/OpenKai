@@ -261,16 +261,16 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   controller.attachComposer(composer);
 
   const scroll = new ScrollView(transcript, { follow: "end", primary: true, scrollbar: "auto" });
-  // Session-name header (Claude Code's top bar, /rename): one line at the
-  // top of the chat window. Unnamed sessions get a dim short id so the bar
-  // never reflows; /rename swaps the text live via controller.setSessionName.
+  // Session-name line (Claude Code's /rename chrome): the line directly
+  // above the chat input bar — not a window-top header. Unnamed sessions get
+  // a dim short id so the line never reflows; /rename swaps the text live.
   const header = new Text("", 1, 0);
   controller.attachHeader(header);
 
   const root = new VStack(
     [
-      { component: header, basis: 1, shrink: 0, minSize: 1 },
       { component: scroll, grow: 1 },
+      { component: header, basis: 1, shrink: 0, minSize: 1 },
       { component: composer.editor, basis: "auto", shrink: 0 },
       { component: status, basis: 1, shrink: 0, minSize: 1 },
     ] as StackChild[],

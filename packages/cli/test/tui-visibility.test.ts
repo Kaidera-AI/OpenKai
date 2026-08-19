@@ -433,16 +433,22 @@ test("registration: /shift and /diff are commands, in help, and in the palette",
 
 // ── Session header bar (/rename, Claude Code top bar) ───────────────────────
 
-test("session header: dim short id at rest, accent name after rename, live swap", async () => {
+test("session name line: dim short id at rest, accent name after rename — directly above the input bar", async () => {
   const { app } = await buildVisibilityApp({ sessionId: "hdr1" });
-  const frame = renderFrame(app);
-  assert.ok(frame.split("\n")[0]!.includes("session hdr1"), "unnamed sessions show the dim short id");
+  // The name line sits directly above the composer box (before its top border).
+  const nameLine = (frame: string): string => {
+    const lines = frame.split("\n");
+    const borderIndex = lines.findIndex((l) => l.startsWith("─"));
+    return borderIndex > 0 ? lines[borderIndex - 1]! : "";
+  };
+  assert.ok(nameLine(renderFrame(app)).includes("session hdr1"), "unnamed sessions show the dim short id above the input bar");
   app.controller.setSessionName("fix the auth flow");
   const renamed = renderFrame(app);
-  assert.ok(renamed.split("\n")[0]!.includes("fix the auth flow"), "the name renders at the top");
-  assert.ok(renamed.split("\n")[0]!.includes("hdr1"), "the short id trails the name");
+  assert.ok(nameLine(renamed).includes("fix the auth flow"), "the name renders above the input bar");
+  assert.ok(nameLine(renamed).includes("hdr1"), "the short id trails the name");
+  assert.ok(!renderFrame(app).split("\n")[0]!.includes("fix the auth flow"), "the name is not a window-top header (Claude Code grammar)");
   app.controller.setSessionName(undefined);
-  assert.ok(renderFrame(app).split("\n")[0]!.includes("session hdr1"), "clearing the name restores the short id");
+  assert.ok(nameLine(renderFrame(app)).includes("session hdr1"), "clearing the name restores the short id");
 });
 
 test("/rename registers as a command (with /name kept as alias)", () => {

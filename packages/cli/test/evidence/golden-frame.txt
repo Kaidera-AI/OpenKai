@@ -3,7 +3,6 @@
 # Block kinds: notice -> notice -> notice -> user -> thinking -> assistant -> tool -> thinking -> assistant
 # Chrome usage: {"input":65,"output":2,"cacheRead":49,"cacheWrite":65,"totalTokens":181,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
 
-  session 01TESTGO                                                              
  ▎    ┌────────┐                                                                
  ▎   /  ●    ●  \ OpenKai 0.1.6                                                 
  ▎  /  ●  \ /  ●  \ by Kaidera                                                  
@@ -39,6 +38,7 @@
                                                                                 
  Done.                                                                          
 
+  session 01TESTGO                                                              
 ────────────────────────────────────────────────────────────────────────────────
                                                                                 
 ────────────────────────────────────────────────────────────────────────────────
