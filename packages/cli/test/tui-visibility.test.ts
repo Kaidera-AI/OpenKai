@@ -430,3 +430,23 @@ test("registration: /shift and /diff are commands, in help, and in the palette",
   assert.ok(palette.includes("shift"), "palette lists shift");
   assert.ok(palette.includes("diff"), "palette lists diff");
 });
+
+// ── Session header bar (/rename, Claude Code top bar) ───────────────────────
+
+test("session header: dim short id at rest, accent name after rename, live swap", async () => {
+  const { app } = await buildVisibilityApp({ sessionId: "hdr1" });
+  const frame = renderFrame(app);
+  assert.ok(frame.split("\n")[0]!.includes("session hdr1"), "unnamed sessions show the dim short id");
+  app.controller.setSessionName("fix the auth flow");
+  const renamed = renderFrame(app);
+  assert.ok(renamed.split("\n")[0]!.includes("fix the auth flow"), "the name renders at the top");
+  assert.ok(renamed.split("\n")[0]!.includes("hdr1"), "the short id trails the name");
+  app.controller.setSessionName(undefined);
+  assert.ok(renderFrame(app).split("\n")[0]!.includes("session hdr1"), "clearing the name restores the short id");
+});
+
+test("/rename registers as a command (with /name kept as alias)", () => {
+  const names = SLASH_COMMANDS.map((c) => c.name);
+  assert.ok(names.includes("rename"), "/rename registered");
+  assert.ok(helpText().join("\n").includes("/rename"), "help lists /rename");
+});

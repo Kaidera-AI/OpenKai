@@ -25,8 +25,9 @@
  * shadow-snapshot diff overlay.
  */
 
-import { ScrollView, VStack } from "@earendil-works/pi-tui";
+import { ScrollView, Text, VStack } from "@earendil-works/pi-tui";
 import type { Component, TUI, StackChild } from "@earendil-works/pi-tui";
+import { highlight, text as textToken } from "./theme.js";
 import {
   CortexCheckpoint,
   SessionStore,
@@ -260,8 +261,15 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   controller.attachComposer(composer);
 
   const scroll = new ScrollView(transcript, { follow: "end", primary: true, scrollbar: "auto" });
+  // Session-name header (Claude Code's top bar, /rename): one line at the
+  // top of the chat window. Unnamed sessions get a dim short id so the bar
+  // never reflows; /rename swaps the text live via controller.setSessionName.
+  const header = new Text("", 1, 0);
+  controller.attachHeader(header);
+
   const root = new VStack(
     [
+      { component: header, basis: 1, shrink: 0, minSize: 1 },
       { component: scroll, grow: 1 },
       { component: composer.editor, basis: "auto", shrink: 0 },
       { component: status, basis: 1, shrink: 0, minSize: 1 },
@@ -495,18 +503,21 @@ export class TuiController {
         this.transcript.addNotice(["session tree:", ...lines]);
         break;
       }
+      case "rename":
       case "name": {
-        // Session display name (E017 pick 8): persisted as a `session_name`
-        // custom entry (the append-only analogue of pi's session_info entry);
-        // /sessions, the /resume picker, and /export all read it back.
+        // Session display name (/rename; /name kept as an alias): persisted
+        // as a `session_name` custom entry (the append-only analogue of pi's
+        // session_info entry); shown in the top header bar (Claude Code
+        // style), /sessions, the /resume picker, and /export.
         const name = argument.trim();
         if (!name) {
-          const current = sessionNameFromEntries(await this.store.readEntries());
-          this.transcript.addNotice(current ? `/name — this session is "${current}"` : "/name — no name set; usage: /name <display-name>");
+          const current = this.sessionName ?? sessionNameFromEntries(await this.store.readEntries());
+          this.transcript.addNotice(current ? `/rename — this session is "${current}"` : "/rename — no name set; usage: /rename <display-name>");
           break;
         }
         await this.store.appendCustom("session_name", { name });
-        this.transcript.addNotice(`/name — session named "${name}" (shows in /sessions + /resume search)`);
+        this.setSessionName(name);
+        this.transcript.addNotice(`/rename — session named "${name}" (top bar · /sessions · /resume search)`);
         break;
       }
       case "export": {
@@ -797,7 +808,35 @@ export class TuiController {
   }
 
   /**
-   * `/btw` side channel (scope §1.5): the question is sent to the model but is
+   /** Attach the session-name header bar (called by buildTuiApp). */
+   attachHeader(header: Text): void {
+     this.header = header;
+     this.renderHeader();
+   }
+
+   private header?: Text;
+   private sessionName: string | undefined;
+
+   /** Set (or change) the session display name live — the /rename surface. */
+   setSessionName(name: string | undefined): void {
+     this.sessionName = name?.trim() ? name.trim() : undefined;
+     this.renderHeader();
+     this.tui.requestRender();
+   }
+
+   /** The current display name, if any. */
+   get currentSessionName(): string | undefined {
+     return this.sessionName;
+   }
+
+   private renderHeader(): void {
+     if (!this.header) return;
+     const label = this.sessionName ?? `session ${this.sessionId.slice(0, 8)}`;
+     const styled = this.sessionName ? highlight.base(label) : textToken.dim(label);
+     this.header.setText(` ${styled}${this.sessionName ? textToken.dim(` · ${this.sessionId.slice(0, 8)}`) : ""}`);
+   }
+
+   /** `/btw` side channel (scope §1.5): the question is sent to the model but is
    * NOT rendered as a user turn and NOT persisted — the answer streams into a
    * system-marked `btw` block. The exchange is ephemeral (live agent context).
    */

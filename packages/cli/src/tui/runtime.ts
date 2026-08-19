@@ -35,6 +35,7 @@ import {
 } from "@kaidera/openkai-core";
 import { defaultModels } from "@kaidera/openkai-core";
 import { readShiftConfig } from "../fuse.js";
+import { sessionNameFromEntries } from "./session-search.js";
 import { readToolApprovals } from "../config.js";
 import type { RoutingEvent } from "@kaidera/openkai-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -474,6 +475,8 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   // A restart exit can carry composer prefill (e.g. the fork picker's picked
   // user text) — restore it so the text survives the session rebuild.
   if (options.prefill) composer.prefill(options.prefill);
+  // Restore the session's display name into the top header bar (/rename).
+  controller.setSessionName(sessionNameFromEntries(await store.readEntries()));
   // Bind the routing forwarder (declared before the transport so the activity
   // seam could reference it): facade/shift events now reach the chrome live.
   routingToTui = (event) => controller.applyRoutingEvent(event);

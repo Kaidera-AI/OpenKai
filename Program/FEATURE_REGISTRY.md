@@ -113,6 +113,8 @@
 | Fusion role-pill blocks + gate verdict notices | 0.1.7 | ✅ | transcript.ts + app.ts renderGateOutcome (E017 S1) |
 | Terminal crash guard | 0.1.7 | ✅ | uncaughtException/unhandledRejection restore the terminal (alt-screen/raw) + print the error — a TUI crash can never wedge the terminal again |
 | Chip overflow policy | 0.1.7 | ✅ | status line drops low-priority chips (git→ctx→provider→…) before truncating; right side (tokens+model) never loses |
+| Session-name header bar | 0.1.7 | ✅ | top-of-chat label showing the /rename name (Claude Code style); dim short id when unnamed |
+| `/rename` | 0.1.7 | ✅ | names the session; persists via session_name entry; /resume picker + /sessions show it |
 | Daily tips | 0.1.5 | ✅ | feature-gated |
 | Auto-compact at 80% | 0.1.5 | ✅ | idle-only 0.1.6; LLM-summarising swap (transport.compactSession, incremental summary) 0.1.7 — onAutoCompact tier hook preserved |
 | Steer-while-busy (typeahead steering) | 0.1.7 | ✅ | busy submit routes to transport.steer; dim `→ steering` suffix; persisted as a user entry (E017 pick 2) |
