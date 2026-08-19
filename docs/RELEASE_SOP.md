@@ -125,3 +125,29 @@ then `brew install openkai`.
 
 Document this in the release notes / README install section so users are not
 surprised.
+
+## Signed release channel (added 2026-08-18)
+
+**Homebrew platform fact (source-verified in trust.rb/tap.rb):** implicit tap
+trust is hardcoded to `user == "Homebrew"`. There is NO signing path that makes
+a third-party tap trusted without a one-time `brew trust` — this is Homebrew's
+code-execution policy (formulas are Ruby), identical for every third-party tap.
+We therefore do NOT treat brew as the primary channel and never ask users to
+trust our tap as the intended flow.
+
+**Primary install = signed binaries:** `.github/workflows/release.yml` runs on
+`v0.1.*` tag pushes (tag = consented act per this SOP) and attaches SLSA
+build-provenance attestations (GitHub Sigstore, `actions/attest-build-provenance`)
+to every platform binary, then uploads the CI-built assets + a fresh
+`latest.json` (version read from the tagged package.json) to the release.
+Users verify with:
+`gh attestation verify <binary> --repo Kaidera-AI/OpenKai`
+
+`scripts/install.sh` remains the zero-dependency path: sha256-verified before
+install, no trust prompt, no node. npm stays the lockstep package channel
+(manual publish, consent-gated).
+
+**Release order (supersedes the earlier sequence where it differs):**
+consent → bump versions → CI tag pipeline builds+attests+uploads assets →
+manual npm publish (core then cli) → repoint install.sh + Homebrew formula
+(document `brew trust` as a known Homebrew limitation, not our default).
