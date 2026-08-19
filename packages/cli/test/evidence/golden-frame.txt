@@ -15,8 +15,8 @@
 
  ▎ providers (5) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
 
- ▎ tip: /memory add <learning> records what you learned — every session in this 
- folder sees it next boot.                                                      
+ ▎ tip: /setup re-runs onboarding (sign in to providers, pick a model);         
+ /settings is the config panel (theme, status line, memory, features).          
 
  You                                                                            
                                                                                 

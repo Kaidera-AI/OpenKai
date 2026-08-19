@@ -6,8 +6,17 @@
 #   default target: the current platform.
 # Output: packages/cli/bin/openkai-<target> (gzip not applied; the release
 # packaging step owns compression + witness signing).
+#
+# Release-key pin (E017 inc 09): the base64 DER SPKI Ed25519 PUBLIC key below
+# is compiled in via --define. A pinned build verifies manifest signatures
+# fail-closed (unsigned or invalid manifests are refused). The matching
+# PRIVATE key never lives in the repo — it signs manifests at release time
+# (packages/cli/scripts/sign-manifest.mjs, OPENKAI_RELEASE_PRIVATE_KEY).
 
 set -euo pipefail
+
+# OpenKai release signing public key (generated 2026-08-19; custody: CTO).
+OPENKAI_RELEASE_PUBLIC_KEY_PIN="MCowBQYDK2VwAyEA0u+kX9f836zEwkQDHZQ5ECLIWkKPBb+DMkBLsgGsT8Q="
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENTRY="${ROOT}/dist/index.js"
@@ -36,6 +45,7 @@ for target in "${TARGETS[@]}"; do
     echo "compiling ${name}..."
     bun build --compile --minify \
         --define=OPENKAI_BUILD_CHANNEL:'"standalone"' \
+        --define=OPENKAI_RELEASE_KEY:"\"${OPENKAI_RELEASE_PUBLIC_KEY_PIN}\"" \
         --target="${target}" "${ENTRY}" --outfile "${OUTDIR}/${name}" >/dev/null
     echo "  -> ${OUTDIR}/${name}"
 done

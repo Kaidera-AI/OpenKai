@@ -7,10 +7,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { promises as fsp } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   BUILD_CHANNEL,
@@ -480,3 +482,43 @@ function fakeDeps(state: FakeState): UpgradeDeps {
 
 // satisfy the unused-import linter for the re-exported type
 void (BUILD_CHANNEL as Channel);
+
+// ─── E017 inc 09: the release-key pin + signing tool ───────────────────────
+
+test("release-key pin: build-binaries.sh carries a well-formed SPKI pin define", async () => {
+  const script = await readFile(new URL("../scripts/build-binaries.sh", import.meta.url), "utf-8");
+  const pinMatch = /OPENKAI_RELEASE_PUBLIC_KEY_PIN="([^"]+)"/.exec(script);
+  assert.ok(pinMatch, "the pin constant exists");
+  const der = Buffer.from(pinMatch![1]!, "base64");
+  assert.equal(der.length, 44, "Ed25519 SPKI DER is 44 bytes");
+  assert.ok(
+    script.includes("--define=OPENKAI_RELEASE_KEY"),
+    "the compile line injects the pin via --define",
+  );
+});
+
+test("sign-manifest.mjs: signs a manifest the pinned verify path accepts", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubB64 = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  const dir = await mkdtemp(path.join(tmpdir(), "openkai-sign-"));
+  try {
+    const manifestPath = path.join(dir, "latest.json");
+    const artifact = { target: "darwin-arm64", url: "https://x/openkai", sha256: "ab".repeat(32) };
+    await writeFile(manifestPath, JSON.stringify({ version: "9.9.9", artifacts: [artifact] }, null, 2));
+    const script = fileURLToPath(new URL("../scripts/sign-manifest.mjs", import.meta.url));
+    const result = spawnSync(process.execPath, [script, manifestPath], {
+      env: { ...process.env, OPENKAI_RELEASE_PRIVATE_KEY: pem },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const signed = JSON.parse(await readFile(manifestPath, "utf-8")) as ReleaseManifest & { signature: string };
+    assert.ok(signed.signature.length > 0);
+    assert.equal(verifyManifestSignature(signed, pubB64, signed.signature), true);
+    // tampered artifact sha → refused
+    const tampered = { ...signed, artifacts: [{ ...artifact, sha256: "cd".repeat(32) }] };
+    assert.equal(verifyManifestSignature(tampered, pubB64, signed.signature), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

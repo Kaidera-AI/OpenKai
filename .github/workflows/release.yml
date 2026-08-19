@@ -1,0 +1,109 @@
+name: release
+
+# Release pipeline: builds the four platform binaries from the tagged commit,
+# attaches SLSA build-provenance attestations (GitHub Sigstore) to every
+# artifact, and uploads them + a fresh latest.json manifest to the release.
+# Users verify with: gh attestation verify <binary> --repo Kaidera-AI/OpenKai
+#
+# Runs ONLY on v0.1.* tag pushes. Per docs/RELEASE_SOP.md a tag push requires
+# explicit CTO consent, so this workflow never fires without it. npm publish
+# stays MANUAL (lockstep order + consent record); this pipeline never publishes
+# to npm.
+
+on:
+  push:
+    tags: ["v0.1.*"]
+
+permissions:
+  contents: write
+  id-token: write # required for attestations
+  attestations: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            runs: macos-14
+          - target: bun-darwin-x64
+            runs: macos-13
+          - target: bun-linux-arm64
+            runs: ubuntu-24.04-arm
+          - target: bun-linux-x64
+            runs: ubuntu-latest
+    runs-on: ${{ matrix.runs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: packages/cli/scripts/build-binaries.sh ${{ matrix.target }}
+      - name: sha256 sidecar
+        run: |
+          asset="packages/cli/bin/openkai-${TARGET#bun-}"
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$asset" | awk '{print $1 "  " $2}' > "$asset.sha256"
+          else
+            sha256sum "$asset" | awk '{print $1 "  " $2}' > "$asset.sha256"
+          fi
+        env:
+          TARGET: ${{ matrix.target }}
+      - name: Attest build provenance (SLSA, Sigstore)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: packages/cli/bin/openkai-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.target }}
+          path: packages/cli/bin/openkai-*
+
+  publish-assets:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: assets-*
+          path: bin
+          merge-multiple: true
+      - name: Build latest.json manifest from the CI-built artifacts
+        run: |
+          python3 - <<'PYEOF'
+          import json, pathlib, os
+          tag = os.environ["GITHUB_REF_NAME"]
+          # The manifest version must equal the npm version; package.json of
+          # the tagged commit is authoritative (tag v0.1.0NN <-> npm 0.1.N).
+          version = json.loads(pathlib.Path("package.json").read_text())["version"]
+          base = f"https://github.com/Kaidera-AI/OpenKai/releases/download/{tag}"
+          artifacts = []
+          for target in ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]:
+              sha = pathlib.Path(f"bin/openkai-{target}.sha256").read_text().split()[0]
+              artifacts.append({"target": target, "url": f"{base}/openkai-{target}", "sha256": sha})
+          pathlib.Path("bin/latest.json").write_text(json.dumps({"version": version, "artifacts": artifacts}, indent=2) + "\n")
+          print(pathlib.Path("bin/latest.json").read_text())
+          PYEOF
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - name: Sign the manifest (Ed25519 release key)
+        # Pinned binaries refuse unsigned manifests (fail-closed) — this step
+        # is what keeps self-upgrade possible. The private key is a repo
+        # secret; the public half is pinned in build-binaries.sh.
+        run: |
+          npm run build -w @kaidera/openkai
+          OPENKAI_RELEASE_PRIVATE_KEY="$OPENKAI_RELEASE_PRIVATE_KEY" \
+            node packages/cli/scripts/sign-manifest.mjs bin/latest.json
+          test -n "$(python3 -c 'import json; print(json.load(open("bin/latest.json"))["signature"])')"
+        env:
+          OPENKAI_RELEASE_PRIVATE_KEY: ${{ secrets.OPENKAI_RELEASE_PRIVATE_KEY }}
+      - name: Upload assets + manifest to the release
+        run: gh release upload "$TAG" bin/* --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
