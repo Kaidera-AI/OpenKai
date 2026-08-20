@@ -43,7 +43,10 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - run: packages/cli/scripts/build-binaries.sh ${{ matrix.target }}
+      - name: Build pinned standalone binaries
+        run: packages/cli/scripts/build-binaries.sh ${{ matrix.target }}
+        env:
+          OPENKAI_RELEASE_PUBLIC_KEY_PIN: ${{ vars.OPENKAI_RELEASE_PUBLIC_KEY_PIN }}
       - name: sha256 sidecar
         run: |
           asset="packages/cli/bin/openkai-${TARGET#bun-}"
