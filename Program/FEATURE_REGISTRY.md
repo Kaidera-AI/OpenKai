@@ -110,6 +110,7 @@
 | Settings routing tab: read-only per-tool approvals summary row | 0.1.7 | ✅ | settings.ts → config.json `tools.approval` |
 | Magic keywords: `ultrathink` (fusion think panel) + `ultrareview` (multi-model diff review) — composer shimmer, hidden notice, settings interaction toggle | 0.1.7 | ✅ | tui/magic-keywords.ts + composer.ts + app.ts runUltraTurn |
 | Mouse-sequence input guard (SGR/URXVT-1015/X10 swallowed before components) | 0.1.9 | ✅ | tui/mouse-guard.ts wired into runtime.ts listener (E019 inc 02) |
+| Click-to-cursor in the composer (Claude Code grammar: click positions, drag selects) | 0.1.9 | ✅ | tui/mouse-routing.ts + ComposerEditor.positionCursorAt (E019 inc 03) |
 | Opaque overlays | 0.1.5 | ✅ | |
 | Attention notifications (focus-aware) | 0.1.1 | ✅ | attention.ts |
 | Role pills (per-agent identity) | 0.1.1 | ✅ | transcript.ts |
