@@ -142,13 +142,15 @@ const BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "�
 function spinnerChip(state: StatusState): string {
   if (state.awaitingApproval) return highlight.danger("◐ waiting");
   if (state.busy) {
-    const frame = BUSY_FRAMES[state.busyFrame % BUSY_FRAMES.length];
+    const frame = BUSY_FRAMES[state.busyFrame % BUSY_FRAMES.length] ?? "⠋";
     const elapsed = state.busySince ? Math.max(0, Math.round((Date.now() - state.busySince) / 1000)) : 0;
     const what = state.activity || "working";
-    // Magic-keyword turns shimmer their activity label (E017 UK round 4).
+    // Magic-keyword turns shimmer their activity label (E017 UK round 4);
+    // every other busy state gets the brand sweep (E019 — the working state
+    // is always visibly alive).
     if (what === "ultrathinking…") return `${frame} ${paintShimmerLabel(what, "ultrathink")} ${elapsed}s`;
     if (what === "ultrareviewing…") return `${frame} ${paintShimmerLabel(what, "ultrareview")} ${elapsed}s`;
-    return highlight.base(`${frame} ${what} ${elapsed}s`);
+    return `${highlight.base(frame)} ${paintShimmerLabel(what, "brand")} ${elapsed}s`;
   }
   if (state.attention) return highlight.attention("◉ attention");
   return textToken.muted("○ idle");

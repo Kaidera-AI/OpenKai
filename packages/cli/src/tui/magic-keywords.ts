@@ -339,6 +339,8 @@ export function createGradientHighlighter(spec: GradientHighlightSpec): KeywordH
 // ── The OpenKai keyword registry ────────────────────────────────────────────
 
 export type MagicKeyword = "ultrathink" | "ultrareview";
+/** The brand shimmer sweep (status-line activity) — Kaidera mint. */
+export type ShimmerPalette = MagicKeyword | "brand";
 
 interface KeywordSpec {
   gradient: GradientHighlightSpec;
@@ -427,9 +429,13 @@ export function shimmerPhase(now = Date.now()): number {
  * Paint an arbitrary label with a keyword's gradient palette (no boundary
  * matching — for the status line's "ultrathinking…" / "ultrareviewing…"
  * activity chips, where the label itself IS the keyword's surface).
+ * `brand` is the generic busy sweep (E019: every working state shimmers).
  */
-export function paintShimmerLabel(label: string, keyword: MagicKeyword, phase = shimmerPhase()): string {
-  const spec = KEYWORD_SPECS[keyword].gradient;
+export function paintShimmerLabel(label: string, keyword: ShimmerPalette, phase = shimmerPhase()): string {
+  const spec =
+    keyword === "brand"
+      ? { stops: 14, hue: (t: number) => 140 + t * 60, saturation: 55, lightness: 68 }
+      : { ...KEYWORD_SPECS[keyword].gradient };
   const n = label.length;
   if (n === 0) return label;
   const wrappedPhase = ((phase % 1) + 1) % 1;

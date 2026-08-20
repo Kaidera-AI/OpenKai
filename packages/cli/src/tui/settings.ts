@@ -200,8 +200,8 @@ export class SettingsOverlay implements Component {
         return [
           {
             value: "autonomy",
-            label: "autonomy",
-            description: `now: ${this.actions.currentAutonomy()} — Enter to pick a level`,
+            label: "access level",
+            description: `now: ${this.actions.currentAutonomy()} — Enter to change what runs without asking`,
             navigates: true,
             action: () => {
               this.actions.pickAutonomy();

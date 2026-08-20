@@ -335,10 +335,17 @@ test("upgrade then rollback round-trip restores the original binary", async () =
 
 test("CLI: npm channel never self-mutates — upgrade prints pin message, exit 0", async () => {
   const { runUpgrade } = await import("../dist/upgrade.js");
+  // runExternal must be faked — a real `npm install -g` in a test is 14s of
+  // network and environment-dependent (this test's exit code rode the host's
+  // npm until the injection was fixed).
   const res = await runUpgrade({
     env: { OPENKAI_CHANNEL: "npm" },
     currentBinary: "/tmp/x",
     currentVersion: "0.0.0",
+    deps: fakeDeps({
+      manifest: manifest("0.0.0", new TextEncoder().encode("x")),
+      artifactBytes: new TextEncoder().encode("x"),
+    }),
   });
   assert.equal(res.channel, "npm");
   assert.equal(res.exitCode, 0);

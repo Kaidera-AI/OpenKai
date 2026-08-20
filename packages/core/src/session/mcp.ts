@@ -230,7 +230,7 @@ function proxyTool(conn: McpConnection, toolDef: McpToolDef, gate?: PermissionGa
           cwd: conn.cwd,
         }));
         if (outcome.decision === "reject") {
-          return textResult(`Permission denied: ${outcome.reason}`);
+          return textResult(`Permission denied: ${outcome.reason} — the operator controls this via /autonomy, /settings -> routing, or tools.approval in ~/.openkai/config.json.`);
         }
       }
       try {

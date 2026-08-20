@@ -15,7 +15,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { createModels, uuidv7 } from "@earendil-works/pi-ai";
-import { fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
+import { fauxProvider, fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { TextContent } from "@earendil-works/pi-ai";
@@ -66,6 +66,9 @@ function headlessTui(rows = 24): TUI {
 /** Build a faux-backed transport + TUI app wired for an offline scripted turn. */
 async function buildFauxApp(opts: {
   scriptedText: string;
+  /** When set, the first faux response leads with a thinking block (E019:
+   *  thinking rows are created lazily by the first thinking delta). */
+  scriptedThinking?: string;
   sessionId: string;
   persistMode?: string;
   onExit?: (request: ExitRequest) => void;
@@ -76,8 +79,13 @@ async function buildFauxApp(opts: {
   sessionsRoot: string;
 }> {
   const faux = fauxProvider({});
+  const firstBlocks = [
+    ...(opts.scriptedThinking !== undefined ? [fauxThinking(opts.scriptedThinking)] : []),
+    fauxText(opts.scriptedText),
+    fauxToolCall("echo", { msg: "pong" }),
+  ];
   faux.setResponses([
-    fauxAssistantMessage([fauxText(opts.scriptedText), fauxToolCall("echo", { msg: "pong" })]),
+    fauxAssistantMessage(firstBlocks),
     fauxAssistantMessage([fauxText("Done.")]),
   ]);
   const models = createModels();
@@ -166,7 +174,11 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
 // ── 2. Event-mapping: block ordering follows the transport taxonomy ──────────
 
 test("event-mapping: transcript block kinds follow connected→text→tool→settle→turn_end", async () => {
-  const { app, transport } = await buildFauxApp({ scriptedText: "Streaming reply.", sessionId: "01TESTEVENT0000002" });
+  const { app, transport } = await buildFauxApp({
+    scriptedText: "Streaming reply.",
+    scriptedThinking: "let me reason about this",
+    sessionId: "01TESTEVENT0000002",
+  });
 
   await app.controller.submit("go");
   await transport.close();
@@ -177,7 +189,7 @@ test("event-mapping: transcript block kinds follow connected→text→tool→set
   assert.ok(kinds.includes("user"), "user block present");
   assert.ok(kinds.includes("assistant"), "assistant block present");
   assert.ok(kinds.includes("tool"), "tool block present");
-  assert.ok(kinds.includes("thinking"), "thinking block present (collapsed by default)");
+  assert.ok(kinds.includes("thinking"), "thinking block present (lazy-created by the first thinking delta)");
   // The tool card must appear AFTER the first assistant block (streamed text first).
   const firstAssistant = kinds.indexOf("assistant");
   const firstTool = kinds.indexOf("tool");
@@ -192,7 +204,11 @@ test("event-mapping: transcript block kinds follow connected→text→tool→set
 // ── 3. Thinking density: hidden by default, revealed by toggle (Ctrl+O) ────
 
 test("thinking density: collapsed by default, toggle reveals", async () => {
-  const { app, transport } = await buildFauxApp({ scriptedText: "thinking test", sessionId: "01TESTTHINK000003" });
+  const { app, transport } = await buildFauxApp({
+    scriptedText: "thinking test",
+    scriptedThinking: "reasoning content here",
+    sessionId: "01TESTTHINK000003",
+  });
 
   await app.controller.submit("q");
   await transport.close();
