@@ -175,3 +175,27 @@ test("multi-key lanes refuse a single --key instead of reporting a false green",
     assert.equal(providerKeyStatus("cloudflare-ai-gateway").configured, true);
   });
 });
+
+test("the two-key cloudflare-workers-ai lane is refused the same way", () => {
+  withHome(() => {
+    for (const k of ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID"]) delete process.env[k];
+    // Guarded on envKeys.length > 1, so a two-key lane is the boundary case the
+    // three-key sibling above cannot exercise.
+    assert.throws(
+      () => setProviderKey("cloudflare-workers-ai", "cf-secret"),
+      /needs all of CLOUDFLARE_API_KEY, CLOUDFLARE_ACCOUNT_ID/,
+    );
+    assert.deepEqual(readProviderKeys(), {}, "a refused write leaves no partial state");
+    writeProviderKey("CLOUDFLARE_API_KEY", "a");
+    writeProviderKey("CLOUDFLARE_ACCOUNT_ID", "b");
+    assert.equal(providerKeyStatus("cloudflare-workers-ai").configured, true);
+  });
+});
+
+test("single-key lanes are untouched by the multi-key guard", () => {
+  withHome(() => {
+    // The guard must not over-block: exit 0 still has to mean configured.
+    assert.equal(setProviderKey("openai", "sk-test"), "OPENAI_API_KEY");
+    assert.equal(providerKeyStatus("openai").configured, true);
+  });
+});
