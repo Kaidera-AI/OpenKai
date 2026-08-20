@@ -4,7 +4,7 @@
 # Chrome usage: {"input":65,"output":2,"cacheRead":49,"cacheWrite":65,"totalTokens":181,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
 
  ▎    ┌────────┐                                                                
- ▎   /  ●    ●  \ OpenKai 0.1.6                                                 
+ ▎   /  ●    ●  \ OpenKai 0.1.7                                                 
  ▎  /  ●  \ /  ●  \ by Kaidera                                                  
  ▎ /    \   ●   /    \ /help · Ctrl+K palette                                   
  ▎ \    /   ●   \    /                                                          
@@ -13,7 +13,7 @@
  ▎    └────────┘                                                                
  ▎                                                                              
 
- ▎ providers (4) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
+ ▎ providers (5) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
 
  ▎ tip: /settings → appearance → status line cycles presets: default · minimal  
  · compact · full.                                                              
@@ -38,6 +38,7 @@
                                                                                 
  Done.                                                                          
 
+  session 01TESTGO                                                              
 ────────────────────────────────────────────────────────────────────────────────
                                                                                 
 ────────────────────────────────────────────────────────────────────────────────

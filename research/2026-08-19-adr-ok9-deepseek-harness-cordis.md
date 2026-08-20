@@ -1,6 +1,11 @@
-# ADR OK-9 — DeepSeek Harness & Cordis: Plugin Architecture for OpenKai
+# ADR OK-11-candidate — DeepSeek Harness & Cordis: Plugin Architecture for OpenKai
 
-**Date:** 2026-08-19 · **Author:** Main (engineer) · **Status:** DRAFT
+> **PARKED FOR NEXT VERSION** (CTO, 2026-08-19): reviewed after v0.1.007 ships.
+> Numbering note: this was drafted as "OK-9" but OK-9 is already the ratified
+> shift/fusion orchestration ADR (2026-08-18) and OK-10 is served-TUI
+> (2026-08-19) — this document is OK-11-candidate on adoption review.
+
+**Date:** 2026-08-19 · **Author:** Main (engineer) · **Status:** PARKED (next-version review)
 **Sources:** deepseek-harness (166k★, MIT), Cordis paper (Peking Univ + DeepSeek, Aug 2026)
 
 ## 1. Context
