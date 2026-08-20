@@ -34,6 +34,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  readSessionMessages,
   redactSecrets,
   SECRET_PREFIXES,
   ShiftRouter,
@@ -41,21 +42,42 @@ import {
   type RoutingEvent,
 } from "@kaidera/openkai-core";
 import { appendActivity, activityLogPath, runTail } from "../dist/tail.js";
+import { runSessions } from "../dist/sessions.js";
+import { messageText } from "../dist/tui/app.js";
+import { readSessionSearchRows } from "../dist/tui/session-search.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
+/**
+ * CANARY FIXTURES ARE ASSEMBLED AT RUNTIME — never written as literals.
+ *
+ * E002-F2b (found reviewing this file): `scripts/security-audit.sh` §1 greps
+ * TRACKED SOURCE for exactly these shapes, and this suite's whole point is to
+ * widen §1 until it covers them. A literal fixture here therefore turns the
+ * commit gate RED against the suite that certifies it — which is precisely
+ * what happened at ebc666e, where §1 reported 14 hits in this file while the
+ * commit message recorded "audit PASSED" (it was measured while the file was
+ * still untracked, and `git grep` skips untracked files).
+ *
+ * `k()` keeps the prefix and the body in separate string literals so the shape
+ * never appears contiguously in source. Precedent: 3f89a45, which cole applied
+ * to seven pre-existing fixtures in the sibling suites but not to this file.
+ * The guard test at the bottom of this file enforces it from now on.
+ */
+const k = (...parts: readonly string[]): string => parts.join("");
+const BODY = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+
 /** Prefixed shapes — matched on shape alone, no env needed. */
 const PREFIXED_KEYS: ReadonlyArray<readonly [string, string]> = [
-  // Prefix and body are assembled at runtime so the static secret scanner
-  // (scripts/security-audit.sh §1) never matches these canary fixtures.
-  ["GROQ_API_KEY (groq)", "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["CEREBRAS_API_KEY (cerebras)", "csk-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["HF_TOKEN (huggingface)", "hf_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["GitHub fine-grained PAT", "github_pat_" + "11ABCDEFG0AbCdEfGhIjKlMnOpQrStUvWxYz"],
-  ["GitHub server-to-server", "ghs_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
-  ["AWS access key id", "AKIA" + "IOSFODNN7EXAMPLE"],
-  ["ANTHROPIC_API_KEY", "sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123"],
-  ["NVIDIA_API_KEY", "nvapi-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"],
+  ["GROQ_API_KEY (groq)", k("gsk", "_", BODY)],
+  ["CEREBRAS_API_KEY (cerebras)", k("csk", "-", BODY)],
+  ["HF_TOKEN (huggingface)", k("hf", "_", BODY)],
+  ["TOGETHER_API_KEY (together)", k("tgp", "_v1_", BODY)],
+  ["GitHub fine-grained PAT", k("github", "_pat_11ABCDEFG0", BODY)],
+  ["GitHub server-to-server", k("ghs", "_", BODY)],
+  ["AWS access key id", k("AKIA", "IOSFODNN7EXAMPLE")],
+  ["ANTHROPIC_API_KEY", k("sk", "-ant-api03-", BODY)],
+  ["NVIDIA_API_KEY", k("nvapi", "-", BODY)],
 ];
 
 /** Opaque shapes — no prefix; only known-value redaction can catch these. */
@@ -67,8 +89,13 @@ const OPAQUE_KEYS: ReadonlyArray<readonly [string, string]> = [
 
 test("E002-F1: prefixed provider keys are redacted by shape alone", () => {
   for (const [name, secret] of PREFIXED_KEYS) {
-    const out = redactSecrets(`401: invalid api key ${secret} for request`, {});
-    assert.ok(!out.includes(secret), `${name} must be redacted`);
+    // NO credential word anywhere in the line, and an EMPTY env — otherwise
+    // the context rule and known-value matching cover for a missing prefix and
+    // this test silently stops exercising SECRET_PREFIXES at all. The first
+    // cut used "401: invalid api key <token>", which made removing a prefix a
+    // no-op against the suite (caught by the inverted control run).
+    const out = redactSecrets(`provider returned ${secret} unexpectedly`, {});
+    assert.ok(!out.includes(secret), `${name} must be redacted by shape alone`);
     assert.match(out, /\[redacted-secret\]/, `${name} leaves the marker`);
   }
 });
@@ -76,7 +103,7 @@ test("E002-F1: prefixed provider keys are redacted by shape alone", () => {
 test("E002-F1: csk- is redacted whole, with no dangling prefix character", () => {
   // Regression guard: `csk-` used to match only via the `sk-` alternative,
   // which left the leading `c` outside the marker.
-  const out = redactSecrets("key " + "csk-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789" + " here", {});
+  const out = redactSecrets(`key ${k("csk", "-", BODY)} here`, {});
   assert.match(out, /key \[redacted-secret\] here/, "no dangling c");
 });
 
@@ -133,7 +160,7 @@ test("E002-F1b: appendActivity redacts a Groq key on the way to activity.jsonl",
   const cwd = await mkdtemp(path.join(tmpdir(), "oke002-belt-"));
   try {
     const COVERED = `${"nvapi"}-secret-key-in-error-body-xyz`;
-    const UNCOVERED = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const UNCOVERED = k("gsk", "_", BODY);
 
     appendActivity(cwd, "error", { message: `provider error: key ${COVERED} is not authorized` });
     appendActivity(cwd, "error", { message: `provider error: key ${UNCOVERED} is not authorized` });
@@ -158,7 +185,7 @@ test("E002-F1b: appendActivity redacts a Groq key on the way to activity.jsonl",
 test("E002-F1d: tail redacts a pre-existing cleartext key when rendering", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "oke002-tail-"));
   try {
-    const KEY = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const KEY = k("gsk", "_", BODY);
     // Written directly, as a PRE-FIX OpenKai would have written it.
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(path.join(cwd, ".openkai"), { recursive: true });
@@ -201,7 +228,7 @@ test("E002-F1c: a 429 body cannot carry a key through the redacting sink", () =>
     id: "t2", tier: "cheap", provider: "openrouter",
     architectModel: "m3", builderModel: "m4", label: "t2",
   };
-  const KEY = "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+  const KEY = k("gsk", "_", BODY);
 
   const captured: RoutingEvent[] = [];
   const router = new ShiftRouter({
@@ -233,9 +260,9 @@ test("E002-F2: security-audit.sh §1 catches the sk- keys the redactor catches",
   const gatePattern = new RegExp(match[1]!);
 
   for (const key of [
-    "sk-" + "ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGh",
-    "sk-" + "proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
-    "gsk_" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+    k("sk", "-ant-api03-", BODY, "AbCdEfGh"),
+    k("sk", "-proj-", BODY),
+    k("gsk", "_", BODY),
   ]) {
     assert.doesNotMatch(redactSecrets(key, {}), new RegExp(key), "redactor covers it");
     assert.ok(gatePattern.test(`SOME_API_KEY=${key}`), `§1 scan must also catch ${key.slice(0, 12)}…`);
@@ -243,13 +270,286 @@ test("E002-F2: security-audit.sh §1 catches the sk- keys the redactor catches",
 });
 
 /**
+ * ── UNION FINDINGS (kai adversarial review of the merged fix) ──────────────
+ *
+ * E002-F1f — the gap BETWEEN the two mechanisms. Known-value matching is blind
+ * to a key this process does not hold; prefix matching is blind to a key with
+ * no prefix. A prefixless token belonging to someone else — a teammate's key
+ * quoted in a pasted 401 body, an OAuth token read from a file rather than the
+ * environment — falls through both. The context rule is the only mechanism
+ * that catches it, and it was absent at ebc666e despite that commit's message
+ * claiming absorption from the branch that introduced it.
+ */
+test("E002-F1f: an opaque token this process does NOT hold is redacted by context", () => {
+  const foreignKey = "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f809";
+  for (const line of [
+    `401: invalid api key ${foreignKey} for request`,
+    `TOGETHER_API_KEY=${foreignKey}`,
+    `Authorization: Bearer ${foreignKey}`,
+  ]) {
+    // env deliberately EMPTY — known-value matching cannot help here.
+    const out = redactSecrets(line, {});
+    assert.ok(!out.includes(foreignKey), `must be redacted by context: ${line.slice(0, 24)}…`);
+    assert.match(out, /\[redacted-secret\]/, "leaves the marker");
+  }
+});
+
+/**
+ * E002-F1e — the context rule's false-positive guard. The anchor is what keeps
+ * it from eating every git SHA, content hash and base64 blob in a persisted
+ * transcript. Without the credential word beside it, a 40-hex string is just a
+ * commit id and must survive.
+ */
+test("E002-F1e: hashes and SHAs without a credential word are NOT redacted", () => {
+  const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d";
+  for (const line of [
+    `commit ${sha} landed`,
+    `integrity sha256-${sha}`,
+    `blob ${sha} 1234 bytes`,
+  ]) {
+    assert.ok(redactSecrets(line, {}).includes(sha), `must survive: ${line}`);
+  }
+});
+
+/**
+ * E002-F1h — MECHANISM ORDER. Found by attacking the union itself: neither
+ * variant had this bug, the merge created it.
+ *
+ * A pattern pass run before known-value matching consumes a PREFIX of a known
+ * value and leaves the rest in the clear — the token classes stop at any
+ * character outside `[A-Za-z0-9_-]`, and a JWT is dot-separated. Redacting the
+ * header alone leaves `payload.signature`, the half that authenticates, on
+ * screen; and the literal no longer matches, so the exact pass cannot recover
+ * it. Exact-match must run first.
+ */
+test("E002-F1h: a dot-separated known value is redacted WHOLE, not fragmented", () => {
+  const jwt =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+  const signature = jwt.split(".")[2]!;
+  const env = { ANTHROPIC_OAUTH_TOKEN: jwt };
+
+  const out = redactSecrets(`401 invalid token ${jwt} rejected`, env);
+  assert.ok(!out.includes(signature), "the JWT signature must not survive");
+  assert.ok(!out.includes(jwt), "the whole token is gone");
+  assert.equal(out, "401 invalid token [redacted-secret] rejected", "replaced as one span");
+});
+
+/**
+ * E002-F1i — the value guard must reject PATHS, not everything containing a
+ * slash. `AWS_SECRET_ACCESS_KEY` is 40 base64 chars and routinely carries `/`
+ * (the canonical AWS example value has two). A contains-a-slash guard skipped
+ * the one AWS credential with no `AKIA` shape to fall back on.
+ */
+test("E002-F1i: a secret containing a slash is redacted; a path-valued key is not", () => {
+  const awsSecret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const out = redactSecrets(`403 SignatureDoesNotMatch for secret ${awsSecret} end`, {
+    AWS_SECRET_ACCESS_KEY: awsSecret,
+  });
+  assert.ok(!out.includes(awsSecret), "AWS secret access key must be redacted");
+
+  // …but a credential-NAMED variable holding a PATH is still left alone.
+  const keyPath = "/home/operator/.ssh/id_ed25519_deploy";
+  const kept = redactSecrets(`loading ${keyPath} now`, { SSH_PRIVATE_KEY: keyPath });
+  assert.ok(kept.includes(keyPath), "a path-valued *_KEY is not a secret value");
+});
+
+/**
+ * E002-F1d2 — the SECOND consumer of stored data. `openkai tail` was fixed to
+ * redact on read; `openkai sessions` is the sibling reader and still printed
+ * cleartext, which is the likelier leak of the two: an approved `bash cat .env`
+ * lands in a session transcript, not the activity feed.
+ */
+test("E002-F1d2: openkai sessions redacts a pre-existing cleartext key on READ", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "oke002-sess-"));
+  try {
+    const KEY = k("gsk", "_", BODY);
+    const sessionId = "01920000-0000-7000-8000-000000000001";
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(path.join(root, sessionId), { recursive: true });
+    // Written as a PRE-FIX OpenKai would have written it: no redaction.
+    await writeFile(
+      path.join(root, sessionId, "session.jsonl"),
+      [
+        JSON.stringify({ type: "header", version: 3, id: sessionId, createdAt: 0, parentSessionId: null }),
+        JSON.stringify({
+          type: "message",
+          id: "e1",
+          seq: 1,
+          parentId: null,
+          timestamp: 0,
+          message: { role: "user", content: `here is my key ${KEY} use it` },
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const chunks: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((s: string) => {
+      chunks.push(String(s));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await runSessions({ root });
+      await runSessions({ root, show: sessionId });
+    } finally {
+      process.stdout.write = write;
+    }
+
+    const output = chunks.join("");
+    assert.doesNotMatch(output, new RegExp(KEY), "sessions must not print the stored key");
+    assert.match(output, /\[redacted-secret\]/, "sessions shows the marker instead");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
  * DRIFT GUARD — the root cause of F2 was two hand-maintained copies of one
  * list. This fails the moment a prefix is added to secrets.ts without also
  * teaching the commit-time scan about it.
+ *
+ * FUNCTIONAL, not substring (kai review item (g)): the first cut asserted only
+ * that each prefix string appeared somewhere in the §1 line, which a prefix
+ * carrying a broken quantifier (`hf_[A-Za-z0-9]{200,}`) or no quantifier at
+ * all passes trivially while catching nothing. Compiling §1 and running a
+ * synthesised key of each shape through it is the assertion that has teeth.
  */
-test("E002-F2 drift guard: every SECRET_PREFIXES entry appears in security-audit.sh §1", async () => {
+test("E002-F2 drift guard: §1 actually MATCHES a key of every SECRET_PREFIXES shape", async () => {
   const script = await readFile(path.join(REPO_ROOT, "scripts/security-audit.sh"), "utf-8");
   const line = script.split("\n").find((l) => l.includes("secret_hits=")) ?? "";
-  const missing = SECRET_PREFIXES.filter((p: string) => !line.includes(p));
-  assert.deepEqual(missing, [], `security-audit.sh §1 is missing prefixes: ${missing.join(", ")}`);
+  const match = /git grep -nE '\((.+)\)' --/.exec(line);
+  assert.ok(match, "the §1 pattern must be extractable");
+  const gatePattern = new RegExp(match[1]!);
+
+  // `AKIA` is the one shape with a fixed-width, upper-only body.
+  const sample = (prefix: string): string =>
+    prefix === "AKIA" ? k("AKIA", "IOSFODNN7EXAMPLE") : prefix + BODY;
+
+  const missed = SECRET_PREFIXES.filter((p: string) => !gatePattern.test(`SOME_API_KEY=${sample(p)}`));
+  assert.deepEqual(missed, [], `security-audit.sh §1 fails to MATCH these shapes: ${missed.join(", ")}`);
+});
+
+/**
+ * E002-F2b — this suite's own fixtures must never trip §1.
+ *
+ * The class-level fix for the regression found reviewing ebc666e: that commit
+ * tracked this file with literal canary keys, so `security-audit.sh` §1 —
+ * which greps tracked source for exactly those shapes — reported 14 hits and
+ * the gate went RED at the very commit whose message recorded "audit PASSED".
+ * It passed when measured because `git grep` skips UNTRACKED files.
+ *
+ * This runs the real §1 pattern over the security test sources, so the failure
+ * surfaces in `npm test` rather than at commit time.
+ */
+test("E002-F2b: security test sources carry no literal secret-shaped fixture", async () => {
+  const script = await readFile(path.join(REPO_ROOT, "scripts/security-audit.sh"), "utf-8");
+  const line = script.split("\n").find((l) => l.includes("secret_hits=")) ?? "";
+  const gatePattern = new RegExp(/git grep -nE '\((.+)\)' --/.exec(line)![1]!, "g");
+
+  // The TypeScript SOURCE tree, resolved from REPO_ROOT — NOT from
+  // import.meta.url, which at runtime points at `dist-test/` where only
+  // compiled `.test.js` exists. The first cut filtered for `.test.ts` there,
+  // matched zero files, and passed by scanning nothing (caught by the inverted
+  // control run). §1 greps tracked SOURCE, so source is what must be scanned.
+  const testDir = path.join(REPO_ROOT, "packages/cli/test");
+  const { readdir } = await import("node:fs/promises");
+  const files = (await readdir(testDir)).filter((f) => f.endsWith(".test.ts"));
+  assert.ok(files.length > 0, "the scan must actually read test sources, not silently find none");
+
+  const offenders: string[] = [];
+  for (const file of files) {
+    const source = await readFile(path.join(testDir, file), "utf-8");
+    for (const hit of source.match(gatePattern) ?? []) offenders.push(`${file}: ${hit.slice(0, 24)}…`);
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `literal canaries in tracked test source turn security-audit.sh §1 RED — assemble them at runtime (see k()):\n${offenders.join("\n")}`,
+  );
+});
+
+/**
+ * Write a session transcript exactly as a PRE-FIX OpenKai would have: the key
+ * in cleartext on disk. Every redact-on-read reproducer starts here — the file
+ * outlives the version that wrote it, so the reader is the only seam that can
+ * still save you.
+ */
+async function writePreFixSession(root: string, sessionId: string, body: string): Promise<string> {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  await mkdir(path.join(root, sessionId), { recursive: true });
+  const filePath = path.join(root, sessionId, "session.jsonl");
+  await writeFile(
+    filePath,
+    [
+      JSON.stringify({ type: "header", version: 3, id: sessionId, createdAt: 0, parentSessionId: null }),
+      JSON.stringify({
+        type: "message",
+        id: "e1",
+        seq: 1,
+        parentId: null,
+        timestamp: 0,
+        message: { role: "user", content: body },
+      }),
+    ].join("\n") + "\n",
+  );
+  return filePath;
+}
+
+/**
+ * E002-F1d3 — the THIRD consumer. `openkai tail` (F1d) and `openkai sessions`
+ * (F1d2) redact on read; the TUI resume path did not. `/resume` and
+ * `openkai chat --resume` replay a stored transcript through app.ts
+ * `messageText`, which returned raw content — the worst of the three, because
+ * resume renders FULL message text rather than a 60-char snippet.
+ *
+ * Drives the REAL read path (core `readSessionMessages`) into the REAL exported
+ * display helper — not a replica of the wiring.
+ */
+test("E002-F1d3: TUI resume replay redacts a pre-existing cleartext key on READ", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "oke002-resume-"));
+  try {
+    const KEY = k("tgp", "_v1_", BODY);
+    const filePath = await writePreFixSession(root, "01920000-0000-7000-8000-000000000003", `token ${KEY} here`);
+
+    const messages = await readSessionMessages(filePath);
+    assert.equal(messages.length, 1, "the real read path returned the stored turn");
+    const rendered = messages.map((m) => messageText(m)).join("\n");
+
+    assert.doesNotMatch(rendered, new RegExp(KEY), "resume replay must not repaint the stored key");
+    assert.match(rendered, /\[redacted-secret\]/, "resume replay shows the marker instead");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * E002-F1d4 — the FOURTH consumer, found porting the union forward onto the
+ * current main. `readSessionSearchRows` did not exist when the union was
+ * certified; it now builds BOTH row fields straight from stored text, and two
+ * separate seams render them: the `openkai sessions` listing (`sessions.ts`,
+ * which bypasses `contentSnippet` entirely) and the `/resume` picker's item
+ * description (`session-search.ts buildList`, which sanitises the NAME for
+ * terminal escapes but never redacted the description). `allMessagesText` is
+ * the search haystack over the whole corpus.
+ *
+ * A new reader surface bypasses the existing seams — redacting at the row
+ * construction chokepoint covers every consumer at once.
+ */
+test("E002-F1d4: session search rows redact stored keys in BOTH row fields", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "oke002-rows-"));
+  try {
+    const KEY = k("gsk", "_", BODY);
+    await writePreFixSession(root, "01920000-0000-7000-8000-000000000004", `here is my key ${KEY} use it`);
+
+    const rows = await readSessionSearchRows(root, { withText: true });
+    assert.equal(rows.length, 1, "the real production reader returned the session row");
+    const row = rows[0];
+    assert.ok(row, "row present");
+
+    assert.doesNotMatch(row.firstUserMessage, new RegExp(KEY), "listing + picker description must not carry the key");
+    assert.match(row.firstUserMessage, /\[redacted-secret\]/, "firstUserMessage shows the marker instead");
+    assert.doesNotMatch(row.allMessagesText, new RegExp(KEY), "the search haystack must not carry the key");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

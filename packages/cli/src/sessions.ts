@@ -9,7 +9,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { SessionStore } from "@kaidera/openkai-core";
+import { SessionStore, redactSecrets } from "@kaidera/openkai-core";
 import { filterAndSortSessions, readSessionSearchRows } from "./tui/session-search.js";
 
 /** Options for the `sessions` command. */
@@ -91,11 +91,19 @@ async function showSession(root: string, sessionId: string): Promise<number> {
   }
 }
 
-/** Extract a short text snippet from a message. */
+/**
+ * Extract a short text snippet from a message.
+ *
+ * The chokepoint `showSession` uses to put stored message text on screen, so
+ * redaction goes here once. Redact BEFORE slicing: slicing first can cut a
+ * token below the pattern's length floor, and a half-printed key is still a
+ * leaked key. (`runSessions` renders a different seam — see
+ * `readSessionSearchRows`, which redacts at row construction.)
+ */
 function contentSnippet(message: { role?: string; content?: unknown }): string {
   const content = "content" in message ? (message as { content?: unknown }).content : undefined;
   if (typeof content === "string") {
-    return content.replace(/\n/g, " ").slice(0, 60);
+    return redactSecrets(content).replace(/\n/g, " ").slice(0, 60);
   }
   if (Array.isArray(content)) {
     const text = content
@@ -105,7 +113,7 @@ function contentSnippet(message: { role?: string; content?: unknown }): string {
       )
       .map((part) => part.text)
       .join("");
-    return text.replace(/\n/g, " ").slice(0, 60);
+    return redactSecrets(text).replace(/\n/g, " ").slice(0, 60);
   }
   return "";
 }

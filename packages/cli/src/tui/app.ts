@@ -318,18 +318,32 @@ function denyReasonFromResult(event: SessionEvent): string {
   return "refused at the permission gate";
 }
 
-/** Extract text from an AgentMessage for replay display. */
-function messageText(msg: AgentMessage): string {
+/**
+ * Extract text from a stored AgentMessage for replay DISPLAY, redacted.
+ *
+ * SECURITY (E002-F1d3, third consumer) — `/resume` and `openkai chat --resume`
+ * render a stored transcript through this seam (see {@link buildTuiApp}). Like
+ * `openkai tail` (F1d) and `openkai sessions` (F1d2), the file outlives any one
+ * version: a turn written before the redactor covered a provider still holds
+ * that key in cleartext, so redact on READ here too. This is the display path
+ * only — the raw messages still seed the model context via `initialMessages`
+ * (runtime.ts), which must NOT be redacted or the resumed conversation loses
+ * its history. Redaction lives in the helper so a future replay caller cannot
+ * bypass it.
+ */
+export function messageText(msg: AgentMessage): string {
   if (!("content" in msg)) return "";
   const content = (msg as { content: unknown }).content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
+  let raw = "";
+  if (typeof content === "string") {
+    raw = content;
+  } else if (Array.isArray(content)) {
+    raw = content
       .filter((p): p is { type: "text"; text: string } => typeof p === "object" && p !== null && "type" in p && p.type === "text")
       .map((p) => p.text)
       .join("");
   }
-  return "";
+  return redactSecrets(raw);
 }
 
 /** Controller — bridges the transport event stream to the transcript + chrome. */

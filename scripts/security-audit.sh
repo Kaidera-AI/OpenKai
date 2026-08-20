@@ -21,7 +21,7 @@ echo "== 1. Secret scan (tracked files) =="
 # Thresholds are {20,} here vs {10,} in secrets.ts on purpose: this scan runs
 # over tracked source where a false positive blocks the gate, and a real key
 # is always long.
-secret_hits="$(git grep -nE '(sk-[A-Za-z0-9_-]{20,}|csk-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|fw_[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[opusr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY)' -- . ':!*.md' || true)"
+secret_hits="$(git grep -nE '(sk-[A-Za-z0-9_-]{20,}|csk-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|fw_[A-Za-z0-9_-]{20,}|tgp_v1_[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[opusr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY)' -- . ':!*.md' || true)"
 if [ -n "${secret_hits}" ]; then
     echo "FAIL: possible secrets in tracked files:"
     echo "${secret_hits}" | head -10

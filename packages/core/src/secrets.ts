@@ -4,22 +4,29 @@
  * patterns: a security regex that drifts between call sites is its own defect
  * class.
  *
- * TWO mechanisms, because shape alone is not enough (E002-F1):
+ * THREE mechanisms, because no one of them is enough (E002-F1). They are
+ * complements, not alternatives — each catches what the others structurally
+ * cannot:
  *
- *  1. **Shape matching** ({@link SECRET_PREFIXES}) — provider tokens carry a
- *     distinctive prefix. Cheap, works on text from anywhere, catches a key
- *     this process has never held.
- *  2. **Known-value matching** ({@link knownSecretValues}) — several providers
+ *  1. **Known-value matching** ({@link knownSecretValues}) — several providers
  *     OpenKai supports issue OPAQUE tokens with no prefix at all (together:
  *     64 hex; mistral: 32 alphanumerics; `CORTEX_ADMIN_TOKEN`). No shape can
  *     match those without also matching git SHAs and ordinary identifiers, so
  *     instead we redact the literal values this process actually holds —
  *     `process.env` entries whose NAME is credential-shaped. Zero false
  *     positives by construction: we only redact a string we know is a secret.
+ *     Blind to any key this process does not hold.
+ *  2. **Shape matching** ({@link SECRET_PREFIXES}) — provider tokens carry a
+ *     distinctive prefix. Cheap, works on text from anywhere, catches a key
+ *     this process has never held. Blind to prefixless tokens.
+ *  3. **Context matching** ({@link OPAQUE_AFTER_CREDENTIAL_WORD}) — a long
+ *     opaque token sitting immediately after a credential word. Catches a
+ *     prefixless key this process does NOT hold, which is precisely the gap
+ *     mechanism 1 and mechanism 2 leave between them (a teammate's key quoted
+ *     in a pasted error body, an OAuth token read from a file rather than the
+ *     environment).
  *
- * Mechanism 2 reuses {@link SECRET_NAME_PATTERN}, the same name test
- * `fusion/gate.ts` already trusts to decide which env vars a model-authored
- * gate check may inherit.
+ * ORDER IS LOAD-BEARING, see {@link redactSecrets}.
  *
  * The prefix list is mirrored by `scripts/security-audit.sh` §1 (the
  * commit-time scan). They are two implementations of one list, so
@@ -42,6 +49,7 @@ export const SECRET_PREFIXES: readonly string[] = [
   "gsk_", // groq
   "hf_", // huggingface
   "fw_", // fireworks
+  "tgp_v1_", // together
   "xai-", // xai
   "AIza", // google / gemini
   "github_pat_", // github fine-grained PAT
@@ -66,6 +74,7 @@ const SECRET_VALUE_SOURCE = `(${[
   "gsk_[A-Za-z0-9_-]{10,}",
   "hf_[A-Za-z0-9]{10,}",
   "fw_[A-Za-z0-9_-]{10,}",
+  "tgp_v1_[A-Za-z0-9_-]{10,}",
   "xai-[A-Za-z0-9_-]{10,}",
   "AIza[A-Za-z0-9_-]{10,}",
   "github_pat_[A-Za-z0-9_]{10,}",
@@ -78,6 +87,34 @@ const SECRET_VALUE_SOURCE = `(${[
 export const SECRET_VALUE_PATTERN = new RegExp(SECRET_VALUE_SOURCE);
 
 const SECRET_VALUE_GLOBAL = new RegExp(SECRET_VALUE_SOURCE, "g");
+
+/**
+ * Opaque tokens — together, mistral, `CORTEX_ADMIN_TOKEN`, an OAuth bearer,
+ * and any provider that ships a bare random string — have no prefix to key on,
+ * so they are caught by CONTEXT: a long token sitting immediately after a
+ * credential word. That covers the realistic leak, which is a provider error
+ * body or an env dump echoing the key back (`401: invalid api key <token>`,
+ * `TOGETHER_API_KEY=<token>`, `Authorization: Bearer <token>`).
+ *
+ * This is the mechanism that fires for a key this process does NOT hold, so it
+ * is not made redundant by {@link knownSecretValues} — a teammate's key pasted
+ * into a bug report, or a token OpenKai reads from an OAuth file rather than
+ * the environment, is caught here and nowhere else.
+ *
+ * ponytail: the anchor is load-bearing, not decoration. An unanchored
+ * "20+ opaque chars" rule would redact every git SHA, content hash and base64
+ * blob in a persisted transcript (guarded by test E002-F1e). Lookbehind keeps
+ * the credential word intact in the output so the redacted line still reads.
+ *
+ * KNOWN CEILING: a prefixless token with NO credential word beside it and not
+ * held by this process is not matched — nothing distinguishes it from a hash
+ * at that point. Upgrade path: add the provider's prefix above once it has one.
+ */
+const OPAQUE_AFTER_CREDENTIAL_WORD = new RegExp(
+  "(?<=(?:key|token|secret|password|credential|bearer|authorization)[\"'`\\s:=,]{1,6})" +
+    "[A-Za-z0-9][A-Za-z0-9_-]{19,}",
+  "gi",
+);
 
 /** Env var NAMES that carry credentials regardless of their value's shape. */
 export const SECRET_NAME_PATTERN = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|SESSION)/i;
@@ -129,10 +166,18 @@ function knownSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
     if (value === undefined) continue;
     if (value.length < MIN_KNOWN_VALUE_LENGTH) continue;
     if (!REDACTABLE_NAME_PATTERN.test(name)) continue;
-    // No provider token contains a path separator or whitespace; a variable
-    // that does is a path or a sentence, and blanking it from output is pure
+    // A credential-NAMED variable can still hold a path (`SSH_PRIVATE_KEY`
+    // pointing at a file) or a sentence; blanking those from output is pure
     // noise. Second guard behind the name anchor, cheap and kills a class.
-    if (/[\s/]/.test(value)) continue;
+    //
+    // Deliberately a PATH-PREFIX test, not "contains a slash": a real secret
+    // can contain a slash mid-string. `AWS_SECRET_ACCESS_KEY` is 40 chars of
+    // base64 and the canonical example value carries two of them, so a
+    // contains-a-slash guard skipped the one AWS credential that has no `AKIA`
+    // shape to fall back on. Paths and drive letters START with the separator;
+    // secrets do not.
+    if (/\s/.test(value)) continue;
+    if (/^(?:[A-Za-z]:[\\/]|~?\.{0,2}\/)/.test(value)) continue;
     values.push(value);
   }
   return values.sort((a, b) => b.length - a.length);
@@ -142,19 +187,33 @@ function knownSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
  * Replace secret-shaped spans, and any known credential value, with a fixed
  * marker.
  *
- * ponytail: shape matching stays a blast-radius reducer, not a guarantee — a
- * novel PREFIXED token from a provider not in {@link SECRET_PREFIXES} passes
- * through. Known-value matching closes that for any credential this process
- * actually holds, which is the realistic leak path (a provider echoes the key
- * back in a 401/429 body, or an approved `bash cat .env` puts one in a turn
- * that is then persisted). Widen the prefix list when a provider ships a new
- * shape; the drift test will tell you to update the shell scan too.
+ * ORDER IS LOAD-BEARING — most precise mechanism first:
+ *
+ *  1. **Known values**, because they are exact literals. A pattern pass run
+ *     first can consume a PREFIX of a known value and leave the rest in the
+ *     clear: the token classes here stop at any character outside
+ *     `[A-Za-z0-9_-]`, and a JWT (`ANTHROPIC_OAUTH_TOKEN`) is dot-separated.
+ *     Redacting `header` alone leaves `payload.signature` — the half that
+ *     matters — exposed, and the literal no longer matches so pass 3 cannot
+ *     recover it. Exact-match first, then nothing is left to fragment.
+ *  2. **Prefixed shapes**, whose marker starts with `[` — a character the
+ *     opaque token class rejects, so pass 3 cannot re-match pass 2's output.
+ *  3. **Opaque-after-credential-word**, the loosest rule, last.
+ *
+ * ponytail: shape matching stays a blast-radius reducer, not a guarantee. The
+ * three mechanisms cover different halves of the problem — see the file header.
+ * Widen the prefix list when a provider ships a new shape; the drift test will
+ * tell you to update the shell scan too.
  */
 export function redactSecrets(text: string, env: NodeJS.ProcessEnv = process.env): string {
-  let out = text.replace(SECRET_VALUE_GLOBAL, MARKER);
+  let out = text;
   for (const value of knownSecretValues(env)) {
     // split/join rather than RegExp — no metacharacter escaping to get wrong.
+    // Longest-first (see knownSecretValues) so a short secret cannot fragment
+    // a longer one that contains it.
     if (out.includes(value)) out = out.split(value).join(MARKER);
   }
-  return out;
+  return out
+    .replace(SECRET_VALUE_GLOBAL, MARKER)
+    .replace(OPAQUE_AFTER_CREDENTIAL_WORD, MARKER);
 }

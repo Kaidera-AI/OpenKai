@@ -13,3 +13,6 @@ dist-test/
 .tui-test/
 __pycache__/
 *.pyc
+
+# Stray compiled output must never sit next to its source (E002 §2).
+packages/cli/src/*.js

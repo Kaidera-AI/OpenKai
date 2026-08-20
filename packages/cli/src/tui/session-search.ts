@@ -19,7 +19,7 @@ import { SelectList, fuzzyMatch } from "@earendil-works/pi-tui";
 import type { Component, SelectItem } from "@earendil-works/pi-tui";
 import { promises as fsp } from "node:fs";
 import path from "node:path";
-import { SessionStore } from "@kaidera/openkai-core";
+import { SessionStore, redactSecrets } from "@kaidera/openkai-core";
 import type { Entry } from "@kaidera/openkai-core";
 import { highlight, opaquePanel, paletteSelectTheme, renderOverlayFooter, text as textToken } from "./theme.js";
 import { relativeTime } from "./history-search.js";
@@ -89,9 +89,23 @@ export function sessionNameFromEntries(entries: readonly Entry[]): string | unde
 }
 
 /** Flatten one message's content to plain text (for the search corpus). */
+/**
+ * Flatten a stored message to text for the search rows, redacted.
+ *
+ * SECURITY (E002-F1d4, fourth consumer) — the redact-on-read rule that covers
+ * `openkai tail` (F1d), `openkai sessions --show` (F1d2) and the TUI resume
+ * replay (F1d3) applies here too: a session file written before the redactor
+ * covered a provider still holds that key in cleartext. Both row fields built
+ * from this helper reach a terminal — `firstUserMessage` renders in the
+ * `openkai sessions` listing AND in the `/resume` picker's item description,
+ * and `allMessagesText` is the search haystack. Redacting in the helper (not
+ * at each render) covers every consumer at once, and redacts BEFORE the
+ * callers slice: slicing first can cut a token below the pattern's length
+ * floor, and a half-printed key is still a leaked key.
+ */
 function entryText(message: { role?: string; content?: unknown }): string {
   const content = "content" in message ? message.content : undefined;
-  if (typeof content === "string") return content;
+  if (typeof content === "string") return redactSecrets(content);
   if (!Array.isArray(content)) return "";
   const parts: unknown[] = content;
   const texts: string[] = [];
@@ -100,7 +114,7 @@ function entryText(message: { role?: string; content?: unknown }): string {
       texts.push(part.text);
     }
   }
-  return texts.join(" ");
+  return redactSecrets(texts.join(" "));
 }
 
 /**
