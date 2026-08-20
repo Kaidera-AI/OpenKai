@@ -2263,6 +2263,9 @@ export class TuiController {
 
   private setBusy(busy: boolean): void {
     this.busy = busy;
+    // A new turn starts clean: drop any error captured by a turn that closed
+    // without a paired turn_end, so it can't stamp the next settle row (E019 S1).
+    if (busy) this.turnErrorElapsedMs = null;
     const state = this.status.currentState;
     this.status.update({
       ...state,
