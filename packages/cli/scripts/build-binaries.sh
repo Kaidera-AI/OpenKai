@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # OpenKai release signing public key (generated 2026-08-19; custody: CTO).
-OPENKAI_RELEASE_PUBLIC_KEY_PIN="MCowBQYDK2VwAyEA0u+kX9f836zEwkQDHZQ5ECLIWkKPBb+DMkBLsgGsT8Q="
+OPENKAI_RELEASE_PUBLIC_KEY_PIN="MCowBQYDK2VwAyEA1c1pWQeIn8V1uihqu28f0680kt8jUDXddOE35VrW67U="
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENTRY="${ROOT}/dist/index.js"

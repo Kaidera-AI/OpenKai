@@ -27,6 +27,7 @@
  */
 
 import { createHash, createPublicKey, sign, verify } from "node:crypto";
+import { spawn } from "node:child_process";
 import { promises as fsp } from "node:fs";
 
 import { CLI_VERSION } from "./version.js";
@@ -270,6 +271,8 @@ export interface UpgradeDeps {
   copyFile(from: string, to: string): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
   stat(path: string): Promise<{ isFile: boolean }>;
+  /** Run the channel's own package manager (brew/npm) for managed upgrades. */
+  runExternal(cmd: string, args: string[]): Promise<{ code: number; output: string }>;
 }
 
 export const defaultDeps: UpgradeDeps = {
@@ -296,6 +299,15 @@ export const defaultDeps: UpgradeDeps = {
     const s = await fsp.stat(p);
     return { isFile: s.isFile() };
   },
+  runExternal: (cmd, args) =>
+    new Promise((resolve) => {
+      const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+      let output = "";
+      child.stdout.on("data", (d) => (output += d));
+      child.stderr.on("data", (d) => (output += d));
+      child.on("error", () => resolve({ code: 1, output }));
+      child.on("close", (code) => resolve({ code: code ?? 1, output }));
+    }),
 };
 
 // ─── Upgrader (standalone channel only) ──────────────────────────────────────
@@ -557,22 +569,30 @@ export async function runUpgrade(
 
   // Brew-managed install: Homebrew owns the binary lifecycle.
   if (isBrewManaged() && options.currentBinary === undefined) {
+    const deps = options.deps ?? defaultDeps;
+    const upd = await deps.runExternal("brew", ["update"]);
+    const upg = upd.code === 0 ? await deps.runExternal("brew", ["upgrade", "openkai"]) : upd;
+    const ok = upg.code === 0;
     const message = [
-      `openkai upgrade — this install is managed by Homebrew.`,
-      `Self-upgrade is disabled here so the Cellar stays consistent.`,
-      `Upgrade with: brew update && brew upgrade openkai`,
+      `openkai upgrade — channel: Homebrew (managed)`,
+      ok ? `brew upgrade openkai ran successfully.` : `brew upgrade failed (exit ${upg.code}).`,
+      upg.output.trim().split("\n").slice(-3).join("\n"),
     ].join("\n");
-    return { exitCode: 0, message, channel: ctx.channel, autoUpdateEnabled: false };
+    return { exitCode: ok ? 0 : 1, message, channel: ctx.channel, autoUpdateEnabled: false };
   }
 
   // npm channel: pinned at build time, never self-mutates.
   if (ctx.channel === "npm") {
+    const deps = options.deps ?? defaultDeps;
+    const target = options.version ? `@kaidera/openkai@${options.version}` : "@kaidera/openkai@latest";
+    const res = await deps.runExternal("npm", ["install", "-g", target]);
+    const ok = res.code === 0;
     const message = [
-      `openkai upgrade — channel: npm (pinned at build time)`,
-      `npm installs never self-mutate. Upgrade explicitly with:`,
-      `  npm install -g @kaidera/openkai@<version>`,
+      `openkai upgrade — channel: npm`,
+      ok ? `npm install -g ${target} ran successfully.` : `npm install failed (exit ${res.code}).`,
+      res.output.trim().split("\n").slice(-3).join("\n"),
     ].join("\n");
-    return { exitCode: 0, message, channel: "npm", autoUpdateEnabled: false };
+    return { exitCode: ok ? 0 : 1, message, channel: "npm", autoUpdateEnabled: false };
   }
 
   // `OPENKAI_CHANNEL=standalone` must not re-enter the self-mutating path on a

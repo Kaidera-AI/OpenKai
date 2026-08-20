@@ -342,7 +342,9 @@ test("CLI: npm channel never self-mutates — upgrade prints pin message, exit 0
   });
   assert.equal(res.channel, "npm");
   assert.equal(res.exitCode, 0);
-  assert.match(res.message, /pinned at build time/);
+  // npm channel now EXECUTES `npm install -g` via runExternal (faked ok).
+  assert.match(res.message, /channel: npm/);
+  assert.match(res.message, /ran successfully/);
   assert.match(res.message, /npm install -g/);
 });
 
@@ -470,6 +472,7 @@ function fakeDeps(state: FakeState): UpgradeDeps {
   return {
     fetchManifest: async () => state.manifest,
     download: async () => state.downloadedBytes ?? state.artifactBytes,
+    runExternal: async () => ({ code: 0, output: "ok" }),
     readFile: (p) => fsp.readFile(p),
     writeFile: (p, d) => fsp.writeFile(p, d),
     rename: (from, to) => fsp.rename(from, to),
