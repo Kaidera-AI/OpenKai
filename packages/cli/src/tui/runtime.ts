@@ -59,6 +59,7 @@ import {
   isFocusOut,
 } from "./attention.js";
 import { isMouseShapedSequence } from "./mouse-guard.js";
+import { installMouseRouting } from "./mouse-routing.js";
 import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
 import { readConfig } from "./welcome.js";
@@ -490,6 +491,20 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
 
   tui.setLayoutRoot(root);
   tui.setFocus(composer.editor);
+
+  // Click-to-cursor (E019 inc 03): Claude Code's grammar — click inside the
+  // composer moves the text cursor there; drag still selects. Wraps the alt
+  // screen's viewport input; feature-gated with the rest of the mouse work.
+  if (featureEnabled("mouse")) {
+    installMouseRouting(
+      tui,
+      {
+        geometry: () => composer.composerGeometry(),
+        positionCursorAt: (row, col) => composer.positionCursorAt(row, col),
+      },
+      () => terminal.columns > 0 && terminal.rows > 0 ? terminal.rows : 24,
+    );
+  }
 
   // ── Input listener: focus, palette, stash, density, clear, quit-confirm ──
   const escDetector = new DoubleEscDetector();
