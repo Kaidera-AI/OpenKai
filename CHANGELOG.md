@@ -2,6 +2,32 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.8] — v0.1.008 (E017: channel-executing update + signed release channel)
+
+`openkai update` now **executes** the detected channel's own upgrade instead of
+printing instructions: brew-managed installs run `brew update && brew upgrade
+openkai`; npm installs run `npm install -g @kaidera/openkai@latest|<v>`;
+standalone keeps the manifest-driven self-upgrade (sha256 witness + rollback).
+Channel detection is build-time (`standalone`/`npm` stamp) plus Homebrew
+Cellar-path detection.
+
+### Signed release channel
+- `.github/workflows/release.yml` runs on `v0.1.*` tag push: builds all four
+  platform binaries, attaches **SLSA build-provenance attestations** (GitHub
+  Sigstore), uploads CI-built assets + a fresh `latest.json` (version read from
+  the tagged `package.json`). Verify with
+  `gh attestation verify <binary> --repo Kaidera-AI/OpenKai`.
+- npm publish stays manual and consent-gated (this release).
+
+### Governance
+- `docs/RELEASE_SOP.md`: release-control SOP (no publish without explicit CTO
+  consent), pre-publish consolidation checklist, local-binary hygiene, Homebrew
+  tap-trust platform fact, signed-channel release order.
+
+### 0.1.007-lineage research landed on this line
+- OK-9.1 Switchyard tier scorer + `routeWithTier`; subagent `outputSchema`
+  steering + `stage` dynamic selection; fusion telemetry dashboard; multi-modal
+  (vision) routing; chat connectors (Slack/Telegram) + `bridge --listen`.
 ## [0.1.7] — v0.1.007 (E017: orchestration composition — and the operator-polish release)
 
 Two epics in one line: the OK-9 composition (shift predicts, fusion
