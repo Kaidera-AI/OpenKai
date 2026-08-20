@@ -9,7 +9,7 @@
  * (used by the palette's `/btw` / `/resume` actions, scope §1.3).
  */
 
-import { CombinedAutocompleteProvider, CURSOR_MARKER, Editor } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, CURSOR_MARKER, Editor, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { editorTheme } from "./theme.js";
 import { SLASH_COMMANDS } from "./commands.js";
@@ -74,6 +74,33 @@ class ComposerEditor extends Editor {
     });
     const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
     const gLen = (s: string): number => [...seg.segment(s)].length;
+    // The editor's cursorCol is a UTF-16 code-unit offset (every slice/length
+    // in pi-tui's editor is code-unit arithmetic), while the click arrives in
+    // terminal CELLS and the wrap walk below counts GRAPHEMES — three units
+    // that only coincide for ASCII (E019 S2). Convert explicitly:
+    //   clicked cells → graphemes (walking cell widths within the row)
+    //   graphemes     → code units (summing segment lengths on the line)
+    const cellsToGraphemes = (rowText: string, cells: number): number => {
+      let cellsSeen = 0;
+      let count = 0;
+      for (const g of seg.segment(rowText)) {
+        const w = Math.max(1, visibleWidth(g.segment));
+        if (cellsSeen + w > cells) break; // a click inside a wide glyph targets its start
+        cellsSeen += w;
+        count += 1;
+      }
+      return count;
+    };
+    const graphemesToUnits = (line: string, count: number): number => {
+      let units = 0;
+      let seen = 0;
+      for (const g of seg.segment(line)) {
+        if (seen >= count) break;
+        units += g.segment.length;
+        seen += 1;
+      }
+      return units;
+    };
 
     const lines = internals.state.lines;
     let logical = 0;
@@ -99,7 +126,8 @@ class ComposerEditor extends Editor {
         const rowText = content[visualRow] ?? "";
         const rowLen = gLen(rowText);
         if (visualRow === row) {
-          targetCol = Math.min(consumed + col, lineLen);
+          const grapheme = Math.min(consumed + cellsToGraphemes(rowText, col), lineLen);
+          targetCol = graphemesToUnits(line, grapheme);
           resolved = true;
           break;
         }
@@ -111,7 +139,7 @@ class ComposerEditor extends Editor {
     if (!resolved) {
       // Past the end: cursor to the document end (click below the text).
       logical = Math.max(0, lines.length - 1);
-      targetCol = gLen(lines[logical] ?? "");
+      targetCol = (lines[logical] ?? "").length;
     }
     internals.state.cursorLine = logical;
     internals.setCursorCol(targetCol);

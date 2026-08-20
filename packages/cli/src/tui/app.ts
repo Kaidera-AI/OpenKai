@@ -387,6 +387,8 @@ export class TuiController {
   private done = false;
   /** True while the current turn is a `/btw` side channel (scope §1.5) — persistTurn skips it so the ephemeral exchange never re-persists the prior assistant block. */
   private btwTurn = false;
+  /** Elapsed ms captured when the `error` event landed (null = turn clean). Consumed at `turn_end` so the settle row reports the failure — with the real elapsed, since the error path already reset busySince (E019 S1). */
+  private turnErrorElapsedMs: number | null = null;
 
   constructor(tui: TUI, options: TuiAppOptions, transcript: Transcript, status: StatusLine) {
     this.tui = tui;
@@ -2072,13 +2074,19 @@ export class TuiController {
         this.transcript.applyEvent(event);
         // The settled row (E019 inc 04): elapsed + tokens make the turn's
         // completion a visible full stop — finished vs crashed is never in
-        // doubt, and a turn that produced nothing says so honestly.
+        // doubt, and a turn that produced nothing says so honestly. A turn
+        // that settled as an error says THAT (E019 S1): the core emits
+        // [error, turn_end] for stopReason "error", and a green ✓ after the
+        // danger row would render the failure as success.
+        const failedElapsedMs = this.turnErrorElapsedMs;
+        this.turnErrorElapsedMs = null;
+        const turnFailed = failedElapsedMs !== null;
         {
           const s = this.status.currentState;
-          const elapsedMs = s.busySince !== null ? Date.now() - s.busySince : 0;
+          const elapsedMs = failedElapsedMs ?? (s.busySince !== null ? Date.now() - s.busySince : 0);
           const seconds = (elapsedMs / 1000).toFixed(1);
           const usage = s.usage;
-          const parts = [`✓ settled in ${seconds}s`];
+          const parts = [turnFailed ? `✗ failed in ${seconds}s` : `✓ settled in ${seconds}s`];
           if (usage !== null && usage.totalTokens > 0) {
             parts.push(`↑${formatTokens(usage.input)} ↓${formatTokens(usage.output)}`);
             const tps = elapsedMs > 0 ? (usage.output / (elapsedMs / 1000)).toFixed(1) : "0";
@@ -2101,7 +2109,7 @@ export class TuiController {
         }
         this.btwTurn = false;
         // Attention (scope §1.1): a turn settled — if unfocused, bell/OSC + chrome.
-        this.signalAttention("Turn complete");
+        this.signalAttention(turnFailed ? "Turn failed" : "Turn complete");
         break;
       case "permission_request":
         if (this.transport.planMode) {
@@ -2126,10 +2134,16 @@ export class TuiController {
         this.transcript.applyEvent(event);
         this.setBusy(false);
         break;
-      case "error":
+      case "error": {
         this.transcript.applyEvent(event);
+        // For stopReason "error" the paired turn_end arrives in the same
+        // batch (core events.ts) — capture the real elapsed NOW, because
+        // setBusy(false) clears busySince before turn_end reads it (E019 S1).
+        const busySince = this.status.currentState.busySince;
+        this.turnErrorElapsedMs = busySince !== null ? Date.now() - busySince : 0;
         this.setBusy(false);
         break;
+      }
       default:
         break;
     }
