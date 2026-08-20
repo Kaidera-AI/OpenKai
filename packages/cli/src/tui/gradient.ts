@@ -57,7 +57,10 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
     BRAND_RAMP.length - 1,
     Math.max(0, Math.floor(t * (BRAND_RAMP.length - 1) + 0.5)),
   );
-  return brandTint("", idx).slice(0, -4); // keep the SGR prefix, drop reset
+  // fg256 closes with `\x1b[39m` — FIVE chars, not four. Slicing 4 left a bare
+  // ESC before every glyph, and `ESC \` is the ANSI String Terminator, so the
+  // terminal ate every backslash in the mark (the logo's `\` strokes vanished).
+  return brandTint("", idx).slice(0, -5); // keep the SGR prefix, drop reset
 }
 
 /** Diagonal gradient + optional sliding shine band over multi-line art. */

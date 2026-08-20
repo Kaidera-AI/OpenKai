@@ -339,6 +339,11 @@ test("CLI: npm channel never self-mutates — upgrade prints pin message, exit 0
     env: { OPENKAI_CHANNEL: "npm" },
     currentBinary: "/tmp/x",
     currentVersion: "0.0.0",
+    // Without a fake, defaultDeps.runExternal really spawns
+    // `npm install -g @kaidera/openkai` against the developer's global
+    // node_modules — the suite mutated the machine it ran on, and failed
+    // wherever that install could not complete (ENOTEMPTY/offline).
+    deps: fakeDeps({ manifest: manifest("0.0.0", new TextEncoder().encode("x")), artifactBytes: new TextEncoder().encode("x") }),
   });
   assert.equal(res.channel, "npm");
   assert.equal(res.exitCode, 0);

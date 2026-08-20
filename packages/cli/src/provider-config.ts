@@ -52,17 +52,25 @@ function applyEnvEdit(key: string, value: string | undefined): void {
   const file = providerEnvPath();
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const lines = existsSync(file) ? readFileSync(file, "utf-8").split("\n") : [];
-  const entry = `${key}=${value ?? ""}`;
-  const index = lines.findIndex((l) => l.trim().startsWith(`${key}=`) || l.trim().startsWith(`export ${key}=`));
-  if (value === undefined) {
-    if (index >= 0) lines.splice(index, 1);
-  } else if (index >= 0) {
-    lines[index] = entry;
-  } else {
-    if (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
-    lines.push(entry);
+  const matches = (l: string): boolean => {
+    const t = l.trim();
+    return t.startsWith(`${key}=`) || t.startsWith(`export ${key}=`);
+  };
+  const index = lines.findIndex(matches);
+  // EVERY occurrence goes, not just the first: the two readers of this store
+  // disagree on duplicates (env.ts takes the first, readProviderKeys the
+  // last), so a stale leftover line makes the Settings UI display one
+  // credential while the harness uses another. A migration that appends
+  // (KOS's app_settings one-way import) is exactly how duplicates arrive.
+  const kept = lines.filter((l) => !matches(l));
+  if (value !== undefined) {
+    const entry = `${key}=${value}`;
+    // Splice at the original index to hold position — every line before the
+    // first match is a non-match, so indices agree up to that point.
+    if (index >= 0) kept.splice(index, 0, entry);
+    else kept.push(entry);
   }
-  const body = lines.filter((l) => l.trim().length > 0).join("\n") + "\n";
+  const body = kept.filter((l) => l.trim().length > 0).join("\n") + "\n";
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, body, { mode: 0o600 });
   renameSync(tmp, file);

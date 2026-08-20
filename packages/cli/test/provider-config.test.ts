@@ -20,6 +20,7 @@ import {
   unsetProviderKey,
   writeProviderKey,
 } from "../dist/provider-config.js";
+import { loadDotEnv } from "../dist/env.js";
 
 function withHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(path.join(tmpdir(), "openkai-pcfg-"));
@@ -100,5 +101,56 @@ test("removeProviderKey removes nothing else when key absent", () => {
     removeProviderKey("ABSENT_API_KEY");
     assert.deepEqual(readProviderKeys(), { KEEP_API_KEY: "keep" });
     delete process.env.KEEP_API_KEY;
+  });
+});
+
+test("write path: a duplicated key collapses to one line — no stale leftover", () => {
+  withHome((home) => {
+    delete process.env.DEEPSEEK_API_KEY;
+    // Duplicates arrive from an appending migration (KOS's one-way
+    // app_settings import). The two readers disagree on which one wins —
+    // env.ts takes the first, readProviderKeys the last — so a leftover makes
+    // the Settings UI display one credential while the harness uses another.
+    writeFileSync(
+      path.join(home, ".env"),
+      "DEEPSEEK_API_KEY=stale-one\nDEEPSEEK_API_KEY=stale-two\n",
+      "utf-8",
+    );
+    setProviderKey("deepseek", "fresh-key");
+    const body = readFileSync(providerEnvPath(), "utf-8");
+    const hits = body.split("\n").filter((l) => l.startsWith("DEEPSEEK_API_KEY="));
+    assert.deepEqual(hits, ["DEEPSEEK_API_KEY=fresh-key"], "exactly one line, the fresh one");
+    assert.equal(readProviderKeys().DEEPSEEK_API_KEY, "fresh-key");
+    assert.doesNotMatch(body, /stale-/, "no stale duplicate survives");
+  });
+});
+
+test("OPENKAI_IGNORE_PROJECT_ENV: the store outranks a checked-out project .env", () => {
+  withHome((home) => {
+    const project = mkdtempSync(path.join(tmpdir(), "openkai-pcfg-proj-"));
+    const savedFlag = process.env.OPENKAI_IGNORE_PROJECT_ENV;
+    try {
+      writeFileSync(path.join(project, ".env"), "OPENROUTER_API_KEY=from-project\n", "utf-8");
+      writeFileSync(path.join(home, ".env"), "OPENROUTER_API_KEY=from-store\n", "utf-8");
+
+      // Default (knob unset): the project file still wins. The E012 trust
+      // boundary is unchanged — this is the behaviour the guard opts OUT of.
+      delete process.env.OPENKAI_IGNORE_PROJECT_ENV;
+      delete process.env.OPENROUTER_API_KEY;
+      loadDotEnv(project);
+      assert.equal(process.env.OPENROUTER_API_KEY, "from-project", "default precedence preserved");
+
+      // Embedded deployments set the knob: the store is the sole authority,
+      // so what the Settings UI wrote is what the harness actually uses.
+      process.env.OPENKAI_IGNORE_PROJECT_ENV = "1";
+      delete process.env.OPENROUTER_API_KEY;
+      loadDotEnv(project);
+      assert.equal(process.env.OPENROUTER_API_KEY, "from-store", "store wins under the guard");
+    } finally {
+      delete process.env.OPENROUTER_API_KEY;
+      if (savedFlag === undefined) delete process.env.OPENKAI_IGNORE_PROJECT_ENV;
+      else process.env.OPENKAI_IGNORE_PROJECT_ENV = savedFlag;
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });

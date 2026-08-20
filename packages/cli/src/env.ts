@@ -77,6 +77,17 @@ function loadFile(file: string, credentialKeysOnly: boolean): void {
 export function loadDotEnv(cwd: string = process.cwd()): void {
   // Project file first: only credential-shaped provider keys are honoured,
   // and the first set wins, so these beat the global file below.
-  loadFile(path.join(cwd, ".env"), true);
+  //
+  // Embedded deployments (the KOS appliance, consult 62e9a90e) set
+  // OPENKAI_IGNORE_PROJECT_ENV so <OPENKAI_HOME>/.env is the SOLE credential
+  // authority. Without it the write path is unified but the read path is not:
+  // a checked-out repo's .env silently outranks the key the Settings UI
+  // wrote, so the UI displays one credential while the harness bills another.
+  // Any value enables it — the fail-safe direction is "store wins" — and the
+  // knob cannot be disabled by the file it guards (HARNESS_NAMESPACE_PATTERN
+  // blocks OPENKAI_* from a project .env).
+  if (!process.env.OPENKAI_IGNORE_PROJECT_ENV) {
+    loadFile(path.join(cwd, ".env"), true);
+  }
   loadFile(path.join(openkaiHome(), ".env"), false);
 }

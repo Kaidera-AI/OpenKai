@@ -24,6 +24,7 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { InProcessTransport, SessionStore, CortexClient, CortexCheckpoint, listSessions, readSessionMessages } from "@kaidera/openkai-core";
 import { buildTuiApp, type TuiApp, type ExitRequest } from "../dist/tui/app.js";
 import { resolveRunMode } from "../dist/tui/runtime.js";
+import { gradientLogo } from "../dist/tui/gradient.js";
 import { OVERLAY_FOOTER, renderOverlayFooter } from "../dist/tui/theme.js";
 
 // ── Test fixtures ────────────────────────────────────────────────────────────
@@ -396,4 +397,18 @@ test("persist: listSessions + readSessionMessages round-trip", async () => {
 
   const msgs = await readSessionMessages(store.filePath);
   assert.equal(msgs.length, 1, "readSessionMessages returns the appended message");
+});
+test("gradient: every ESC introduces a CSI — no bare ESC eats the next glyph", () => {
+  // fg256 closes with `\x1b[39m` (five chars). Slicing four left a bare ESC
+  // before every glyph; `ESC \` is the ANSI String Terminator, so terminals
+  // (and the frame renderer) swallowed every backslash in the brand mark.
+  const out = gradientLogo(["/  \\  ●", "\\  /"], 0).join("\n");
+  for (let i = 0; i < out.length; i += 1) {
+    if (out[i] === "\x1b") {
+      assert.equal(out[i + 1], "[", `bare ESC at ${i} — it would consume ${JSON.stringify(out[i + 1])}`);
+    }
+  }
+  // The art survives the round trip: strip SGR, get the strokes back.
+  const stripped = out.replace(/\x1b\[[0-9;]*m/g, "");
+  assert.equal(stripped, "/  \\  ●\n\\  /", "no glyph is lost to a stray escape");
 });
