@@ -151,3 +151,9 @@ install, no trust prompt, no node. npm stays the lockstep package channel
 consent → bump versions → CI tag pipeline builds+attests+uploads assets →
 manual npm publish (core then cli) → repoint install.sh + Homebrew formula
 (document `brew trust` as a known Homebrew limitation, not our default).
+\n
+## Bun channel (added 2026-08-20)
+
+`bun add -g @kaidera/openkai` is a supported install channel. `openkai update`
+detects it (bin shim under ~/.bun via argv[1] or execPath) and executes
+`bun add -g @kaidera/openkai`. Documented in README alongside npm/brew/curl.

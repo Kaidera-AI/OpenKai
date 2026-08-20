@@ -35,9 +35,15 @@ curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/ins
 
 # npm (node ≥ 22.19)
 npm install -g @kaidera/openkai
+
+# bun
+bun add -g @kaidera/openkai
 ```
 
-Then: `openkai info` to self-check, `openkai` to start. Upgrades: `openkai upgrade` (brew users: `brew upgrade openkai`); rollback built in.
+Then: `openkai info` to self-check, `openkai` to start. Upgrades: `openkai
+upgrade` detects the channel and runs it (brew → `brew upgrade`, npm →
+`npm install -g`, bun → `bun add -g`, standalone → signed self-upgrade);
+rollback built in.
 
 ```bash
 # 30 seconds to a working agent

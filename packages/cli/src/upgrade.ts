@@ -84,6 +84,19 @@ export function isBrewManaged(execPath: string = process.execPath): boolean {
   return /\/(Cellar|linuxbrew|homebrew)\//i.test(execPath);
 }
 
+/**
+ * Bun-managed installs (`bun add -g @kaidera/openkai`): the shim runs under
+ * the bun binary in ~/.bun, so the package manager owns the lifecycle and
+ * self-upgrade must defer to `bun add -g`.
+ */
+export function isBunManaged(execPath: string = process.execPath): boolean {
+  // The global bin shim runs the JS under an interpreter (bun or node), so
+  // process.execPath is the interpreter, not the install. Detect via the bin
+  // script path (argv[1]) or the interpreter living under ~/.bun.
+  const script = process.argv[1] ?? "";
+  return /\/\.bun\//i.test(execPath) || /\/\.bun\//i.test(script);
+}
+
 // ─── Pure helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -577,6 +590,19 @@ export async function runUpgrade(
       `openkai upgrade — channel: Homebrew (managed)`,
       ok ? `brew upgrade openkai ran successfully.` : `brew upgrade failed (exit ${upg.code}).`,
       upg.output.trim().split("\n").slice(-3).join("\n"),
+    ].join("\n");
+    return { exitCode: ok ? 0 : 1, message, channel: ctx.channel, autoUpdateEnabled: false };
+  }
+
+  // Bun-managed install: bun owns the lifecycle.
+  if (isBunManaged() && options.currentBinary === undefined) {
+    const deps = options.deps ?? defaultDeps;
+    const res = await deps.runExternal("bun", ["add", "-g", "@kaidera/openkai"]);
+    const ok = res.code === 0;
+    const message = [
+      `openkai upgrade — channel: bun (managed)`,
+      ok ? `bun add -g @kaidera/openkai ran successfully.` : `bun add failed (exit ${res.code}).`,
+      res.output.trim().split("\n").slice(-3).join("\n"),
     ].join("\n");
     return { exitCode: ok ? 0 : 1, message, channel: ctx.channel, autoUpdateEnabled: false };
   }
