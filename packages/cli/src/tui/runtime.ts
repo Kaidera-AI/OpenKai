@@ -58,6 +58,7 @@ import {
   isFocusIn,
   isFocusOut,
 } from "./attention.js";
+import { isMouseShapedSequence } from "./mouse-guard.js";
 import { FrecencyHistory } from "./stash.js";
 import { playBrandAnimation } from "./brand.js";
 import { readConfig } from "./welcome.js";
@@ -496,6 +497,12 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   let lastQuitConfirmAt = 0;
 
   tui.addInputListener((data) => {
+    // Mouse guard (E019 inc 02): any mouse-shaped sequence pi-tui's viewport
+    // listener did NOT consume is swallowed here — it must never reach the
+    // editor as literal digits, whatever encoding the terminal fell back to.
+    if (isMouseShapedSequence(data)) {
+      return { consume: true };
+    }
     // DEC 1004 focus reporting (scope §1.1) — handle first so the OSC sequences
     // never reach the editor.
     if (isFocusIn(data)) {
