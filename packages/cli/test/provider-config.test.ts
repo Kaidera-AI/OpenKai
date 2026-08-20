@@ -21,6 +21,7 @@ import {
   writeProviderKey,
 } from "../dist/provider-config.js";
 import { loadDotEnv } from "../dist/env.js";
+import { providerKeyStatus } from "../dist/providers.js";
 
 function withHome<T>(fn: (home: string) => T): T {
   const home = mkdtempSync(path.join(tmpdir(), "openkai-pcfg-"));
@@ -152,5 +153,25 @@ test("OPENKAI_IGNORE_PROJECT_ENV: the store outranks a checked-out project .env"
       else process.env.OPENKAI_IGNORE_PROJECT_ENV = savedFlag;
       rmSync(project, { recursive: true, force: true });
     }
+  });
+});
+
+test("multi-key lanes refuse a single --key instead of reporting a false green", () => {
+  withHome(() => {
+    for (const k of ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID"]) {
+      delete process.env[k];
+    }
+    // Writing envKeys[0] alone left the lane unconfigured while the CLI printed
+    // "written to the credential store" and exited 0 (KOS consult, gap G2).
+    assert.throws(
+      () => setProviderKey("cloudflare-ai-gateway", "cf-secret"),
+      /needs all of CLOUDFLARE_API_KEY, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_GATEWAY_ID/,
+    );
+    assert.deepEqual(readProviderKeys(), {}, "a refused write leaves no partial state");
+    // The per-variable primitive still configures the lane properly.
+    writeProviderKey("CLOUDFLARE_API_KEY", "a");
+    writeProviderKey("CLOUDFLARE_ACCOUNT_ID", "b");
+    writeProviderKey("CLOUDFLARE_GATEWAY_ID", "c");
+    assert.equal(providerKeyStatus("cloudflare-ai-gateway").configured, true);
   });
 });

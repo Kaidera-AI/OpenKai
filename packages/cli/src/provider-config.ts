@@ -137,6 +137,19 @@ export function resolveProviderId(id: string): string {
 export function setProviderKey(providerId: string, key: string): string {
   const envKey = canonicalEnvKey(providerId);
   if (!envKey) throw new Error(`provider ${providerId} takes no env key (keyless or OAuth-only lane)`);
+  // Multi-key lanes cannot be configured by a single value: this writes only
+  // envKeys[0], but providerKeyStatus needs ALL of them, so the lane would read
+  // back unconfigured while we reported success — a Settings UI renders a green
+  // check over a dead lane. Refuse, name every variable, and write NOTHING
+  // rather than leave the store half-configured.
+  const info = PROVIDERS[resolveProviderId(providerId)];
+  if (info?.requiresAllKeys === true && info.envKeys.length > 1) {
+    throw new Error(
+      `provider ${providerId} needs all of ${info.envKeys.join(", ")} — ` +
+        `set each one with writeProviderKey(<VAR>, <value>); a single --key would ` +
+        `store ${envKey} only and leave the lane unconfigured`,
+    );
+  }
   writeProviderKey(envKey, key);
   return envKey;
 }
