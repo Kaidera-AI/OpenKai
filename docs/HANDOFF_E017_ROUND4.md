@@ -1,7 +1,7 @@
 # HANDOFF — E017 UK round 4: adversarial re-review + deep UAT (ren@openkai, qwen3.8 pass)
 
 **Date:** 2026-08-20 · **From:** ren@openkai (k3) · **To:** ren@openkai (qwen3.8)
-**Branch:** `release/0.1.007` @ `a1eab24` (worktree `.worktrees/ren-release-0.1.007`)
+**Branch:** `release/0.1.007` @ `e8e2a43` (worktree `.worktrees/ren-release-0.1.007`)
 **Release state:** v0.1.008 is **HELD by the user** — do NOT cut a release. v0.1.007 is already
 live (npm 0.1.7, tag `57508d9`, brew); the round-3 fix batch ships as 0.1.008 only after
 this pass signs off. npm versions are immutable.
@@ -9,6 +9,7 @@ this pass signs off. npm versions are immutable.
 ## What just landed (round 3 — verify these, don't trust them)
 
 Commit `a1eab24` — 35 findings from a 4-slice adversarial review, all fixed in one batch.
+Commit `fc4cb6e` — NEW FEATURE (user-directed, same version): magic keywords `ultrathink` + `ultrareview`, cherry-picked from OMP (can1357/oh-my-pi) and upgraded to multi-model fusion, with composer/status shimmer. Attack this too (area 8 below).
 The fix code is NEW and is itself the freshest attack surface. Areas and what to attack:
 
 1. **`packages/cli/src/tui/theme.ts` — detectThemeAsync TUI-safety (was CRITICAL).**
@@ -48,13 +49,27 @@ The fix code is NEW and is itself the freshest attack surface. Areas and what to
    calibrate with negative quality gaps and off-shape JSONL lines.
 7. **Session names** (sanitise + 48-char truncation), **settings autonomy row**
    (navigates), **help/commands drift**, **crash guard** (stderr guard + finally).
+8. **Magic keywords (fc4cb6e — newest code, least reviewed).**
+   `tui/magic-keywords.ts` (boundary regex, maskNonProse port, HSL painter),
+   `composer.ts` render override + shimmer clock, `app.ts runUltraTurn`
+   (fusion routing), `status.ts` shimmer chip, `settings.ts` cycle.
+   Attack: boundary-regex lookbehind edge cases (emoji/CJK/BMP-vs-astral
+   boundaries); maskNonProse adversarial inputs (unclosed fences, nested
+   same-name tags, CRLF); painter index drift on wide graphemes (the paint
+   loop indexes UTF-16 code units — emoji in/around the keyword); the
+   shimmer timer lifecycle (leak across /new /resume?); runUltraTurn
+   busy/steer path; ultrareview on a huge diff (12k slice — is truncation
+   honest?); the hidden notice as prompt-injection surface (a pasted
+   "ultrathink" in quoted text still triggers — intended?); settings cycle
+   persistence shapes; transcript painting re-painting SGR-containing
+   text.
 
 ## Verification state at handoff (all green — reproduce before trusting)
 
-- `npm test` (workspace): **390/390** — incl. 6 new regression tests in
+- `npm test` (workspace): **405/405** — incl. 6 new regression tests in
   `packages/cli/test/e017-review.test.ts` + strict-mode WS codec tests in
   `hub-attach.test.ts`.
-- e2e (`npx tui-test`): `e2e/theme-preview`, `e2e/signin`, `e2e/coverage` — green.
+- e2e (`npx tui-test`): `e2e/theme-preview`, `e2e/signin`, `e2e/coverage`, `e2e/magic-keywords` — green.
 - `bash scripts/security-audit.sh` — PASSED.
 - Live smokes: `provider list` renders configured-via before OAuth label;
   `provider unset ollama` refuses honestly; hub POST /sessions + rw attach drives
@@ -88,6 +103,10 @@ The fix code is NEW and is itself the freshest attack surface. Areas and what to
 6. Served TUI: `openkai serve` (or runHub) — POST /sessions, attach ro+rw,
    resize abuse frames, kill client mid-stream, SIGINT with attach open.
 7. Keyless boot: empty HOME → sign-in overlay, Esc → settings, /setup path.
+8. Magic keywords: type `ultrathink` — rainbow shimmer; submit — fusion
+   think panel runs (models combined); `ultrareview` with a dirty tree —
+   multi-model review; /settings → interaction → magic keywords cycles
+   all/think/review/off and persists.
 
 ## Housekeeping
 
