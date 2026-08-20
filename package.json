@@ -10,7 +10,7 @@
   "scripts": {
     "build": "npm run build -w @kaidera/openkai-core && npm run build -w @kaidera/openkai",
     "typecheck": "npm run typecheck -w @kaidera/openkai-core && npm run typecheck -w @kaidera/openkai",
-    "test": "npm run test -w @kaidera/openkai",
+    "test": "npm run build && npm run test -w @kaidera/openkai",
     "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
   },
   "devDependencies": {
