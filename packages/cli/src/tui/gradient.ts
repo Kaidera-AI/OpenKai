@@ -57,7 +57,11 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
     BRAND_RAMP.length - 1,
     Math.max(0, Math.floor(t * (BRAND_RAMP.length - 1) + 0.5)),
   );
-  return brandTint("", idx).slice(0, -4); // keep the SGR prefix, drop reset
+  // Keep the SGR prefix, drop the trailing reset. fg256's reset is `\x1b[39m`
+  // (5 chars) — a fixed-width slice left a bare ESC on every glyph, and ESC+`\`
+  // is ANSI ST, so compositing swallowed the brand mark's backslashes on
+  // non-truecolor terminals (E019 inc 04 F3, ported from a23368c).
+  return brandTint("", idx).replace(/\x1b\[(?:0|39)m$/, "");
 }
 
 /** Diagonal gradient + optional sliding shine band over multi-line art. */
