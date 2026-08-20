@@ -103,6 +103,12 @@ function countMcpServers(): number {
 import { tipOfTheDay } from "./tips.js";
 import { Transcript } from "./transcript.js";
 import { sanitizeTerminalText } from "./sanitize.js";
+import {
+  detectMagicKeywords,
+  ULTRAREVIEW_NOTICE,
+  ULTRATHINK_NOTICE,
+  type MagicKeyword,
+} from "./magic-keywords.js";
 import { Composer } from "./composer.js";
 import { StatusLine, defaultStatusState } from "./status.js";
 import { parseSlashCommand, helpText, buildPaletteItems } from "./commands.js";
@@ -254,6 +260,14 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
       const command = parseSlashCommand(text);
       if (command) {
         controller.guard(controller.dispatchCommand(command.name, command.argument), `/${command.name}`);
+        return;
+      }
+      // Magic keywords (ultrathink/ultrareview): multi-model ultra turns —
+      // the fusion panel combines the models' efforts. Bash mode and busy
+      // steering keep the plain submit semantics.
+      const keywords = detectMagicKeywords(text);
+      if (keywords.length > 0) {
+        controller.guard(controller.runUltraTurn(text, keywords), "ultra");
         return;
       }
       controller.guard(controller.submit(text), "submit");
@@ -808,6 +822,109 @@ export class TuiController {
     this.onBeforePrompt?.(text);
     this.setBusy(true);
     await this.transport.prompt(text);
+  }
+
+  /**
+   * Magic-keyword turn (E017 UK round 4 — ultrathink/ultrareview): the
+   * visible message echoes and persists EXACTLY as typed; the hidden notice
+   * rides only in the model payload (OMP's semantics). The upgrade over OMP
+   * is the fusion panel: ultrathink combines multiple models' reasoning,
+   * ultrareview combines multiple reviewers over the shadow diff. Without a
+   * fusion runner the turn degrades honestly to a single-model deep pass.
+   */
+  async runUltraTurn(text: string, keywords: MagicKeyword[]): Promise<void> {
+    if (this.busy) {
+      await this.submit(text); // steering path keeps its semantics
+      return;
+    }
+    const keyword = keywords.includes("ultrareview") ? "ultrareview" : "ultrathink";
+    this.lastPrompt = text;
+    const userMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
+    await this.store.appendMessage(userMsg);
+    this.transcript.addUserMessage(text, `→ ${keyword}`);
+    this.recordPrompt(text);
+    this.btwTurn = false;
+    if (keyword === "ultrareview") {
+      await this.runUltraReview(text);
+      return;
+    }
+    await this.runUltraThink(text);
+  }
+
+  /** ultrathink: the prompt to the fusion think panel (or single-model fallback). */
+  private async runUltraThink(text: string): Promise<void> {
+    const payload = `${text}\n\n${ULTRATHINK_NOTICE}`;
+    this.setBusy(true);
+    this.status.update({ ...this.status.currentState, activity: "ultrathinking…" });
+    this.tui.requestRender();
+    try {
+      if (this.runFusion) {
+        this.transcript.addNotice(`ultrathink: multi-model think — ${this.fusionPairLabel()} — combining…`);
+        this.tui.requestRender();
+        const result = await this.runFusion(payload);
+        this.transcript.addFusionResult(result.outputs, result.synthesis);
+      } else {
+        this.transcript.addNotice("ultrathink: fusion unavailable — single-model deep think (max effort notice attached)");
+        this.tui.requestRender();
+        await this.transport.prompt(payload);
+      }
+    } catch (error) {
+      this.transcript.addNotice(`ultrathink failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.setBusy(false);
+      this.tui.requestRender();
+    }
+  }
+
+  /** ultrareview: multi-model adversarial review of the shadow diff. */
+  private async runUltraReview(text: string): Promise<void> {
+    const shadow = new ShadowGit(this.cwd);
+    const view = await shadow.diff();
+    if (view === undefined || (view.diff.length === 0 && view.untracked.length === 0)) {
+      this.transcript.addNotice("ultrareview: no changes against the shadow snapshot — nothing to review");
+      this.tui.requestRender();
+      return;
+    }
+    const diffText =
+      view.diff.length > 0
+        ? view.diff
+        : `untracked since snapshot (${view.untracked.length}):\n${view.untracked.join("\n")}`;
+    const task = [
+      "Adversarial review of the change set below. Each reviewer attacks independently: bugs,",
+      "logic errors, security issues, and regressions, with file/line evidence and severities.",
+      "The synthesis combines both reviews into one deduplicated, severity-ordered verdict.",
+      "",
+      `Operator context: ${text}`,
+      "",
+      ULTRAREVIEW_NOTICE,
+      "",
+      "```diff",
+      diffText.slice(0, 12000),
+      "```",
+    ].join("\n");
+    this.setBusy(true);
+    this.status.update({ ...this.status.currentState, activity: "ultrareviewing…" });
+    this.tui.requestRender();
+    try {
+      if (this.runFusion) {
+        const files = (view.diff.match(/^diff --git/gm) ?? []).length + view.untracked.length;
+        this.transcript.addNotice(
+          `ultrareview: multi-model review — ${this.fusionPairLabel()} — ${files} file(s) under review…`,
+        );
+        this.tui.requestRender();
+        const result = await this.runFusion(task);
+        this.transcript.addFusionResult(result.outputs, result.synthesis);
+      } else {
+        this.transcript.addNotice("ultrareview: fusion unavailable — single-model review");
+        this.tui.requestRender();
+        await this.transport.prompt(task);
+      }
+    } catch (error) {
+      this.transcript.addNotice(`ultrareview failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.setBusy(false);
+      this.tui.requestRender();
+    }
   }
 
   /**

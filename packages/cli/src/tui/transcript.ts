@@ -28,6 +28,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import type { TaskProgress } from "@kaidera/openkai-core";
 import { highlight, markdownTheme, rolePill, text as textToken, toolBorder } from "./theme.js";
 import { sanitizeTerminalText } from "./sanitize.js";
+import { paintMagicKeywords } from "./magic-keywords.js";
 import { renderMermaidBlocks, type MermaidTheme } from "./mermaid.js";
 
 /**
@@ -174,7 +175,9 @@ export class Transcript implements Component {
   addUserMessage(text: string, suffix?: string): void {
     // Dim marker, not a shouty bold label — the operator's own text needs no
     // emphasis, the model's output does. Sanitised: pastes can carry escapes.
-    const clean = sanitizeTerminalText(text);
+    // Magic keywords paint with the static gradient (phase 0 — the composer
+    // has the live shimmer; the transcript keeps the sent palette, OMP-style).
+    const clean = paintMagicKeywords(sanitizeTerminalText(text), 0);
     // Steer-while-busy (E017 pick 2): a mid-turn message carries a dim
     // `→ steering` suffix so the operator sees it landed on the running turn.
     const tag = suffix !== undefined ? `  ${textToken.dim(suffix)}` : "";
@@ -611,5 +614,10 @@ export class Transcript implements Component {
   /** Test accessor: block kinds in order (for event-mapping assertions). */
   blockKinds(): string[] {
     return this.blocks.map((b) => b.kind);
+  }
+
+  /** Test-facing text snapshot (mirrors {@link blockKinds}). */
+  blockTexts(): string[] {
+    return this.blocks.map((b) => ("text" in b ? String(b.text) : ""));
   }
 }

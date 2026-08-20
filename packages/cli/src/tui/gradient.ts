@@ -25,7 +25,7 @@ export interface ShineConfig {
   pos: number;
 }
 
-const supportsTrueColor = (): boolean =>
+export const supportsTrueColor = (): boolean =>
   (process.env.COLORTERM ?? "").toLowerCase().includes("truecolor") ||
   (process.env.COLORTERM ?? "").toLowerCase().includes("24bit");
 

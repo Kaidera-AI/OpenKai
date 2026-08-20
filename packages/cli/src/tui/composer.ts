@@ -14,6 +14,7 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { editorTheme } from "./theme.js";
 import { SLASH_COMMANDS } from "./commands.js";
 import { atomicTokenAt, decodePastedChunk } from "./paste.js";
+import { mightContainMagicKeyword, paintMagicKeywords, shimmerPhase } from "./magic-keywords.js";
 
 /**
  * The composer editor (E017 dossier picks 4+5): the vendored pi-tui Editor
@@ -35,6 +36,19 @@ import { atomicTokenAt, decodePastedChunk } from "./paste.js";
  *     ASCII, so span length == grapheme count for the unmerged case.
  */
 class ComposerEditor extends Editor {
+  /**
+   * Magic-keyword shimmer (E017 UK round 4): standalone `ultrathink` /
+   * `ultrareview` paint with the animated rainbow gradient. The painter adds
+   * zero-width SGR only, so layout/visible width are untouched; the same
+   * prose masking as detection applies, so keywords inside code spans or
+   * XML never paint. The repaint clock lives in {@link Composer}.
+   */
+  override render(width: number): string[] {
+    const lines = super.render(width);
+    if (!mightContainMagicKeyword(this.getExpandedText())) return lines;
+    return lines.map((line) => paintMagicKeywords(line, shimmerPhase()));
+  }
+
   override handleInput(data: string): void {
     if (data === "\x7f") {
       const { line: lineIndex, col } = this.getCursor();
@@ -95,7 +109,19 @@ export class Composer {
       this.onSubmitCb(trimmed);
     };
     this.editor = editor;
+
+    // The shimmer clock: repaint while a magic keyword is visible so the
+    // gradient moves. Probe is a substring check — cheap; the timer is
+    // unref'd and never blocks exit.
+    this.shimmerTimer = setInterval(() => {
+      if (mightContainMagicKeyword(this.editor.getExpandedText())) {
+        tui.requestRender();
+      }
+    }, 120);
+    this.shimmerTimer.unref();
   }
+
+  private readonly shimmerTimer: NodeJS.Timeout;
 
   /** Current draft text (paste markers expanded). */
   get text(): string {

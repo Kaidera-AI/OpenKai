@@ -35,6 +35,7 @@ import {
 } from "../config.js";
 import { KAIDERA_GLYPH } from "./brand.js";
 import { gradientEscape } from "./gradient.js";
+import { paintShimmerLabel } from "./magic-keywords.js";
 
 /** The logo at footer scale — the hex glyph in the Kaidera brand mint. */
 function brandGlyph(): string {
@@ -144,6 +145,9 @@ function spinnerChip(state: StatusState): string {
     const frame = BUSY_FRAMES[state.busyFrame % BUSY_FRAMES.length];
     const elapsed = state.busySince ? Math.max(0, Math.round((Date.now() - state.busySince) / 1000)) : 0;
     const what = state.activity || "working";
+    // Magic-keyword turns shimmer their activity label (E017 UK round 4).
+    if (what === "ultrathinking…") return `${frame} ${paintShimmerLabel(what, "ultrathink")} ${elapsed}s`;
+    if (what === "ultrareviewing…") return `${frame} ${paintShimmerLabel(what, "ultrareview")} ${elapsed}s`;
     return highlight.base(`${frame} ${what} ${elapsed}s`);
   }
   if (state.attention) return highlight.attention("◉ attention");

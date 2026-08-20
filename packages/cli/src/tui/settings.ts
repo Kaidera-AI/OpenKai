@@ -13,6 +13,50 @@ import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
 import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, readToolApprovals, writeShiftPosture, type StatuslineChip } from "../config.js";
 import { readShiftConfig } from "../fuse.js";
+import { writeConfigFile } from "../config.js";
+
+// ── Magic keywords (ultrathink/ultrareview — E017 UK round 4) ──────────────
+
+type MagicKeywordsMode = "all" | "think" | "review" | "off";
+
+function readMagicKeywordsMode(): MagicKeywordsMode {
+  const slice = readConfigFile()["magicKeywords"];
+  if (typeof slice !== "object" || slice === null) return "all";
+  const record = slice as Record<string, unknown>;
+  if (record["enabled"] === false) return "off";
+  const think = record["ultrathink"] !== false;
+  const review = record["ultrareview"] !== false;
+  if (think && review) return "all";
+  if (think) return "think";
+  if (review) return "review";
+  return "off";
+}
+
+function magicKeywordsState(): string {
+  switch (readMagicKeywordsMode()) {
+    case "all":
+      return "ultrathink + ultrareview";
+    case "think":
+      return "ultrathink only";
+    case "review":
+      return "ultrareview only";
+    case "off":
+      return "off";
+  }
+}
+
+/** Cycle all → think → review → off; persists the magicKeywords config slice. */
+function cycleMagicKeywords(): string {
+  const order: MagicKeywordsMode[] = ["all", "think", "review", "off"];
+  const next = order[(order.indexOf(readMagicKeywordsMode()) + 1) % order.length]!;
+  const config = readConfigFile();
+  config["magicKeywords"] =
+    next === "off"
+      ? { enabled: false }
+      : { enabled: true, ultrathink: next !== "review", ultrareview: next !== "think" };
+  writeConfigFile(config);
+  return `magic keywords: ${magicKeywordsState()}`;
+}
 
 export interface SettingsActions {
   pickModel: () => void;
@@ -173,6 +217,12 @@ export class SettingsOverlay implements Component {
               setFeature("tips", next);
               return `tips: ${next ? "on" : "off"}`;
             },
+          },
+          {
+            value: "magicKeywords",
+            label: "magic keywords",
+            description: `${magicKeywordsState()} — Enter to cycle`,
+            action: () => cycleMagicKeywords(),
           },
         ];
       case "memory":

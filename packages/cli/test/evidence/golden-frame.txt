@@ -15,8 +15,8 @@
 
  ▎ providers (5) ✓ · skills (0) ✗ · mcp (0) ✗ · AGENTS.md ✗                     
 
- ▎ tip: /setup re-runs onboarding (sign in to providers, pick a model);         
- /settings is the config panel (theme, status line, memory, features).          
+ ▎ tip: /settings → appearance → status line cycles presets: default · minimal  
+ · compact · full.                                                              
 
  You                                                                            
                                                                                 
