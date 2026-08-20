@@ -15,18 +15,6 @@ export interface ProviderInfo {
   envKeys: string[];
   /** True when auth is an OAuth subscription flow, not a raw key. */
   oauth?: boolean;
-  /**
-   * True when the lane needs no credential at all (keyless local server).
-   * Status reports configured — there is nothing to configure; whether the
-   * server answers is a runtime probe, not an env check.
-   */
-  keyless?: boolean;
-  /**
-   * True when EVERY env key must be set (default: any one suffices — the
-   * entries are alternative names for one secret). Cloudflare lanes need the
-   * key AND the account/gateway id together.
-   */
-  requiresAllKeys?: boolean;
 }
 
 export const PROVIDERS: Record<string, ProviderInfo> = {
@@ -50,39 +38,7 @@ export const PROVIDERS: Record<string, ProviderInfo> = {
   minimax: { label: "MiniMax", envKeys: ["MINIMAX_API_KEY"] },
   zai: { label: "Z.ai", envKeys: ["ZAI_API_KEY"] },
   "vercel-ai-gateway": { label: "Vercel AI Gateway", envKeys: ["AI_GATEWAY_API_KEY"] },
-  // ── E017: Ollama lanes (OpenKai-owned providers, core/ollama.ts) ──
-  ollama: { label: "Ollama (local)", envKeys: [], keyless: true },
-  "ollama-cloud": { label: "Ollama Cloud", envKeys: ["OLLAMA_API_KEY"] },
-  // ── E017 catalogue diff: the remaining plain env-key lanes from pi-ai's
-  // bundled catalogue. amazon-bedrock/azure stay out — see SKIPPED_PROVIDERS.
-  huggingface: { label: "Hugging Face", envKeys: ["HF_TOKEN"] },
-  baseten: { label: "Baseten", envKeys: ["BASETEN_API_KEY"] },
-  "google-vertex": { label: "Google Vertex AI", envKeys: ["GOOGLE_CLOUD_API_KEY"] },
-  "cloudflare-ai-gateway": { label: "Cloudflare AI Gateway", envKeys: ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID"], requiresAllKeys: true },
-  "cloudflare-workers-ai": { label: "Cloudflare Workers AI", envKeys: ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID"], requiresAllKeys: true },
-  opencode: { label: "OpenCode Zen", envKeys: ["OPENCODE_API_KEY"] },
-  "opencode-go": { label: "OpenCode Go", envKeys: ["OPENCODE_API_KEY"] },
-  "ant-ling": { label: "Ant Ling", envKeys: ["ANT_LING_API_KEY"] },
-  "minimax-cn": { label: "MiniMax CN", envKeys: ["MINIMAX_CN_API_KEY"] },
-  "moonshotai-cn": { label: "Moonshot AI CN", envKeys: ["MOONSHOT_API_KEY"] },
-  "zai-coding-cn": { label: "Z.AI Coding CN", envKeys: ["ZAI_CODING_CN_API_KEY"] },
-  "qwen-token-plan-cn": { label: "Alibaba Qwen Token Plan CN", envKeys: ["QWEN_TOKEN_PLAN_CN_API_KEY"] },
-  "qwen-token-plan-individual": { label: "Alibaba Qwen Token Plan (individual)", envKeys: ["QWEN_TOKEN_PLAN_API_KEY"] },
-  xiaomi: { label: "Xiaomi MiMo", envKeys: ["XIAOMI_API_KEY"] },
-  "xiaomi-token-plan-cn": { label: "Xiaomi Token Plan CN", envKeys: ["XIAOMI_TOKEN_PLAN_CN_API_KEY"] },
-  "xiaomi-token-plan-ams": { label: "Xiaomi Token Plan AMS", envKeys: ["XIAOMI_TOKEN_PLAN_AMS_API_KEY"] },
-  "xiaomi-token-plan-sgp": { label: "Xiaomi Token Plan SGP", envKeys: ["XIAOMI_TOKEN_PLAN_SGP_API_KEY"] },
-};
-
-/**
- * pi-ai catalogue lanes deliberately NOT in the table (E017 diff): auth is
- * ambient (the AWS credential chain) or needs per-resource configuration a
- * plain env key cannot express. Recorded here so the catalogue diff test can
- * assert the skip is a decision, not an omission.
- */
-export const SKIPPED_PROVIDERS: Record<string, string> = {
-  "amazon-bedrock": "ambient AWS auth (profile / IAM keys / bearer / IRSA chain) — no single env key",
-  "azure-openai-responses": "per-resource base URL required; an env key alone cannot route",
+  "kaidera-manifold": { label: "Kaidera Manifold (aggregator)", envKeys: ["KAIDERA_MANIFOLD_API_KEY"] },
 };
 
 export const DEFAULT_PROVIDER = "openrouter";
@@ -114,20 +70,6 @@ export function providerKeyStatus(provider: string): ProviderKeyStatus {
       configured: process.env[conventional] !== undefined,
       needsKey: conventional,
     };
-  }
-  // Keyless lanes (local Ollama): nothing to configure — readiness is a
-  // runtime probe in core/ollama.ts, not an env check. `via` stays undefined
-  // so runtime.ts's env-key fallback sweep never auto-selects the lane on a
-  // fresh box (the keyless-boot sign-in overlay keeps its job).
-  if (info.keyless === true) {
-    return { provider, configured: true, oauth: info.oauth };
-  }
-  if (info.requiresAllKeys === true && info.envKeys.length > 1) {
-    const missing = info.envKeys.filter((key) => process.env[key] === undefined);
-    if (missing.length === 0) {
-      return { provider, configured: true, via: info.envKeys[0], oauth: info.oauth };
-    }
-    return { provider, configured: false, needsKey: missing[0], oauth: info.oauth };
   }
   for (const key of info.envKeys) {
     if (process.env[key] !== undefined) {
