@@ -114,6 +114,10 @@ async function buildFauxApp(opts: {
     store,
     sessionsRoot,
     onExit: opts.onExit,
+    // Deterministic chrome by construction: never read the live checkout, so
+    // neither the branch-name width nor git's presence on PATH can drift the
+    // golden frame ("golden" ≤8 chars ⇒ the chip renders untruncated).
+    gitBranch: "golden",
   });
   return { app, transport, store, sessionsRoot };
 }
@@ -152,6 +156,10 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
   assert.ok(frame.includes("faux-1"), "chrome must show the model id");
   assert.ok(frame.includes("01TESTGO"), "chrome must show the session id prefix");
   assert.ok(frame.includes("p:local"), "chrome must show the persist-mode chip (p:<mode>)");
+  // The injected fixture branch must reach the chrome — guards the injection
+  // seam itself, since a GOLDEN_UPDATE=1 regeneration would silently absorb a
+  // dropped injection back into a live-checkout read.
+  assert.ok(frame.includes("git:golden"), "chrome must show the injected fixture branch");
   // Continuation turn text ("Done.") appears too (second faux response).
   assert.ok(frame.includes("Done."), "continuation assistant text must render");
 
@@ -159,25 +167,18 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
   // artifact is the truth and this test FAILS on drift. Regeneration is a
   // deliberate act:
   //   GOLDEN_UPDATE=1 npm test    (or pass --update to the test runner)
-  // Volatile cells are normalised on BOTH sides — the branch chip tracks the
-  // live checkout, and elapsed/tok-per-s are wall-clock artifacts (observed
-  // flapping 1125.0→750.0 between two green runs). Everything else must
-  // match byte-for-byte, including the absence of stray escape bytes (the
-  // F3 backslash drop hid behind a write-only snapshot that could never
-  // fail).
+  // Volatile cells are normalised on BOTH sides — elapsed/tok-per-s are
+  // wall-clock artifacts (observed flapping 1125.0→750.0 between two green
+  // runs). The branch chip needs NO pass: buildFauxApp injects a fixed
+  // gitBranch, so the chrome row — including its interior pad, which once
+  // encoded the generating checkout's name width — is deterministic by
+  // construction. Everything else must match byte-for-byte, including the
+  // absence of stray escape bytes (the F3 backslash drop hid behind a
+  // write-only snapshot that could never fail).
   const normalise = (s: string): string =>
     s
-      .replace(/git:\S+/g, "git:<branch>")
       .replace(/(✓ settled|✗ failed) in [\d.]+s/g, "$1 in <t>s")
       .replace(/⚡[\d.]+ tok\/s/g, "⚡<tps> tok/s")
-      // The chrome row is two-sided (status.ts renderLine: left cluster,
-      // interior pad, right-aligned tokens+model), so the pad absorbing the
-      // branch-chip width is INTERIOR — the trailing strip below can't reach
-      // it, and the gap silently encodes the generating checkout's name
-      // length (chip is 12 cols for names >8 chars, narrower below: 4-char
-      // `main` failed against evidence from a 67-char branch). Collapse
-      // interior runs on that row so the golden is checkout-independent.
-      .replace(/^.*git:<branch>.*$/gm, (row) => row.replace(/ {2,}/g, " "))
       // The frame pads every row to the render width, so a volatile scalar's
       // original width would survive as trailing-pad drift — strip it.
       .replace(/[ ]+$/gm, "");

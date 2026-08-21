@@ -182,6 +182,12 @@ export interface TuiAppOptions {
    * `/diff` shadow repo. Defaults to process.cwd(); injectable for tests.
    */
   cwd?: string;
+  /**
+   * Chrome git chip override — skips the live `git rev-parse` so tests can
+   * pin a deterministic branch (golden frame: neither the checkout's branch
+   * width nor git's presence on PATH may drift the frame).
+   */
+  gitBranch?: string;
 }
 
 /** The built TUI app handle. */
@@ -242,15 +248,18 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   const statusState = defaultStatusState(options.modelId, options.sessionId, options.persistMode);
   statusState.agentName = agentName;
   statusState.provider = options.provider ?? "";
-  // omp's footer segment: the current git branch (empty when not a repo).
+  // omp's footer segment: the current git branch (empty when not a repo);
+  // an injected options.gitBranch short-circuits the shell-out entirely.
   try {
-    statusState.gitBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 500,
-    })
-      .toString()
-      .trim();
+    statusState.gitBranch =
+      options.gitBranch ??
+      execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 500,
+      })
+        .toString()
+        .trim();
   } catch {
     statusState.gitBranch = "";
   }
