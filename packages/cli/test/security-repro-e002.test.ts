@@ -573,6 +573,18 @@ test("E002-F1d4: session search rows redact stored keys in BOTH row fields", asy
  * truncation (the consumer-2 discipline — a half-printed key is still a
  * leaked key), so the rendered block must carry the intact marker and no
  * key-prefix fragment.
+ *
+ * TWO tool-result entries pin the slice boundary (kai's control run on
+ * 682d68e proved one cannot): at key start 3981 the slice retains 19 key
+ * chars — still ≥ the nvapi- pattern's 16-char floor — so a truncate-FIRST
+ * implementation redacts the fragment anyway and this test stayed green
+ * under the inverted control. Retuning that single offset is unsatisfiable:
+ * the intact-marker assertion needs the key to start ≤ 3983, a sub-floor
+ * fragment needs it to start ≥ 3985. Entry e6 therefore puts a second copy
+ * at key start 3986: the correct order leaves a harmlessly CUT marker there
+ * (deliberately never asserted), while truncate-first leaves a 14-char
+ * cleartext `nvapi-` fragment below the redaction floor — the no-fragment
+ * assertion is the one that goes red.
  */
 test("E002-F1d5: /export HTML transcript redacts stored keys in all five field classes", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "oke002-export-"));
@@ -597,12 +609,16 @@ test("E002-F1d5: /export HTML transcript redacts stored keys in all five field c
         JSON.stringify({ type: "message", id: "e3", seq: 3, parentId: "e2", timestamp: 0, message: { role: "assistant", content: [{ type: "toolCall", id: "tc1", name: "bash", arguments: { command: `export ANTHROPIC_API_KEY=${ARGS_KEY}` } }] } }),
         JSON.stringify({ type: "message", id: "e4", seq: 4, parentId: "e3", timestamp: 0, message: { role: "toolResult", toolCallId: "tc1", toolName: "bash", content: [{ type: "text", text: `${"x".repeat(3980)} ${RESULT_KEY}` }] } }),
         JSON.stringify({ type: "compaction", id: "e5", seq: 5, parentId: "e4", timestamp: 0, summary: `earlier turns pasted ${COMPACT_KEY} into the shell`, retainedTail: [], tokensBefore: 12345 }),
+        // Boundary entry (see docblock): key starts at 3986, so the 4000-char
+        // slice keeps 14 key chars — BELOW the 16-char pattern floor. Only the
+        // no-`nvapi-` assertion may reference this entry; its marker is cut.
+        JSON.stringify({ type: "message", id: "e6", seq: 6, parentId: "e5", timestamp: 0, message: { role: "toolResult", toolCallId: "tc2", toolName: "bash", content: [{ type: "text", text: `${"x".repeat(3985)} ${RESULT_KEY}` }] } }),
       ].join("\n") + "\n",
     );
 
     const store = new SessionStore({ root, sessionId });
     const entries = await store.readEntries();
-    assert.equal(entries.length, 5, "the real production reader returned every stored entry");
+    assert.equal(entries.length, 6, "the real production reader returned every stored entry");
     const html = exportSessionToHtml({ sessionId, name: sessionNameFromEntries(entries), entries, exportedAt: 0 });
 
     const classes: ReadonlyArray<readonly [string, string]> = [
@@ -617,7 +633,7 @@ test("E002-F1d5: /export HTML transcript redacts stored keys in all five field c
     }
     assert.ok(
       !html.includes(k("nvapi", "-")),
-      "no half-printed key fragment survives the 4000-char slice (redact BEFORE truncate)",
+      "no half-printed key fragment survives the 4000-char slice (redact BEFORE truncate; the sub-floor boundary entry e6 is the one a truncate-first mutant leaks)",
     );
     const markers = html.match(/\[redacted-secret\]/g) ?? [];
     assert.ok(markers.length >= 5, `every field class shows the marker instead (got ${markers.length})`);
