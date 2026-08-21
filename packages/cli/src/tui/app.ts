@@ -313,7 +313,11 @@ function denyReasonFromResult(event: SessionEvent): string {
       .map((p) => p.text)
       .join(" ");
     const match = /Permission denied:\s*(.+)$/s.exec(text);
-    if (match) return match[1]!.trim().slice(0, 200);
+    // Flatten newlines: the notice renders each line with a danger border, so
+    // an unflattened newline in the model's denial text would forge a second
+    // bordered "adjust:" line indistinguishable from OpenKai's own chrome
+    // (E019 area 5). ANSI/BEL is stripped downstream by addError's sanitiser.
+    if (match) return match[1]!.replace(/[\r\n]+/g, " ").trim().slice(0, 200);
   }
   return "refused at the permission gate";
 }
@@ -2055,8 +2059,11 @@ export class TuiController {
           const details = (event as { result?: { details?: unknown } }).result?.details;
           if (details !== null && typeof details === "object" && (details as { denied?: unknown }).denied === true) {
             const toolName = (event as { toolName?: string }).toolName ?? "tool";
-            const target =
-              (details as { command?: string }).command ?? (details as { path?: string }).path ?? "";
+            // `command`/`path` are model-controlled; flatten newlines so the
+            // target can't forge extra danger-bordered notice lines (E019
+            // area 5). ANSI/BEL stripped downstream by addError's sanitiser.
+            const target = ((details as { command?: string }).command ?? (details as { path?: string }).path ?? "")
+              .replace(/[\r\n]+/g, " ");
             const reason = denyReasonFromResult(event);
             this.transcript.addError([
               `permission denied: ${toolName}${target !== "" ? ` — ${target.slice(0, 80)}` : ""}`,
