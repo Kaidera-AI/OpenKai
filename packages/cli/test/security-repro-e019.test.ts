@@ -140,7 +140,9 @@ test("REPRO E019: a denied tool result cannot inject forged danger-bordered line
     tools: [],
     cwd: process.cwd(),
   });
-  const sessionsRoot = `/tmp/ok-tui-${sessionId}`;
+  // mkdtemp: unique root per run so concurrent worktrees can't collide on
+  // the /tmp/ok-tui-<sessionId> lock (the session id constant is asserted on).
+  const sessionsRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-"));
   const store = new SessionStore({ root: sessionsRoot, sessionId });
   await store.ensure();
   const app: TuiApp = buildTuiApp(headlessTui(24), {
@@ -152,6 +154,7 @@ test("REPRO E019: a denied tool result cannot inject forged danger-bordered line
     sessionsRoot,
   });
 
+  try {
   // The model's bash command is fully attacker-controlled. It carries a
   // newline + a forged "adjust:" remediation line and an inline ANSI clear.
   const hostileCommand =
@@ -189,4 +192,7 @@ test("REPRO E019: a denied tool result cannot inject forged danger-bordered line
   );
   assert.ok(!HAS_ESC_OR_BEL.test(notice), "no ESC/BEL from the model command reaches the notice");
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });

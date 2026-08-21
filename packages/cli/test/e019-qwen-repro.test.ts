@@ -23,6 +23,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import type { TUI } from "@earendil-works/pi-tui";
@@ -79,7 +82,9 @@ test("S1: stopReason=error turn renders a failure row, not the green ✓ settled
     tools: [],
     cwd: process.cwd(),
   });
-  const sessionsRoot = `/tmp/ok-tui-${sessionId}`;
+  // mkdtemp: unique root per run so concurrent worktrees can't collide on
+  // the /tmp/ok-tui-<sessionId> lock (the session id constant is asserted on).
+  const sessionsRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-"));
   const store = new SessionStore({ root: sessionsRoot, sessionId });
   await store.ensure();
 
@@ -92,6 +97,7 @@ test("S1: stopReason=error turn renders a failure row, not the green ✓ settled
     sessionsRoot,
   });
 
+  try {
   await app.controller.submit("do the thing");
   await transport.close();
   await app.controller.consume();
@@ -114,6 +120,9 @@ test("S1: stopReason=error turn renders a failure row, not the green ✓ settled
     /✗ failed in \d/.test(frame),
     "the settle row for a failed turn must state the failure (✗ failed in Ns)",
   );
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── S2: click-to-cursor must produce UTF-16 offsets, not grapheme counts ────

@@ -13,7 +13,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createModels, uuidv7 } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Type, type Static } from "typebox";
@@ -111,7 +113,11 @@ async function buildFauxApp(opts: {
   });
 
   // Tests persist to a tmp root — never the repo's own .openkai/sessions.
-  const sessionsRoot = `/tmp/ok-tui-${opts.sessionId}`;
+  // mkdtemp gives each run (and each concurrent worktree) a unique root so
+  // two agents running `npm test` in different worktrees cannot collide on
+  // the same /tmp/ok-tui-<sessionId> lock (SessionLockError, false-red gate).
+  // The session ID constant is kept verbatim — chrome assertions depend on it.
+  const sessionsRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-"));
   const store = new SessionStore({ root: sessionsRoot, sessionId: opts.sessionId });
   await store.ensure();
 
@@ -144,8 +150,9 @@ function stripAnsi(text: string): string {
 // ── 1. Golden-frame: streamed text + tool card + chrome ─────────────────────
 
 test("golden-frame: faux turn renders streamed text, a tool card, and chrome updates", async () => {
-  const { app, transport } = await buildFauxApp({ scriptedText: "Hello, OpenKai!", sessionId: "01TESTGOLDEN000001" });
+  const { app, transport, sessionsRoot } = await buildFauxApp({ scriptedText: "Hello, OpenKai!", sessionId: "01TESTGOLDEN000001" });
 
+  try {
   // One submit = one turn. The tool call continues *inside* that turn, so both
   // scripted faux responses are consumed by this single prompt — a second
   // `transport.prompt` here would silently fire an extra turn.
@@ -213,17 +220,21 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
       "rendered frame drifted from test/evidence/golden-frame.txt — if the change is intended, regenerate with GOLDEN_UPDATE=1 npm test",
     );
   }
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 2. Event-mapping: block ordering follows the transport taxonomy ──────────
 
 test("event-mapping: transcript block kinds follow connected→text→tool→settle→turn_end", async () => {
-  const { app, transport } = await buildFauxApp({
+  const { app, transport, sessionsRoot } = await buildFauxApp({
     scriptedText: "Streaming reply.",
     scriptedThinking: "let me reason about this",
     sessionId: "01TESTEVENT0000002",
   });
 
+  try {
   await app.controller.submit("go");
   await transport.close();
   await app.controller.consume();
@@ -243,17 +254,21 @@ test("event-mapping: transcript block kinds follow connected→text→tool→set
   assert.ok(app.status.currentState.usage !== null, "usage must update the chrome at turn settlement");
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 3. Thinking density: hidden by default, revealed by toggle (Ctrl+O) ────
 
 test("thinking density: collapsed by default, toggle reveals", async () => {
-  const { app, transport } = await buildFauxApp({
+  const { app, transport, sessionsRoot } = await buildFauxApp({
     scriptedText: "thinking test",
     scriptedThinking: "reasoning content here",
     sessionId: "01TESTTHINK000003",
   });
 
+  try {
   await app.controller.submit("q");
   await transport.close();
   await app.controller.consume();
@@ -276,6 +291,9 @@ test("thinking density: collapsed by default, toggle reveals", async () => {
   assert.equal(hidden, false, "toggle back to hidden");
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 3b. Composer wiring: the path a human actually takes ────────────────────
@@ -289,10 +307,12 @@ test("thinking density: collapsed by default, toggle reveals", async () => {
  * what pressing Enter fires, so the test cannot pass while the seam is wrong.
  */
 test("composer wiring: Enter renders AND persists the user message", async () => {
-  const { app, transport, store } = await buildFauxApp({
+  const { app, transport, store, sessionsRoot } = await buildFauxApp({
     scriptedText: "Reply.",
     sessionId: "01TESTCOMPOSER0004",
   });
+
+  try {
 
   const consumeP = app.controller.consume();
   app.composer.editor.onSubmit!("typed by a human");
@@ -309,13 +329,17 @@ test("composer wiring: Enter renders AND persists the user message", async () =>
 
   const roles = (await readSessionMessages(store.filePath)).map((m) => (m as { role: string }).role);
   assert.ok(roles.includes("user"), `the user message must be persisted (got ${JSON.stringify(roles)})`);
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 3c. Slash commands: dispatched locally, never sent to the model ─────────
 
 test("slash commands: /help renders a notice and does not prompt the model", async () => {
-  const { app, transport } = await buildFauxApp({ scriptedText: "unused", sessionId: "01TESTSLASH000005" });
+  const { app, transport, sessionsRoot } = await buildFauxApp({ scriptedText: "unused", sessionId: "01TESTSLASH000005" });
 
+  try {
   app.composer.editor.onSubmit!("/help");
   await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -325,16 +349,20 @@ test("slash commands: /help renders a notice and does not prompt the model", asy
   assert.ok(renderFrame(app, 80).includes("/model"), "the help notice lists the command set");
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 test("slash commands: /quit and /resume signal the runtime; unknown reports", async () => {
   const seen: ExitRequest[] = [];
-  const { app, transport } = await buildFauxApp({
+  const { app, transport, sessionsRoot } = await buildFauxApp({
     scriptedText: "unused",
     sessionId: "01TESTSLASH000006",
     onExit: (request) => seen.push(request),
   });
 
+  try {
   await app.controller.dispatchCommand("quit", "");
   assert.deepEqual(seen[0], { kind: "quit" }, "/quit asks the runtime to exit");
 
@@ -351,6 +379,9 @@ test("slash commands: /quit and /resume signal the runtime; unknown reports", as
   );
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 4. Theme/tokens: the footer grammar is the single interaction string ────
@@ -520,10 +551,12 @@ test("mode matrix: managed mode ingests the session id into /sessions/ingested-i
   }
 
   const sessionId = uuidv7();
-  const tmpRoot = `/tmp/ok-tui-matrix-${sessionId}`;
+  const tmpRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-matrix-"));
   const store = new SessionStore({ root: tmpRoot, sessionId });
   await store.ensure();
   const cortex = new CortexClient({ project: "openkai" });
+
+  try {
 
   // Append a user + assistant message locally, then checkpoint to Cortex.
   await store.appendMessage({ role: "user", content: "matrix probe", timestamp: Date.now() } as never);
@@ -554,15 +587,19 @@ test("mode matrix: managed mode ingests the session id into /sessions/ingested-i
     ingested.ids.includes(sessionId),
     `session ${sessionId} must appear in /sessions/ingested-ids in managed mode`,
   );
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 6. Session store helpers ───────────────────────────────────────────────
 
 test("persist: listSessions + readSessionMessages round-trip", async () => {
-  const tmpRoot = `/tmp/ok-tui-list-${Math.random().toString(36).slice(2)}`;
+  const tmpRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-list-"));
   const id = "01TESTLIST" + Math.random().toString(36).slice(2, 6);
   const store = new SessionStore({ root: tmpRoot, sessionId: id });
   await store.ensure();
+  try {
   await store.appendMessage({ role: "user", content: "hello list", timestamp: Date.now() } as never);
 
   const listed = await listSessions(tmpRoot);
@@ -570,6 +607,9 @@ test("persist: listSessions + readSessionMessages round-trip", async () => {
 
   const msgs = await readSessionMessages(store.filePath);
   assert.equal(msgs.length, 1, "readSessionMessages returns the appended message");
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
 });
 test("gradient: every ESC introduces a CSI — no bare ESC eats the next glyph", () => {
   // fg256 closes with `\x1b[39m` (five chars). Slicing four left a bare ESC

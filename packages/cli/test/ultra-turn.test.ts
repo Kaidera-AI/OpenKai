@@ -11,6 +11,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { InProcessTransport, SessionStore } from "@kaidera/openkai-core";
@@ -56,7 +59,12 @@ async function buildUltraApp(opts: {
     provider: "faux",
     cwd: opts.cwd ?? process.cwd(),
   });
-  const sessionsRoot = `/tmp/ok-ultra-${opts.sessionId}`;
+  // mkdtemp: unique root per run. A fixed /tmp/ok-ultra-<sessionId> collides between
+  // concurrent worktrees and raises SessionLockError -- a false-red gate, not a
+  // real failure. Session ID constants are kept verbatim; only the ROOT varies.
+  // ponytail: root only, no cleanup -- the lock is pid-liveness-checked so stale
+  // dirs are inert; add a finally-rm if /tmp pressure ever matters.
+  const sessionsRoot = await mkdtemp(path.join(tmpdir(), "ok-ultra-"));
   const store = new SessionStore({ root: sessionsRoot, sessionId: opts.sessionId });
   await store.ensure();
   const app = buildTuiApp(headlessTui(24), {
