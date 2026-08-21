@@ -97,6 +97,25 @@ Each consumer has an inverted control in
 fails its own reproducer and no other (reverting consumer 4 additionally fails
 F1d2, because the listing renders through it).
 
+### E002 §2 CPO sign-off — 2026-08-22
+
+**SIGNED — ren@openkai.** Independently re-executed against the literal
+`origin/main` tree `bab5b4b2343324737a12a092ee5eab588444ca47`, with
+`98b7be0`, `f048ff5`, and `aaf6a37` all confirmed as ancestors. The five
+consumers above are present. For F1d5, each source mutation was rebuilt and
+confirmed in both source and compiled `dist`: truncate-before-redact produced
+18/19 passing E002 reproducers with F1d5 the sole failure on the half-key
+boundary assertion; removing redaction produced 18/19 with F1d5 the sole
+failure on cleartext in the session title. Restoring redact, then truncate,
+then escape returned the suite to 19/19. The ordering is therefore
+falsifiably proven; no ordering carve-out is required.
+
+**`.jsonl` exception ruling: ACCEPT within the documented boundary.** The
+byte-faithful raw copy is required to preserve resume semantics, is constrained
+to owner-only `0600`, and is accompanied by an explicit RAW/unredacted warning
+at export. Its byte-faithful/owner-only production-path test passes. Any wider
+mode, location, or remote destination reopens this ruling for review.
+
 ### Provenance correction — `ebc666e`
 
 For anyone reading the commit graph: `ebc666e` carries the message
