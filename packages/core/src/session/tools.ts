@@ -413,9 +413,46 @@ function isBlockedV6(ip: string): boolean {
   if (norm === "::1" || norm === "::") return true; // loopback / unspecified
   if (norm.startsWith("fe8") || norm.startsWith("fe9") || norm.startsWith("fea") || norm.startsWith("feb")) return true; // fe80::/10 link-local
   if (norm.startsWith("fc") || norm.startsWith("fd")) return true; // fc00::/7 unique-local
-  const mapped = norm.match(/(?:::ffff:)(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped ::ffff:a.b.c.d
-  if (mapped) return isBlockedV4(mapped[1]!);
+  const v4 = mappedV4(norm); // ::ffff:0:0/96 in any textual form → the embedded a.b.c.d
+  if (v4 !== null) return isBlockedV4(v4);
   return false;
+}
+
+/**
+ * If `norm` is an IPv4-mapped IPv6 address (::ffff:0:0/96), return the embedded
+ * a.b.c.d; else null. `new URL()` serialises `::ffff:127.0.0.1` to compressed
+ * hex (`::ffff:7f00:1`) BEFORE this guard runs, so a dotted-quad-only match is
+ * dead code on the live path (the pass-4 SSRF bypass). Expanding to 8 groups
+ * catches every textual form — dotted-quad, compressed hex, uncompressed — so
+ * no serialisation of a loopback/metadata address slips past isBlockedV4.
+ */
+function mappedV4(norm: string): string | null {
+  // Rewrite a dotted-quad tail (::ffff:127.0.0.1) to two hex groups so the
+  // group expansion below is uniform across every textual form.
+  let s = norm;
+  const dq = norm.match(/:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dq && dq.index !== undefined) {
+    const q = [dq[1]!, dq[2]!, dq[3]!, dq[4]!].map(Number);
+    if (q.some((n) => n > 255)) return null; // out-of-range octet → not a valid mapped literal
+    s = norm.slice(0, dq.index) + `:${((q[0]! << 8) | q[1]!).toString(16)}:${((q[2]! << 8) | q[3]!).toString(16)}`;
+  }
+  const parts = s.split("::");
+  if (parts.length > 2) return null; // more than one "::" is invalid
+  const head = parts[0] ? parts[0].split(":") : [];
+  const rest = parts.length > 1 ? parts[1] : undefined;
+  const tail = rest ? rest.split(":") : [];
+  let groups: string[];
+  if (parts.length > 1) {
+    const fill = 8 - head.length - tail.length;
+    if (fill < 0) return null;
+    groups = [...head, ...new Array<string>(fill).fill("0"), ...tail];
+  } else {
+    groups = head;
+  }
+  if (groups.length !== 8) return null;
+  const n = groups.map((g) => parseInt(g, 16));
+  if (n[0] || n[1] || n[2] || n[3] || n[4] || n[5] !== 0xffff) return null; // not ::ffff:0:0/96
+  return `${(n[6]! >> 8) & 0xff}.${n[6]! & 0xff}.${(n[7]! >> 8) & 0xff}.${n[7]! & 0xff}`;
 }
 
 /**

