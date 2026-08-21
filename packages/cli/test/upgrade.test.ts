@@ -12,7 +12,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { promises as fsp } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   BUILD_CHANNEL,
@@ -589,7 +588,8 @@ void (BUILD_CHANNEL as Channel);
 // ─── E017 inc 09: the release-key pin + signing tool ───────────────────────
 
 test("release-key pin: build-binaries.sh carries a well-formed SPKI pin define", async () => {
-  const script = await readFile(new URL("../scripts/build-binaries.sh", import.meta.url), "utf-8");
+  // Runner-independent anchor (tui-test relocates compiled tests) — cwd is packages/cli under both runners.
+  const script = await readFile(path.resolve(process.cwd(), "scripts", "build-binaries.sh"), "utf-8");
   const pinMatch = /OPENKAI_RELEASE_PUBLIC_KEY_PIN="([^"]+)"/.exec(script);
   assert.ok(pinMatch, "the pin constant exists");
   const der = Buffer.from(pinMatch![1]!, "base64");
@@ -609,7 +609,8 @@ test("sign-manifest.mjs: signs a manifest the pinned verify path accepts", async
     const manifestPath = path.join(dir, "latest.json");
     const artifact = { target: "darwin-arm64", url: "https://x/openkai", sha256: "ab".repeat(32) };
     await writeFile(manifestPath, JSON.stringify({ version: "9.9.9", artifacts: [artifact] }, null, 2));
-    const script = fileURLToPath(new URL("../scripts/sign-manifest.mjs", import.meta.url));
+    // Runner-independent anchor (tui-test relocates compiled tests) — cwd is packages/cli under both runners.
+    const script = path.resolve(process.cwd(), "scripts", "sign-manifest.mjs");
     const result = spawnSync(process.execPath, [script, manifestPath], {
       env: { ...process.env, OPENKAI_RELEASE_PRIVATE_KEY: pem },
       encoding: "utf-8",
