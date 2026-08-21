@@ -161,3 +161,41 @@ it fast-forwards. Do not cherry-pick individual commits back onto 2618bfc — th
 sessions.ts / app.ts / security-audit.sh unions depend on f048ff5 being present.
 
 This is a recommendation only. **Nothing was shipped** (no push, merge, or publish).
+
+## 2026-08-21 correction — go/no-go RE-ISSUED (handoff c2bc17cb)
+
+The 435/435 claim above was measured on a 67-char autonomy branch and was
+**checkout-width-dependent**: the golden-frame assertion (8372a7c) normalised
+the branch chip but not the chrome row's interior pad, so the committed
+evidence encoded the generating checkout's branch-name length (the chip is 12
+cols for names >8 chars, narrower below). On any checkout named ≤7 chars —
+including `main` (4) — `npm test` went 434/435 and `security-audit.sh` §3
+reported FAILED at the very tip recommended for the cut. Reproduced at
+b4d6dd4 in a fresh worktree (npm install, real build, checkouts verified):
+branch `wchk` (4 chars) → 434/435 FAIL; `wchk12345678` (12 chars) → 435/435.
+
+Fixed by merging the qwen tip into main's lineage and collapsing interior
+space runs on the (post-substitution) `git:<branch>` row of the golden
+normalisation. The assert is untouched — control run: a reintroduced stray
+escape byte (F3 class) fails the test (439/441), clean again after revert
+(441/441). Evidence regenerated under the new normalisation on the 66-char
+branch `cole/autonomy-c2bc17cb-5086-47e9-bd53-a3e9e306c76b-1f1e5535-66e7-4e`.
+
+**Corrected suite claim: `npm test` = 441/441 at the merged tip.** That is
+the 435 above + 6 from main-side work landed after the qwen branch forked:
+provider-config lane guards (multi-key refuse, single-key untouched,
+cloudflare two-key, duplicate-key collapse), OPENKAI_IGNORE_PROJECT_ENV
+precedence, and the gradient bare-ESC CSI test. Verified green on 4-char,
+12-char, and 66-char checkouts of the same tree; `security-audit.sh` =
+SECURITY AUDIT PASSED, exit 0 (measured unpiped), on the 4-char checkout.
+The count holds on `main`: main fast-forwards to this tip, and `main` is
+itself a 4-char checkout — the failing configuration above, now green.
+
+**Re-issued recommendation: GO for the 0.1.9 cut FROM MAIN at this tip.**
+Main now carries the full union — origin/main@f048ff5 (E002 redaction) +
+local-main provider-config work + the qwen pass + the width-independent
+golden. Note for the CTO: local main and origin/main had diverged
+(f048ff5 was never in local main's history); this tip is their
+reconciliation. Cutting 0.1.9 requires pushing it to the release line —
+that push, like the release, stays with the CTO. R1–R3 fast-follows
+unchanged. Recommendation only; nothing is published by this correction.
