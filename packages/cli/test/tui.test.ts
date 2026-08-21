@@ -25,7 +25,16 @@ import { InProcessTransport, SessionStore, CortexClient, CortexCheckpoint, listS
 import { buildTuiApp, type TuiApp, type ExitRequest } from "../dist/tui/app.js";
 import { resolveRunMode } from "../dist/tui/runtime.js";
 import { gradientLogo } from "../dist/tui/gradient.js";
-import { OVERLAY_FOOTER, renderOverlayFooter } from "../dist/tui/theme.js";
+import { OVERLAY_FOOTER, highlight, renderOverlayFooter, setTheme } from "../dist/tui/theme.js";
+import {
+  configureCapabilities,
+  plainTerminalText,
+  resetCapabilities,
+  resolveCapabilities,
+  stripTerminalSequences,
+} from "../dist/tui/capabilities.js";
+import { overlaySpec, resolveLayout, resolveLayoutMode } from "../dist/tui/layout.js";
+import { defaultStatusState, StatusLine } from "../dist/tui/status.js";
 
 // ── Test fixtures ────────────────────────────────────────────────────────────
 
@@ -349,6 +358,120 @@ test("slash commands: /quit and /resume signal the runtime; unknown reports", as
 test("theme: overlay footer is the canonical interaction grammar", () => {
   assert.equal(OVERLAY_FOOTER, "↑/↓ Navigate · Enter Select · ESC Cancel");
   assert.ok(renderOverlayFooter().length > 0, "footer renders non-empty");
+});
+
+// ── 4b. OK-10 Wave 0 layout + terminal capability floor ───────────────────
+
+test("layout: one width+height resolver owns all five modes and short-height compaction", () => {
+  assert.equal(resolveLayoutMode(40, 12), "compact");
+  assert.equal(resolveLayoutMode(59, 60), "compact");
+  assert.equal(resolveLayoutMode(60, 18), "narrow");
+  assert.equal(resolveLayoutMode(79, 60), "narrow");
+  assert.equal(resolveLayoutMode(80, 24), "standard");
+  assert.equal(resolveLayoutMode(119, 60), "standard");
+  assert.equal(resolveLayoutMode(120, 30), "workspace");
+  assert.equal(resolveLayoutMode(159, 60), "workspace");
+  assert.equal(resolveLayoutMode(160, 40), "wide");
+  assert.equal(resolveLayoutMode(200, 12), "compact", "height below 16 forces compact at any width");
+
+  const short = resolveLayout(200, 12);
+  assert.equal(short.composerMaxRows, 4);
+  assert.equal(short.showBootExtras, false);
+  assert.deepEqual(overlaySpec(short, "60%", "70%"), {
+    anchor: "center",
+    width: "100%",
+    maxHeight: "100%",
+  });
+});
+
+test("capabilities: plain, NO_COLOR, 16, 256, truecolour, ASCII, and reduced motion resolve deterministically", () => {
+  const utf8 = { LANG: "C.UTF-8" };
+  assert.deepEqual(resolveCapabilities({ ...utf8, TERM: "dumb" }, true), {
+    plain: true,
+    colour: "none",
+    unicode: false,
+    altScreen: false,
+    mouse: false,
+    osc: false,
+    reducedMotion: true,
+  });
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color" }, false).plain, true, "non-TTY is plain");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color", NO_COLOR: "1" }, true).colour, "none");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color", NO_COLOR: "" }, true).colour, "ansi256");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "ansi", OPENKAI_COLOR: "16" }, true).colour, "ansi16");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color" }, true).colour, "ansi256");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm", COLORTERM: "truecolor" }, true).colour, "truecolour");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm", OPENKAI_ASCII: "1" }, true).unicode, false);
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm", OPENKAI_REDUCED_MOTION: "1" }, true).reducedMotion, true);
+});
+
+test("theme: dark accent is exact #B0E1CD in truecolour and index 152 only in 256-colour", () => {
+  try {
+    setTheme("dark");
+    configureCapabilities({ TERM: "xterm", COLORTERM: "truecolor", LANG: "C.UTF-8" }, true);
+    const exact = highlight.base("mint");
+    assert.ok(exact.includes("\x1b[38;2;176;225;205m"), "truecolour emits exact #B0E1CD");
+    assert.ok(!exact.includes("38;5;152"), "truecolour does not masquerade the fallback as exact");
+
+    configureCapabilities({ TERM: "xterm-256color", LANG: "C.UTF-8" }, true);
+    const fallback = highlight.base("mint");
+    assert.ok(fallback.includes("\x1b[38;5;152m"), "256-colour emits index 152 (#AFD7D7)");
+    assert.ok(!fallback.includes("38;2;176;225;205"), "the fallback remains explicitly distinct");
+  } finally {
+    resetCapabilities();
+    setTheme("dark");
+  }
+});
+
+test("capabilities: NO_COLOR frame has no colour SGR; ASCII+reduced-motion frame is stable", async () => {
+  const colourSgr = /\x1b\[(?:3[0-9]|4[0-9]|9[0-7]|10[0-7]|38(?:;[^m]*)?|48(?:;[^m]*)?)m/;
+  let transport: InProcessTransport | undefined;
+  let store: SessionStore | undefined;
+  try {
+    configureCapabilities({ TERM: "xterm-256color", LANG: "C.UTF-8", NO_COLOR: "1" }, true);
+    const built = await buildFauxApp({ scriptedText: "unused", sessionId: "01TESTNOCOLOR0001" });
+    transport = built.transport;
+    store = built.store;
+    const noColourFrame = built.app.root.render(80).join("\n");
+    assert.ok(!colourSgr.test(noColourFrame), "NO_COLOR emits no foreground/background colour SGR");
+
+    configureCapabilities({
+      TERM: "xterm-256color",
+      LANG: "C.UTF-8",
+      OPENKAI_ASCII: "1",
+      OPENKAI_REDUCED_MOTION: "1",
+    }, true);
+    const state = {
+      ...defaultStatusState("a-very-long-model-name", "01ASCII0000000001", "local"),
+      busy: true,
+      activity: "working…",
+      busyFrame: 1,
+    };
+    const status = new StatusLine(state, () => 12);
+    const first = status.render(40).join("\n");
+    status.update({ ...state, busyFrame: 9 });
+    const second = status.render(40).join("\n");
+    assert.equal(first, second, "reduced motion pins the busy frame");
+    assert.ok(!/[^\x00-\x7f]/.test(stripTerminalSequences(first)), "ASCII mode emits deterministic ASCII glyphs");
+    const asciiFrame = built.app.root.render(40).join("\n");
+    assert.equal(asciiFrame, built.app.root.render(40).join("\n"), "ASCII app rendering is deterministic");
+    assert.ok(
+      !/[^\x00-\x7f]/.test(stripTerminalSequences(asciiFrame)),
+      "ASCII mode covers boot, transcript, composer, and status rather than one isolated glyph",
+    );
+  } finally {
+    await store?.close();
+    await transport?.close();
+    resetCapabilities();
+  }
+});
+
+test("capabilities: the plain sink removes alt-screen, mouse, OSC, SGR, and Unicode", () => {
+  const hostile = "\x1b[?1049h\x1b[?1000h\x1b]11;?\x07\x1b[38;5;152mhello ●\x1b[0m\x1b[?1049l";
+  const plain = plainTerminalText(hostile);
+  assert.equal(plain, "hello *");
+  assert.ok(!plain.includes("\x1b"));
+  assert.ok(!/[^\x00-\x7f]/.test(plain));
 });
 
 // ── 5. Mode matrix (A1) ──────────────────────────────────────────────────────

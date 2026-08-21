@@ -3,8 +3,9 @@
  * dossier pick 8, pi's `exportToHtml` adapted). One file, inline CSS, no
  * external references, no template-dir machinery (pi's `getExportTemplateDir`
  * handles bun-binary layouts we don't have). Theme colours come from the
- * same 256-colour indices as theme.ts's DARK table, converted to hex —
- * the export reads like the terminal it came from.
+ * same palette as theme.ts's DARK table. Terminal indices are converted to
+ * hex, while the HTML surface uses the exact Kaidera mint because it is not
+ * constrained to xterm-256.
  *
  * Tool calls render as preformatted blocks (pi's ToolHtmlRenderer extension
  * point is skipped per the dossier). All model/session text passes through
@@ -41,19 +42,19 @@ export function xterm256ToHex(n: number): string {
 }
 
 /**
- * Export palette — the SAME indices as theme.ts's DARK table (theme.ts keeps
- * them module-private; keep these in lockstep with it).
+ * Export palette — the same terminal indices as theme.ts's DARK table
+ * (theme.ts keeps them module-private; keep these in lockstep with it).
  */
 const EXPORT_COLOURS = {
   background: 234, // surface1 — near-black panel
   surface: 237, // surface2 — raised block
   text: 252, // default foreground
   muted: 244, // secondary text
-  accent: 39, // cyan highlight
   danger: 124, // red accent
   border: 241, // tool card border
   attention: 220, // amber
 } as const;
+const EXPORT_ACCENT = "#b0e1cd"; // exact Kaidera mint; 152/#AFD7D7 is terminal fallback only
 
 /** Escape text for HTML body/attribute contexts ({@link renderText}'s final stage). */
 export function escapeHtml(text: string): string {
@@ -181,14 +182,14 @@ body { background: ${c(EXPORT_COLOURS.background)}; color: ${c(EXPORT_COLOURS.te
   font: 14px/1.55 -apple-system, "SF Mono", ui-monospace, Menlo, monospace;
   max-width: 860px; margin: 0 auto; padding: 32px 20px; }
 header { border-bottom: 1px solid ${c(EXPORT_COLOURS.border)}; margin-bottom: 24px; padding-bottom: 12px; }
-header h1 { color: ${c(EXPORT_COLOURS.accent)}; font-size: 18px; margin: 0 0 4px; }
+header h1 { color: ${EXPORT_ACCENT}; font-size: 18px; margin: 0 0 4px; }
 header .meta { color: ${c(EXPORT_COLOURS.muted)}; font-size: 12px; }
 .msg { margin: 14px 0; padding: 10px 14px; background: ${c(EXPORT_COLOURS.surface)}; border-radius: 6px; }
 .msg .who { color: ${c(EXPORT_COLOURS.muted)}; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
 .msg.user .who { color: ${c(EXPORT_COLOURS.attention)}; }
 .msg .body { white-space: pre-wrap; word-break: break-word; }
 .tool { margin: 8px 0 8px 12px; padding: 8px 12px; border-left: 3px solid ${c(EXPORT_COLOURS.border)}; }
-.tool-name { color: ${c(EXPORT_COLOURS.accent)}; }
+.tool-name { color: ${EXPORT_ACCENT}; }
 .tool pre, .compaction pre { color: ${c(EXPORT_COLOURS.muted)}; white-space: pre-wrap; word-break: break-word;
   font-size: 12px; margin: 6px 0 0; }
 .compaction { margin: 18px 0; padding: 8px 12px; border-left: 3px solid ${c(EXPORT_COLOURS.attention)};

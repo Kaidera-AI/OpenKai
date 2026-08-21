@@ -8,6 +8,7 @@
  */
 
 import { test, expect } from "@microsoft/tui-test";
+import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -56,4 +57,28 @@ test("settings appearance tab: theme row opens the theme picker list", async ({ 
   terminal.write("\r"); // Enter on the theme row → picker
   await expect(terminal.getByText(/catppuccin/g, { strict: false })).toBeVisible({ timeout: 5000 });
   await expect(terminal.getByText(/tokyonight/g, { strict: false })).toBeVisible();
+});
+
+test("Wave 0 PTY viewport matrix keeps draft and status visible without clipping", async ({ terminal }) => {
+  await expect(terminal.getByText(/Kaidera/g, { strict: false })).toBeVisible({ timeout: 15000 });
+  terminal.write(" "); // skip any remaining brand animation
+  await expect(terminal.getByText(/idle|local/g, { strict: false })).toBeVisible({ timeout: 10000 });
+  terminal.write("wave0-draft");
+
+  const viewports = [
+    [40, 12],
+    [60, 18],
+    [80, 24],
+    [120, 30],
+    [160, 40],
+    [200, 60],
+  ] as const;
+  for (const [columns, rows] of viewports) {
+    terminal.resize(columns, rows);
+    await expect(terminal.getByText(/wave0-draft/g, { strict: false })).toBeVisible({ timeout: 5000 });
+    await expect(terminal.getByText(/idle|local/g, { strict: false })).toBeVisible({ timeout: 5000 });
+    const frame = terminal.getViewableBuffer();
+    assert.equal(frame.length, rows, `${columns}x${rows} PTY retains the requested viewport height`);
+    assert.ok(frame.every((line) => line.length === columns), `${columns}x${rows} PTY rows stay within the viewport`);
+  }
 });

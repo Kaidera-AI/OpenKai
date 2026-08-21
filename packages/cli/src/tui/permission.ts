@@ -12,7 +12,7 @@
  * plain `always` to the controller, so `transport.respond` is untouched.
  *
  * **All colour comes from theme.ts** — removed diff lines use
- * `highlight.danger` (red), added lines use `highlight.base` (cyan); the rule
+ * `highlight.danger` (red), added lines use `highlight.base` (Kaidera mint);
  * line uses `text.muted`; the footer uses {@link renderOverlayFooter}. The
  * overlay itself is a {@link Component} so it renders headlessly for the
  * golden-frame test (scope §6): the test asserts the footer grammar + the

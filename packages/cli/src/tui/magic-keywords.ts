@@ -17,6 +17,7 @@
 
 import { readConfigFile } from "../config.js";
 import { supportsTrueColor } from "./gradient.js";
+import { capabilities } from "./capabilities.js";
 
 // ── Boundary regex (OMP magic-keyword-boundary.ts, verbatim semantics) ──────
 
@@ -415,6 +416,8 @@ export function mightContainMagicKeyword(text: string): boolean {
  * detection — keywords inside code/markup never paint.
  */
 export function paintMagicKeywords(text: string, phase = 0, resetTo?: string): string {
+  const depth = capabilities().colour;
+  if (depth === "none" || depth === "ansi16") return text;
   let out = text;
   for (const keyword of ["ultrathink", "ultrareview"] as const) {
     if (!magicKeywordEnabled(keyword)) continue;
@@ -425,6 +428,7 @@ export function paintMagicKeywords(text: string, phase = 0, resetTo?: string): s
 
 /** The animated phase for a shimmer frame — call per repaint tick. */
 export function shimmerPhase(now = Date.now()): number {
+  if (capabilities().reducedMotion) return 0;
   return (now / 900) % 1;
 }
 
@@ -435,6 +439,8 @@ export function shimmerPhase(now = Date.now()): number {
  * `brand` is the generic busy sweep (E019: every working state shimmers).
  */
 export function paintShimmerLabel(label: string, keyword: ShimmerPalette, phase = shimmerPhase()): string {
+  const depth = capabilities().colour;
+  if (depth === "none" || depth === "ansi16") return label;
   const spec =
     keyword === "brand"
       ? { stops: 14, hue: (t: number) => 140 + t * 60, saturation: 55, lightness: 68 }

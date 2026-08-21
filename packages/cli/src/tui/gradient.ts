@@ -7,6 +7,7 @@
  */
 
 import { brandTint, BRAND_RAMP } from "./theme.js";
+import { capabilities } from "./capabilities.js";
 
 
 /** Multi-stop truecolour palette — Kaidera brand: graphite → steel → mint → mint-hover → paper. */
@@ -25,9 +26,7 @@ export interface ShineConfig {
   pos: number;
 }
 
-export const supportsTrueColor = (): boolean =>
-  (process.env.COLORTERM ?? "").toLowerCase().includes("truecolor") ||
-  (process.env.COLORTERM ?? "").toLowerCase().includes("24bit");
+export const supportsTrueColor = (): boolean => capabilities().colour === "truecolour";
 
 /** Gradient SGR for position t along the diagonal, compositing the shine band. */
 export function gradientEscape(t: number, shine?: ShineConfig): string {
@@ -66,7 +65,8 @@ export function gradientEscape(t: number, shine?: ShineConfig): string {
 
 /** Diagonal gradient + optional sliding shine band over multi-line art. */
 export function gradientLogo(lines: readonly string[], phase = 0, shine?: ShineConfig): string[] {
-  const reset = "\x1b[0m";
+  // With colour disabled an otherwise-orphaned reset is still terminal noise.
+  const reset = capabilities().colour === "none" ? "" : "\x1b[0m";
   const rows = lines.length;
   const cols = Math.max(...lines.map((l) => l.length));
   const span = Math.max(1, cols + rows - 1);

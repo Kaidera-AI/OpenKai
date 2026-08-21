@@ -7,10 +7,10 @@
  * `MarkdownTheme` / `EditorTheme` / `Box` `bgFn` surfaces, which all take
  * `(text) => styledText`.
  *
- * Palette: a fixed 256-colour subset so the look is stable across terminals
- * without querying the colour scheme. Surface tokens are backgrounds;
- * text/highlight tokens are foregrounds. `highlightDanger` is reserved for
- * risky-row highlights (errors, destructive confirmations), not plain labels.
+ * Palette: a stable 256-colour subset with exact built-in brand overrides on
+ * truecolour terminals. Surface tokens are backgrounds; text/highlight tokens
+ * are foregrounds. `highlightDanger` is reserved for risky-row highlights
+ * (errors, destructive confirmations), not plain labels.
  *
  * P4b (scope §1) adds two token families, both still sourced ONLY from here:
  *  - `attention` (amber 220) — the focus-aware chrome attention state.
@@ -18,6 +18,14 @@
  */
 
 import { THEME_PACKS } from "./theme-packs.js";
+import {
+  ansi16Bg,
+  ansi16Fg,
+  ansi16From256,
+  capabilities,
+  resolveCapabilities,
+  xterm256Rgb,
+} from "./capabilities.js";
 
 // ── 256-colour palette (stable, no truecolour dependency) ──────────────────
 const DARK = {
@@ -26,7 +34,9 @@ const DARK = {
   surface3: 240, // card / chrome background
   text: 252, // default foreground
   textMuted: 244, // secondary text / borders
-  highlight: 39, // cyan accent (selection / active)
+  // Deterministic 256-colour fallback for Kaidera mint. Index 152 is
+  // #AFD7D7; it is NOT the exact brand colour (#B0E1CD).
+  highlight: 152,
   highlightDanger: 124, // red accent (errors / destructive)
   toolBorder: 241, // muted left border for tool cards
   attention: 220, // amber accent (focus-aware attention state)
@@ -45,6 +55,10 @@ const LIGHT: Record<keyof typeof DARK, number> = {
 };
 
 let C: Record<keyof typeof DARK, number> = { ...DARK };
+/** Exact truecolour overrides known for the built-in Kaidera themes. */
+let exact: Partial<Record<keyof typeof DARK, readonly [number, number, number]>> = {
+  highlight: [176, 225, 205], // exact Kaidera mint #B0E1CD
+};
 
 /** The active theme name (a built-in, or a pack name from THEME_PACKS). */
 export let themeName = "dark";
@@ -58,18 +72,22 @@ export function themeNames(): string[] {
 export function setTheme(name: string): void {
   if (name === "auto") {
     C = { ...DARK };
+    exact = { highlight: [176, 225, 205] };
     themeName = "auto";
     return;
   }
   if (name === "dark") {
     C = { ...DARK };
+    exact = { highlight: [176, 225, 205] };
   } else if (name === "light") {
     C = { ...LIGHT };
+    exact = {};
   } else {
     const pack = THEME_PACKS[name];
     const variant = pack?.dark ?? pack?.light;
     if (!variant) return;
     C = { ...DARK, ...variant } as Record<keyof typeof DARK, number>;
+    exact = {};
   }
   themeName = name;
 }
@@ -93,7 +111,9 @@ export function detectThemeAsync(): Promise<"dark" | "light"> {
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const stdout = process.stdout;
-    if (!stdin.isTTY || !stdout.isTTY) {
+    // Use a fresh pure resolution here: tests and embedders may replace the
+    // process streams after the render context was configured.
+    if (!stdin.isTTY || !stdout.isTTY || !resolveCapabilities(process.env, stdout.isTTY === true).osc) {
       resolve(detectThemeSync());
       return;
     }
@@ -148,14 +168,28 @@ export function detectThemeAsync(): Promise<"dark" | "light"> {
  */
 const ROLE_COLOURS = [39, 204, 141, 114, 215, 176, 81, 132] as const;
 
-/** Wrap `text` in a 256-colour foreground SGR. */
-function fg256(text: string, n: number): string {
-  return `\x1b[38;5;${n}m${text}\x1b[39m`;
+/** Wrap text at the resolved colour depth. */
+function foreground(text: string, index: number, rgbOverride?: readonly [number, number, number]): string {
+  const depth = capabilities().colour;
+  if (depth === "none") return text;
+  if (depth === "ansi16") return `\x1b[${ansi16Fg(ansi16From256(index))}m${text}\x1b[39m`;
+  if (depth === "truecolour") {
+    const [r, g, b] = rgbOverride ?? xterm256Rgb(index);
+    return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+  }
+  return `\x1b[38;5;${index}m${text}\x1b[39m`;
 }
 
-/** Wrap `text` in a 256-colour background SGR (does not reset fg). */
-function bg256(text: string, n: number): string {
-  return `\x1b[48;5;${n}m${text}\x1b[49m`;
+/** Wrap text in a background at the resolved colour depth. */
+function background(text: string, index: number): string {
+  const depth = capabilities().colour;
+  if (depth === "none") return text;
+  if (depth === "ansi16") return `\x1b[${ansi16Bg(ansi16From256(index))}m${text}\x1b[49m`;
+  if (depth === "truecolour") {
+    const [r, g, b] = xterm256Rgb(index);
+    return `\x1b[48;2;${r};${g};${b}m${text}\x1b[49m`;
+  }
+  return `\x1b[48;5;${index}m${text}\x1b[49m`;
 }
 
 /** Bold wrapper. */
@@ -173,41 +207,41 @@ function dim(text: string): string {
 /** Surface backgrounds — panel / block / card / chrome layers. */
 export const surface = {
   /** Deepest panel background (the alt-screen base). */
-  1: (text: string): string => bg256(text, C.surface1),
+  1: (text: string): string => background(text, C.surface1),
   /** Raised block background (message blocks). */
-  2: (text: string): string => bg256(text, C.surface2),
+  2: (text: string): string => background(text, C.surface2),
   /** Card / chrome background (tool cards, status line). */
-  3: (text: string): string => bg256(text, C.surface3),
+  3: (text: string): string => background(text, C.surface3),
 } as const;
 
 /** Foreground text tokens. */
 export const text = {
   /** Default foreground. */
-  base: (t: string): string => fg256(t, C.text),
+  base: (t: string): string => foreground(t, C.text, exact.text),
   /** Muted / secondary foreground (timestamps, hints, borders). */
-  muted: (t: string): string => fg256(t, C.textMuted),
+  muted: (t: string): string => foreground(t, C.textMuted, exact.textMuted),
   /** Bold emphasis (role labels, headings). */
-  strong: (t: string): string => bold(fg256(t, C.text)),
+  strong: (t: string): string => bold(foreground(t, C.text, exact.text)),
   /** Dimmed (hidden-by-default thinking preview, placeholders). */
-  dim: (t: string): string => dim(fg256(t, C.textMuted)),
+  dim: (t: string): string => dim(foreground(t, C.textMuted, exact.textMuted)),
 } as const;
 
 /** Highlight accents — selection / active rows. */
 export const highlight = {
-  /** Active / selected accent (cyan). */
-  base: (t: string): string => fg256(t, C.highlight),
+  /** Active / selected accent (exact Kaidera mint in the dark truecolour theme). */
+  base: (t: string): string => foreground(t, C.highlight, exact.highlight),
   /** Danger accent (red) — risky rows, errors, destructive confirms. */
-  danger: (t: string): string => fg256(t, C.highlightDanger),
+  danger: (t: string): string => foreground(t, C.highlightDanger, exact.highlightDanger),
   /**
    * Attention accent (amber) — the focus-aware chrome attention state (scope
    * §1.1). Used on the spinner chip when a turn settled while the terminal
    * was unfocused, or a permission request is waiting. Never a banner.
    */
-  attention: (t: string): string => fg256(t, C.attention),
+  attention: (t: string): string => foreground(t, C.attention, exact.attention),
 } as const;
 
 /** Muted left border for tool cards (scope §3.1 muted-left-border blocks). */
-export const toolBorder = (t: string): string => fg256(t, C.toolBorder);
+export const toolBorder = (t: string): string => foreground(t, C.toolBorder, exact.toolBorder);
 
 /**
  * Brand ramp (first-run splash animation): a graphite → mint → paper sweep
@@ -221,7 +255,7 @@ export const BRAND_RAMP = [
 
 /** Tint text with the ramp colour at `step` (wraps). */
 export function brandTint(text: string, step: number): string {
-  return fg256(text, BRAND_RAMP[step % BRAND_RAMP.length]!);
+  return foreground(text, BRAND_RAMP[step % BRAND_RAMP.length]!);
 }
 
 /** Spinner glyph styled with the highlight accent. */
@@ -276,7 +310,7 @@ export function roleLabel(role: string): string {
 export function rolePill(role: string): string {
   const label = roleLabel(role);
   const body = `[${label}]`;
-  return fg256(body, roleColour(role));
+  return foreground(body, roleColour(role));
 }
 
 // ── pi-tui theme adapters (compose tokens into component themes) ────────────

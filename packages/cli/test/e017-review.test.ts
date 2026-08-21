@@ -232,6 +232,8 @@ test("hub: shutdown completes with an attach open and removes its tap on close",
 
 test("detectThemeAsync restores the prior raw mode and never pauses a shared stdin", async () => {
   const calls: string[] = [];
+  const priorTerm = process.env.TERM;
+  process.env.TERM = "xterm-256color";
   const fakeStdin = new EventEmitter() as NodeJS.ReadStream;
   (fakeStdin as unknown as { isTTY: boolean }).isTTY = true;
   (fakeStdin as unknown as { isRaw: boolean }).isRaw = true; // a running TUI owns it
@@ -266,6 +268,8 @@ test("detectThemeAsync restores the prior raw mode and never pauses a shared std
   } finally {
     Object.defineProperty(process, "stdin", { value: realStdin, configurable: true });
     Object.defineProperty(process, "stdout", { value: realStdout, configurable: true });
+    if (priorTerm === undefined) delete process.env.TERM;
+    else process.env.TERM = priorTerm;
   }
 
   assert.ok(calls.includes("setRawMode(true)"), "raw mode asserted for the query");

@@ -30,6 +30,8 @@ import { highlight, markdownTheme, rolePill, text as textToken, toolBorder } fro
 import { sanitizeTerminalText } from "./sanitize.js";
 import { paintMagicKeywords } from "./magic-keywords.js";
 import { renderMermaidBlocks, type MermaidTheme } from "./mermaid.js";
+import { capabilities, renderTerminalText } from "./capabilities.js";
+import { LAYOUT_ROWS, resolveLayout } from "./layout.js";
 
 /**
  * Narrow a `tool_update` partial to the task tool's progress payload
@@ -138,7 +140,7 @@ type Block =
   | { kind: "user"; text: string; comp: Markdown | Text }
   | { kind: "assistant"; text: string; comp: Markdown }
   | { kind: "thinking"; text: string; revealed: boolean; comp: Text }
-  | { kind: "notice"; text: string; boot?: boolean; comp: Text }
+  | { kind: "notice"; text: string; boot?: boolean; compactComp?: Text; comp: Text }
   | { kind: "btw"; question: string; text: string; comp: Markdown }
   | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result: unknown | null; isError: boolean; settled: boolean; progress?: TaskProgress; comp: Text };
 
@@ -173,7 +175,10 @@ export class Transcript implements Component {
   /** Agent name for the assistant identity pill (scope §1.2). */
   private readonly agentName: string;
 
-  constructor(agentName = "openkai") {
+  constructor(
+    agentName = "openkai",
+    private readonly viewportRows: () => number = () => LAYOUT_ROWS.tall,
+  ) {
     this.agentName = agentName;
   }
 
@@ -200,15 +205,23 @@ export class Transcript implements Component {
    * Sanitised here (single choke point): notice bodies routinely embed
    * model/tool text — error messages, paths, session ids (E001 §2).
    */
-  addNotice(lines: string | string[], options?: { boot?: boolean }): void {
+  addNotice(lines: string | string[], options?: { boot?: boolean; compact?: string }): void {
     const body = Array.isArray(lines) ? lines.join("\n") : lines;
     const clean = sanitizeTerminalText(body);
-    const comp = new Text(
-      clean.split("\n").map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`).join("\n"),
-      1,
-      0,
-    );
-    this.blocks.push({ kind: "notice", text: clean, ...(options?.boot === true ? { boot: true } : {}), comp });
+    const noticeComponent = (text: string): Text =>
+      new Text(
+        text.split("\n").map((line) => `${toolBorder("▎ ")}${textToken.muted(line)}`).join("\n"),
+        1,
+        0,
+      );
+    const compact = options?.compact !== undefined ? sanitizeTerminalText(options.compact) : undefined;
+    this.blocks.push({
+      kind: "notice",
+      text: clean,
+      ...(options?.boot === true ? { boot: true } : {}),
+      ...(compact !== undefined ? { compactComp: noticeComponent(compact) } : {}),
+      comp: noticeComponent(clean),
+    });
   }
 
   /**
@@ -506,7 +519,8 @@ export class Transcript implements Component {
     if (this.liveThinking === null) return;
     const block = this.blocks[this.liveThinking]!;
     if (block.kind !== "thinking" || block.revealed) return;
-    const glyph = THINKING_PULSE_FRAMES[(frame ?? Math.floor(Date.now() / 120)) % THINKING_PULSE_FRAMES.length] ?? "✻";
+    const index = capabilities().reducedMotion ? 0 : (frame ?? Math.floor(Date.now() / 120));
+    const glyph = THINKING_PULSE_FRAMES[index % THINKING_PULSE_FRAMES.length] ?? "✻";
     const count = block.text.length > 0 ? ` ${block.text.length} chars` : "";
     block.comp.setText(`${highlight.base(glyph)} ${textToken.dim(`thinking…${count} (Ctrl+O to reveal)`)}`);
   }
@@ -624,8 +638,16 @@ export class Transcript implements Component {
   // ── Component ───────────────────────────────────────────────────────────
   render(width: number): string[] {
     this.width = width;
+    const layout = resolveLayout(width, this.viewportRows());
     const lines: string[] = [];
     for (const block of this.blocks) {
+      if (block.kind === "notice" && block.boot === true && !layout.showBootExtras) {
+        if (block.compactComp !== undefined) {
+          lines.push(...block.compactComp.render(width));
+          lines.push("");
+        }
+        continue;
+      }
       const rendered = block.comp.render(width);
       // Assistant/btw blocks render clean — the role pill carries identity;
       // a full-width background strip per line reads as a selection, not a
@@ -633,11 +655,14 @@ export class Transcript implements Component {
       for (const line of rendered) lines.push(line);
       lines.push("");
     }
-    return lines;
+    return lines.map(renderTerminalText);
   }
 
   invalidate(): void {
-    for (const block of this.blocks) block.comp.invalidate();
+    for (const block of this.blocks) {
+      block.comp.invalidate();
+      if (block.kind === "notice") block.compactComp?.invalidate();
+    }
   }
 
   /** The last user block's text (for `/fuse` to reuse the last prompt). */
@@ -675,5 +700,4 @@ export class Transcript implements Component {
   }
 }/** Starburst frames for the live thinking pulse (OMP's eased glyph set). */
 const THINKING_PULSE_FRAMES = ["✻", "✼", "❉", "❊", "✺", "✹", "✸", "✶"];
-
 
