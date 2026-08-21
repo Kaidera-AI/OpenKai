@@ -332,6 +332,28 @@ test("upgrade then rollback round-trip restores the original binary", async () =
 
 // ─── CLI runner (channel selection end-to-end) ───────────────────────────────
 
+test("CLI: npm --check is read-only — never spawns npm (0.1.8 regression)", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  let spawned = false;
+  const deps = recordingDeps([]);
+  const res = await runUpgrade({
+    env: { OPENKAI_CHANNEL: "npm" },
+    check: true,
+    currentBinary: "/tmp/x",
+    currentVersion: "0.0.0",
+    deps: {
+      ...deps,
+      runExternal: async () => {
+        spawned = true;
+        return { code: 0, output: "" };
+      },
+    },
+  });
+  assert.equal(res.exitCode, 0);
+  assert.equal(spawned, false, "--check must not execute the package manager");
+  assert.match(res.message, /no npm command was run/);
+});
+
 test("CLI: npm channel runs `npm install -g` through injected deps — no real spawn", async () => {
   const { runUpgrade } = await import("../dist/upgrade.js");
   const calls: Array<{ cmd: string; args: string[] }> = [];
@@ -380,6 +402,30 @@ test("isBunManaged: plain node + plain script is not bun-managed", async () => {
     assert.equal(isBunManaged("/usr/local/bin/node"), false);
   } finally {
     process.argv = oldArgv;
+  }
+});
+
+test("isBunManaged: custom BUN_INSTALL shim resolves through the bun install tree", async () => {
+  const { isBunManaged } = await import("../dist/upgrade.js");
+  // bun add -g with BUN_INSTALL=/custom/root: bin/openkai symlinks into
+  // <root>/install/global/node_modules/... — realpath reveals it even though
+  // neither the interpreter nor argv[1] names ~/.bun.
+  const root = await mkdtemp(path.join(tmpdir(), "openkai-bun-"));
+  const target = path.join(root, "install", "global", "node_modules", "@kaidera", "openkai", "dist");
+  await fsp.mkdir(target, { recursive: true });
+  await fsp.writeFile(path.join(target, "index.js"), "// shim target\n");
+  await fsp.mkdir(path.join(root, "bin"), { recursive: true });
+  await fsp.symlink(
+    path.join("..", "install", "global", "node_modules", "@kaidera", "openkai", "dist", "index.js"),
+    path.join(root, "bin", "openkai"),
+  );
+  const oldArgv = [...process.argv];
+  try {
+    process.argv[1] = path.join(root, "bin", "openkai");
+    assert.equal(isBunManaged("/usr/local/bin/node"), true, "custom BUN_INSTALL shim is bun-managed");
+  } finally {
+    process.argv = oldArgv;
+    await fsp.rm(root, { recursive: true, force: true });
   }
 });
 

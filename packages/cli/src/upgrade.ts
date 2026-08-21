@@ -28,7 +28,7 @@
 
 import { createHash, createPublicKey, sign, verify } from "node:crypto";
 import { spawn } from "node:child_process";
-import { promises as fsp } from "node:fs";
+import { promises as fsp, realpathSync } from "node:fs";
 
 import { CLI_VERSION } from "./version.js";
 
@@ -92,9 +92,18 @@ export function isBrewManaged(execPath: string = process.execPath): boolean {
 export function isBunManaged(execPath: string = process.execPath): boolean {
   // The global bin shim runs the JS under an interpreter (bun or node), so
   // process.execPath is the interpreter, not the install. Detect via the bin
-  // script path (argv[1]) or the interpreter living under ~/.bun.
+  // script path (argv[1]) or the interpreter living under the bun root.
+  // A custom BUN_INSTALL relocates the shim (e.g. /opt/bun/bin) — realpath
+  // resolves the shim into bun's install tree, which still names bun.
   const script = process.argv[1] ?? "";
-  return /\/\.bun\//i.test(execPath) || /\/\.bun\//i.test(script);
+  let resolvedScript = script;
+  try {
+    resolvedScript = realpathSync(script);
+  } catch {
+    // unresolved shim — fall back to the raw path
+  }
+  const bunPath = /(\/\.bun\/|\/install\/global\/node_modules\/)/i;
+  return bunPath.test(execPath) || bunPath.test(script) || bunPath.test(resolvedScript);
 }
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
@@ -650,6 +659,33 @@ export async function runUpgrade(
 
   // npm channel: pinned at build time, never self-mutates.
   if (ctx.channel === "npm") {
+    if (options.rollback === true || options.check === true) {
+      // Read-only modes NEVER execute npm install (0.1.8 shipped a bug where
+      // --check ran the real upgrade — it mutated the operator's install
+      // behind their back and could break it mid-flight).
+      if (options.rollback === true) {
+        return {
+          exitCode: 1,
+          message: [
+            `openkai upgrade — channel: npm (managed)`,
+            `--rollback is not available here: npm owns the install history.`,
+            `Pin a prior version instead: npm install -g @kaidera/openkai@<version>`,
+          ].join("\n"),
+          channel: "npm",
+          autoUpdateEnabled: false,
+        };
+      }
+      return {
+        exitCode: 0,
+        message: [
+          `openkai upgrade — channel: npm (managed)`,
+          `--check: read-only — current version ${ctx.currentVersion}; no npm command was run.`,
+          `Upgrade with: openkai upgrade`,
+        ].join("\n"),
+        channel: "npm",
+        autoUpdateEnabled: false,
+      };
+    }
     const deps = options.deps ?? defaultDeps;
     const target = options.version ? `@kaidera/openkai@${options.version}` : "@kaidera/openkai@latest";
     const res = await deps.runExternal("npm", ["install", "-g", target]);

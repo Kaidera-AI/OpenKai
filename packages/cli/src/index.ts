@@ -116,8 +116,9 @@ Commands:
                          KOS-managed), Cortex reachability, model catalogue,
                          local state counts. Always exits 0.
 
-  upgrade | update       Self-upgrade (standalone channel; rollback with
-                         --rollback, check only with --check).
+  upgrade | update       Upgrade on the detected channel (brew / npm / bun /
+                         standalone-signed). Rollback with --rollback (standalone),
+                         check only with --check.
 
   skills [list|add|remove|bind]   Manage skills (.agents/skills/ + Cortex
                          registry). \`add <path>\` installs a local skill folder;
@@ -179,7 +180,7 @@ Environment:
   OPENKAI_MODEL          Default chat model (overrides the built-in default).
   CORTEX_PROJECT         Cortex project scope (default: openkai).
   CORTEX_API_URL         Cortex API base URL.
-  OPENKAI_CHANNEL        Override upgrade channel: standalone | npm.
+  OPENKAI_CHANNEL        Override upgrade channel: standalone | brew | npm | bun.
   OPENKAI_AUTO_UPDATE_ENABLED  Kill-switch: "false" disables standalone
                          self-upgrade entirely (rollback still works).
   OPENKAI_MANIFEST_URL   Release manifest URL (default:
