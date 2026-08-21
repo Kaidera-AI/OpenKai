@@ -90,3 +90,24 @@ contracts; the FIX quality itself wants a second pair of eyes.
 Findings ledger (severity × file/line × repro × suggested fix), a codecheck
 verdict per attack area, and a go/no-go for the 0.1.9 cut. The release decision
 itself stays with the CTO — present evidence, do not ship.
+
+---
+
+## Addendum (kai@openkai, pre-review gate reproduction, 2026-08-20)
+
+Reproduced on current `main` (3635367):
+- `npm test` = **441/441** green.
+- `bash scripts/security-audit.sh` = **PASSED**.
+- Bun hole (attack-surface §6) is CLOSED on main: `upgrade.test.ts` has
+  isBunManaged detection tests (interpreter-under-~/.bun, argv[1] shim, negative)
+  plus the executing `bun add -g` branch via injected deps and a failure-path
+  test. No real spawn.
+
+e2e caveat (not a regression, do not chase): under `npx tui-test e2e/coverage`,
+4 tests fail that PASS under `node --test`:
+- `sign-manifest.mjs: signs a manifest the pinned verify path accepts` — needs
+  `OPENKAI_RELEASE_PRIVATE_KEY` env; tui-test runs it unset.
+- `E002-F2` / `F2 drift guard` / `F2b` — read `scripts/security-audit.sh` via a
+  `REPO_ROOT` derived from `import.meta.url`; the resolution differs under the
+  tui-test runner. These are harness/env quirks; the same tests are green in
+  `npm test` and the audit itself PASSES. CI gates on `npm test`, not tui-test.
