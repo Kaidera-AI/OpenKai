@@ -36,6 +36,7 @@ import {
   readSessionMessages,
   redactSecrets,
   SECRET_PREFIXES,
+  SessionStore,
   ShiftRouter,
   type Cast,
   type RoutingEvent,
@@ -43,7 +44,8 @@ import {
 import { appendActivity, activityLogPath, runTail } from "../dist/tail.js";
 import { runSessions } from "../dist/sessions.js";
 import { messageText } from "../dist/tui/app.js";
-import { readSessionSearchRows } from "../dist/tui/session-search.js";
+import { exportSessionToHtml } from "../dist/tui/export-html.js";
+import { readSessionSearchRows, sessionNameFromEntries } from "../dist/tui/session-search.js";
 
 // Runner-independent: both `node --test` and tui-test run from packages/cli —
 // import.meta.url breaks when the runner relocates compiled tests (tui-test
@@ -551,6 +553,81 @@ test("E002-F1d4: session search rows redact stored keys in BOTH row fields", asy
     assert.doesNotMatch(row.firstUserMessage, new RegExp(KEY), "listing + picker description must not carry the key");
     assert.match(row.firstUserMessage, /\[redacted-secret\]/, "firstUserMessage shows the marker instead");
     assert.doesNotMatch(row.allMessagesText, new RegExp(KEY), "the search haystack must not carry the key");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * E002-F1d5 — the FIFTH consumer, found by ren@openkai independently signing
+ * §2 at f048ff5. The TUI `/export` HTML transcript passed store.readEntries()
+ * output RAW into export-html.ts, which carried its own NON-redacting replica
+ * of app.ts's redacting `messageText` and escaped for markup only. The
+ * literal key survived in user text, tool-call arguments, tool-result bodies,
+ * compaction summaries, and the session name/title.
+ *
+ * Drives the REAL production wiring (app.ts `/export`): SessionStore
+ * readEntries() → sessionNameFromEntries → the compiled exportSessionToHtml —
+ * not a replica. The tool-result key starts at offset 3981 so the RAW text is
+ * cut mid-key by the 4 000-char block slice: redaction must run BEFORE
+ * truncation (the consumer-2 discipline — a half-printed key is still a
+ * leaked key), so the rendered block must carry the intact marker and no
+ * key-prefix fragment.
+ */
+test("E002-F1d5: /export HTML transcript redacts stored keys in all five field classes", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "oke002-export-"));
+  try {
+    const sessionId = "01920000-0000-7000-8000-000000000005";
+    const NAME_KEY = k("hf", "_", BODY);
+    const USER_KEY = k("gsk", "_", BODY);
+    const ARGS_KEY = k("sk", "-ant-api03-", BODY);
+    const RESULT_KEY = k("nvapi", "-", BODY);
+    const COMPACT_KEY = k("tgp", "_v1_", BODY);
+
+    // Written exactly as a PRE-FIX OpenKai would have: cleartext on disk, a
+    // key in every field class the export renders.
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(path.join(root, sessionId), { recursive: true });
+    await writeFile(
+      path.join(root, sessionId, "session.jsonl"),
+      [
+        JSON.stringify({ type: "header", version: 3, id: sessionId, createdAt: 0, parentSessionId: null }),
+        JSON.stringify({ type: "custom", id: "e1", seq: 1, parentId: null, timestamp: 0, customType: "session_name", data: { name: `prod creds ${NAME_KEY}` } }),
+        JSON.stringify({ type: "message", id: "e2", seq: 2, parentId: "e1", timestamp: 0, message: { role: "user", content: `here is my key ${USER_KEY} keep it safe` } }),
+        JSON.stringify({ type: "message", id: "e3", seq: 3, parentId: "e2", timestamp: 0, message: { role: "assistant", content: [{ type: "toolCall", id: "tc1", name: "bash", arguments: { command: `export ANTHROPIC_API_KEY=${ARGS_KEY}` } }] } }),
+        JSON.stringify({ type: "message", id: "e4", seq: 4, parentId: "e3", timestamp: 0, message: { role: "toolResult", toolCallId: "tc1", toolName: "bash", content: [{ type: "text", text: `${"x".repeat(3980)} ${RESULT_KEY}` }] } }),
+        JSON.stringify({ type: "compaction", id: "e5", seq: 5, parentId: "e4", timestamp: 0, summary: `earlier turns pasted ${COMPACT_KEY} into the shell`, retainedTail: [], tokensBefore: 12345 }),
+      ].join("\n") + "\n",
+    );
+
+    const store = new SessionStore({ root, sessionId });
+    const entries = await store.readEntries();
+    assert.equal(entries.length, 5, "the real production reader returned every stored entry");
+    const html = exportSessionToHtml({ sessionId, name: sessionNameFromEntries(entries), entries, exportedAt: 0 });
+
+    const classes: ReadonlyArray<readonly [string, string]> = [
+      ["session name/title", NAME_KEY],
+      ["user message text", USER_KEY],
+      ["tool-call arguments", ARGS_KEY],
+      ["tool-result body", RESULT_KEY],
+      ["compaction summary", COMPACT_KEY],
+    ];
+    for (const [cls, key] of classes) {
+      assert.ok(!html.includes(key), `${cls}: the literal stored key must not reach the export`);
+    }
+    assert.ok(
+      !html.includes(k("nvapi", "-")),
+      "no half-printed key fragment survives the 4000-char slice (redact BEFORE truncate)",
+    );
+    const markers = html.match(/\[redacted-secret\]/g) ?? [];
+    assert.ok(markers.length >= 5, `every field class shows the marker instead (got ${markers.length})`);
+    // Field-class anchors — each marker sits in ITS OWN surface, so a partial
+    // fix cannot pass on another class's marker.
+    assert.match(html, /<title>[^<]*\[redacted-secret\]/, "title carries the marker");
+    assert.match(html, /here is my key \[redacted-secret\] keep it safe/, "user body carries the marker");
+    assert.match(html, /ANTHROPIC_API_KEY=\[redacted-secret\]/, "tool-call arguments carry the marker");
+    assert.match(html, /x \[redacted-secret\]/, "tool-result body carries the intact marker inside the slice");
+    assert.match(html, /earlier turns pasted \[redacted-secret\] into the shell/, "compaction summary carries the marker");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

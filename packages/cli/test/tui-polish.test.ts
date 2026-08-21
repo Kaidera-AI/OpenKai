@@ -462,6 +462,42 @@ test("export: /export command writes the file", async () => {
   }
 });
 
+test("export: .jsonl target is a byte-faithful owner-only copy (the documented raw exception)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ok-polish-expjsonl-"));
+  try {
+    const sessionId = "01EXPJSONL000001";
+    const transport = fauxTransport(sessionId);
+    const store = new SessionStore({ root, sessionId });
+    await store.ensure();
+    await store.appendMessage({ role: "user", content: "raw copy me", timestamp: Date.now() });
+    const { tui } = headlessTui();
+    const app = buildTuiApp(tui, {
+      transport,
+      modelId: "faux-1",
+      sessionId,
+      persistMode: "local",
+      store,
+      sessionsRoot: root,
+      cwd: root,
+    });
+    const target = path.join(root, "out.jsonl");
+    await app.controller.dispatchCommand("export", target);
+    const copy = await readFile(target, "utf-8");
+    const original = await readFile(store.filePath, "utf-8");
+    // SECURITY.md's deliberate redact-on-read exception: byte-faithful, but
+    // the copy must keep the session store's owner-only mode.
+    assert.equal(copy, original, "the .jsonl branch is a byte-faithful copy of the session file");
+    if (process.platform !== "win32") {
+      const { stat } = await import("node:fs/promises");
+      assert.equal((await stat(target)).mode & 0o777, 0o600, "the copy keeps the store's owner-only mode");
+    }
+    await store.close();
+    await transport.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("export: xterm256ToHex covers base16, cube, and greyscale", () => {
   assert.equal(xterm256ToHex(0), "#000000");
   assert.equal(xterm256ToHex(15), "#ffffff");

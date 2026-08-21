@@ -48,7 +48,7 @@ Redacting on WRITE is necessary but never sufficient. A session file outlives
 the version that wrote it: a turn recorded before the redactor covered a given
 provider still holds that key in cleartext on disk, and no future write-seam
 fix can retroactively clean it. **Every reader of stored session data must
-therefore redact on READ.** Four consumers exist today, and all four redact:
+therefore redact on READ.** Five consumers exist today, and all five redact:
 
 1. `openkai tail` (F1d) — `packages/cli/src/tail.ts`.
 2. `openkai sessions --show` (F1d2) — `contentSnippet` in
@@ -65,12 +65,32 @@ therefore redact on READ.** Four consumers exist today, and all four redact:
    `openkai sessions` listing (a seam that bypasses `contentSnippet` entirely)
    and the `/resume` picker's item description, plus the `allMessagesText`
    search haystack.
+5. `/export` HTML transcript (F1d5) — `renderText` in
+   `packages/cli/src/tui/export-html.ts`, the single render seam every string
+   enters the document through: redact, THEN truncate (the consumer-2
+   ordering — a key sliced below its pattern's length floor is still a leaked
+   key), THEN HTML-escape. Covers message text, tool-call arguments,
+   tool-result bodies, compaction summaries, and the session name/title.
 
-Consumer 4 is the standing lesson: `readSessionSearchRows` did not exist when
-the union below was certified, and a **new reader surface silently bypassed the
-existing seams**. Redaction therefore lives at the row-construction chokepoint,
-not at each render, so a future caller cannot bypass it. When adding any reader
-of stored session data, enumerate it here and add a reproducer.
+Consumers 4 and 5 are the standing lesson, proved twice: `readSessionSearchRows`
+did not exist when the union below was certified, and `/export` predated this
+section — in both cases a **new reader surface silently bypassed the existing
+seams** (the export even carried its own non-redacting replica of consumer 3's
+`messageText`). Redaction therefore lives at the row/block-construction
+chokepoint, not at each render, so a future caller cannot bypass it. When
+adding any reader of stored session data, enumerate it here and add a
+reproducer.
+
+### Deliberate exception — `/export <path>.jsonl`
+
+The `.jsonl` branch of `/export` (`app.ts`) is a **byte-faithful copy of the
+raw session file** and is exempt from redact-on-read BY DESIGN: a redacted
+copy could not seed a resume (the same reason consumer 3 redacts DISPLAY ONLY
+while `initialMessages` stays raw). Compensating controls: the copy is written
+with the session store's owner-only `0600` mode, and the TUI notice names it a
+RAW unredacted copy at the moment of export. Anything that would redact this
+branch breaks its purpose; anything that widens its exposure (default mode,
+location, any future remote destination) must come back through this section.
 
 Each consumer has an inverted control in
 `packages/cli/test/security-repro-e002.test.ts`: reverting any one redaction

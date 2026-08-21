@@ -7,12 +7,15 @@
  * the export reads like the terminal it came from.
  *
  * Tool calls render as preformatted blocks (pi's ToolHtmlRenderer extension
- * point is skipped per the dossier). All model/session text is HTML-escaped
- * at the single render seam — an export must never carry live markup.
+ * point is skipped per the dossier). All model/session text passes through
+ * the single render seam {@link renderText}: redacted (E002-F1d5 — the export
+ * is the FIFTH reader of stored session data; SECURITY.md "redact-on-read"),
+ * THEN truncated, THEN HTML-escaped. An export must never carry live markup
+ * or a stored cleartext secret. Never interpolate escapeHtml(raw) directly.
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Entry } from "@kaidera/openkai-core";
+import { redactSecrets, type Entry } from "@kaidera/openkai-core";
 
 /** Convert an xterm-256 palette index to `#rrggbb` (pure — exported for tests). */
 export function xterm256ToHex(n: number): string {
@@ -52,7 +55,7 @@ const EXPORT_COLOURS = {
   attention: 220, // amber
 } as const;
 
-/** Escape text for HTML body/attribute contexts (the single escape seam). */
+/** Escape text for HTML body/attribute contexts ({@link renderText}'s final stage). */
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -61,13 +64,31 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * The single render seam — every string that enters the document goes through
+ * here. Order matters (E002-F1d5): redact FIRST (a stored session outlives
+ * the version that wrote it, so the reader is the only seam that can still
+ * catch a pre-redactor cleartext key), truncate SECOND (slicing raw text can
+ * cut a key below its pattern's length floor, and a half-printed key is still
+ * a leaked key), escape LAST.
+ */
+function renderText(raw: string, max?: number): string {
+  const redacted = redactSecrets(raw);
+  return escapeHtml(max === undefined ? redacted : redacted.slice(0, max));
+}
+
 /** One rendered transcript block (discriminated by role). */
 interface HtmlBlock {
   role: "user" | "assistant" | "tool" | "compaction";
   html: string;
 }
 
-/** Extract the text of one message's content parts (string or part array). */
+/**
+ * Extract the text of one message's content parts (string or part array).
+ * RAW extraction — unlike app.ts's redacting `messageText`, this one defers
+ * redaction to {@link renderText}; its output must never reach the document
+ * any other way.
+ */
 function messageText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -87,7 +108,7 @@ function messageBlocks(message: AgentMessage): HtmlBlock[] {
     return [
       {
         role: "tool",
-        html: `<div class="tool"><span class="tool-name">${escapeHtml(message.toolName)}</span> result<pre>${escapeHtml(messageText(message.content).slice(0, 4000))}</pre></div>`,
+        html: `<div class="tool"><span class="tool-name">${renderText(message.toolName)}</span> result<pre>${renderText(messageText(message.content), 4000)}</pre></div>`,
       },
     ];
   }
@@ -98,7 +119,7 @@ function messageBlocks(message: AgentMessage): HtmlBlock[] {
       const args = JSON.stringify(part.arguments ?? {}, null, 2) ?? "{}";
       blocks.push({
         role: "tool",
-        html: `<div class="tool"><span class="tool-name">${escapeHtml(part.name)}</span><pre>${escapeHtml(args.slice(0, 4000))}</pre></div>`,
+        html: `<div class="tool"><span class="tool-name">${renderText(part.name)}</span><pre>${renderText(args, 4000)}</pre></div>`,
       });
     }
   }
@@ -111,7 +132,7 @@ function messageBlocks(message: AgentMessage): HtmlBlock[] {
   if (text.trim().length > 0) {
     blocks.push({
       role: message.role === "assistant" ? "assistant" : "user",
-      html: `<div class="msg ${message.role === "assistant" ? "assistant" : "user"}"><div class="who">${message.role === "assistant" ? "assistant" : "you"}</div><div class="body">${escapeHtml(text)}</div></div>`,
+      html: `<div class="msg ${message.role === "assistant" ? "assistant" : "user"}"><div class="who">${message.role === "assistant" ? "assistant" : "you"}</div><div class="body">${renderText(text)}</div></div>`,
     });
   }
   return blocks;
@@ -142,7 +163,7 @@ export function exportSessionToHtml(options: ExportHtmlOptions): string {
     } else if (entry.type === "compaction") {
       blocks.push({
         role: "compaction",
-        html: `<div class="compaction">context compacted — ${escapeHtml(String(entry.tokensBefore))} tokens before<pre>${escapeHtml(entry.summary)}</pre></div>`,
+        html: `<div class="compaction">context compacted — ${renderText(String(entry.tokensBefore))} tokens before<pre>${renderText(entry.summary)}</pre></div>`,
       });
     }
   }
@@ -153,7 +174,7 @@ export function exportSessionToHtml(options: ExportHtmlOptions): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenKai — ${escapeHtml(title)}</title>
+<title>OpenKai — ${renderText(title)}</title>
 <style>
 :root { color-scheme: dark; }
 body { background: ${c(EXPORT_COLOURS.background)}; color: ${c(EXPORT_COLOURS.text)};
@@ -179,8 +200,8 @@ footer { margin-top: 32px; color: ${c(EXPORT_COLOURS.muted)}; font-size: 11px;
 </head>
 <body>
 <header>
-<h1>${escapeHtml(title)}</h1>
-<div class="meta">OpenKai session ${escapeHtml(options.sessionId)} · exported ${escapeHtml(exportedAt.toISOString())} · ${blocks.length} blocks</div>
+<h1>${renderText(title)}</h1>
+<div class="meta">OpenKai session ${renderText(options.sessionId)} · exported ${renderText(exportedAt.toISOString())} · ${blocks.length} blocks</div>
 </header>
 ${body}
 <footer>exported by openkai /export — self-contained transcript</footer>
