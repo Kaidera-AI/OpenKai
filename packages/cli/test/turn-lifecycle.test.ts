@@ -10,6 +10,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking } from "@earendil-works/pi-ai/providers/faux";
 import { InProcessTransport, SessionStore } from "@kaidera/openkai-core";
@@ -55,7 +58,12 @@ async function buildApp(opts: { sessionId: string; thinking?: string }): Promise
     provider: "faux",
     cwd: process.cwd(),
   });
-  const sessionsRoot = `/tmp/ok-lifecycle-${opts.sessionId}`;
+  // mkdtemp: unique root per run. A fixed /tmp/ok-lifecycle-<sessionId> collides between
+  // concurrent worktrees and raises SessionLockError -- a false-red gate, not a
+  // real failure. Session ID constants are kept verbatim; only the ROOT varies.
+  // ponytail: root only, no cleanup -- the lock is pid-liveness-checked so stale
+  // dirs are inert; add a finally-rm if /tmp pressure ever matters.
+  const sessionsRoot = await mkdtemp(path.join(tmpdir(), "ok-lifecycle-"));
   const store = new SessionStore({ root: sessionsRoot, sessionId: opts.sessionId });
   await store.ensure();
   const app = buildTuiApp(headlessTui(), {

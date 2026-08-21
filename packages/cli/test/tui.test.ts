@@ -13,7 +13,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createModels, uuidv7 } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Type, type Static } from "typebox";
@@ -25,7 +27,16 @@ import { InProcessTransport, SessionStore, CortexClient, CortexCheckpoint, listS
 import { buildTuiApp, type TuiApp, type ExitRequest } from "../dist/tui/app.js";
 import { resolveRunMode } from "../dist/tui/runtime.js";
 import { gradientLogo } from "../dist/tui/gradient.js";
-import { OVERLAY_FOOTER, renderOverlayFooter } from "../dist/tui/theme.js";
+import { OVERLAY_FOOTER, highlight, renderOverlayFooter, setTheme } from "../dist/tui/theme.js";
+import {
+  configureCapabilities,
+  plainTerminalText,
+  resetCapabilities,
+  resolveCapabilities,
+  stripTerminalSequences,
+} from "../dist/tui/capabilities.js";
+import { overlaySpec, resolveLayout, resolveLayoutMode } from "../dist/tui/layout.js";
+import { defaultStatusState, StatusLine } from "../dist/tui/status.js";
 
 // ── Test fixtures ────────────────────────────────────────────────────────────
 
@@ -102,7 +113,11 @@ async function buildFauxApp(opts: {
   });
 
   // Tests persist to a tmp root — never the repo's own .openkai/sessions.
-  const sessionsRoot = `/tmp/ok-tui-${opts.sessionId}`;
+  // mkdtemp gives each run (and each concurrent worktree) a unique root so
+  // two agents running `npm test` in different worktrees cannot collide on
+  // the same /tmp/ok-tui-<sessionId> lock (SessionLockError, false-red gate).
+  // The session ID constant is kept verbatim — chrome assertions depend on it.
+  const sessionsRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-"));
   const store = new SessionStore({ root: sessionsRoot, sessionId: opts.sessionId });
   await store.ensure();
 
@@ -135,8 +150,9 @@ function stripAnsi(text: string): string {
 // ── 1. Golden-frame: streamed text + tool card + chrome ─────────────────────
 
 test("golden-frame: faux turn renders streamed text, a tool card, and chrome updates", async () => {
-  const { app, transport } = await buildFauxApp({ scriptedText: "Hello, OpenKai!", sessionId: "01TESTGOLDEN000001" });
+  const { app, transport, sessionsRoot } = await buildFauxApp({ scriptedText: "Hello, OpenKai!", sessionId: "01TESTGOLDEN000001" });
 
+  try {
   // One submit = one turn. The tool call continues *inside* that turn, so both
   // scripted faux responses are consumed by this single prompt — a second
   // `transport.prompt` here would silently fire an extra turn.
@@ -204,17 +220,21 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
       "rendered frame drifted from test/evidence/golden-frame.txt — if the change is intended, regenerate with GOLDEN_UPDATE=1 npm test",
     );
   }
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 2. Event-mapping: block ordering follows the transport taxonomy ──────────
 
 test("event-mapping: transcript block kinds follow connected→text→tool→settle→turn_end", async () => {
-  const { app, transport } = await buildFauxApp({
+  const { app, transport, sessionsRoot } = await buildFauxApp({
     scriptedText: "Streaming reply.",
     scriptedThinking: "let me reason about this",
     sessionId: "01TESTEVENT0000002",
   });
 
+  try {
   await app.controller.submit("go");
   await transport.close();
   await app.controller.consume();
@@ -234,17 +254,21 @@ test("event-mapping: transcript block kinds follow connected→text→tool→set
   assert.ok(app.status.currentState.usage !== null, "usage must update the chrome at turn settlement");
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 3. Thinking density: hidden by default, revealed by toggle (Ctrl+O) ────
 
 test("thinking density: collapsed by default, toggle reveals", async () => {
-  const { app, transport } = await buildFauxApp({
+  const { app, transport, sessionsRoot } = await buildFauxApp({
     scriptedText: "thinking test",
     scriptedThinking: "reasoning content here",
     sessionId: "01TESTTHINK000003",
   });
 
+  try {
   await app.controller.submit("q");
   await transport.close();
   await app.controller.consume();
@@ -267,6 +291,9 @@ test("thinking density: collapsed by default, toggle reveals", async () => {
   assert.equal(hidden, false, "toggle back to hidden");
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 3b. Composer wiring: the path a human actually takes ────────────────────
@@ -280,10 +307,12 @@ test("thinking density: collapsed by default, toggle reveals", async () => {
  * what pressing Enter fires, so the test cannot pass while the seam is wrong.
  */
 test("composer wiring: Enter renders AND persists the user message", async () => {
-  const { app, transport, store } = await buildFauxApp({
+  const { app, transport, store, sessionsRoot } = await buildFauxApp({
     scriptedText: "Reply.",
     sessionId: "01TESTCOMPOSER0004",
   });
+
+  try {
 
   const consumeP = app.controller.consume();
   app.composer.editor.onSubmit!("typed by a human");
@@ -300,13 +329,17 @@ test("composer wiring: Enter renders AND persists the user message", async () =>
 
   const roles = (await readSessionMessages(store.filePath)).map((m) => (m as { role: string }).role);
   assert.ok(roles.includes("user"), `the user message must be persisted (got ${JSON.stringify(roles)})`);
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 3c. Slash commands: dispatched locally, never sent to the model ─────────
 
 test("slash commands: /help renders a notice and does not prompt the model", async () => {
-  const { app, transport } = await buildFauxApp({ scriptedText: "unused", sessionId: "01TESTSLASH000005" });
+  const { app, transport, sessionsRoot } = await buildFauxApp({ scriptedText: "unused", sessionId: "01TESTSLASH000005" });
 
+  try {
   app.composer.editor.onSubmit!("/help");
   await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -316,16 +349,20 @@ test("slash commands: /help renders a notice and does not prompt the model", asy
   assert.ok(renderFrame(app, 80).includes("/model"), "the help notice lists the command set");
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 test("slash commands: /quit and /resume signal the runtime; unknown reports", async () => {
   const seen: ExitRequest[] = [];
-  const { app, transport } = await buildFauxApp({
+  const { app, transport, sessionsRoot } = await buildFauxApp({
     scriptedText: "unused",
     sessionId: "01TESTSLASH000006",
     onExit: (request) => seen.push(request),
   });
 
+  try {
   await app.controller.dispatchCommand("quit", "");
   assert.deepEqual(seen[0], { kind: "quit" }, "/quit asks the runtime to exit");
 
@@ -342,6 +379,9 @@ test("slash commands: /quit and /resume signal the runtime; unknown reports", as
   );
 
   await transport.close();
+  } finally {
+    await rm(sessionsRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 4. Theme/tokens: the footer grammar is the single interaction string ────
@@ -349,6 +389,120 @@ test("slash commands: /quit and /resume signal the runtime; unknown reports", as
 test("theme: overlay footer is the canonical interaction grammar", () => {
   assert.equal(OVERLAY_FOOTER, "↑/↓ Navigate · Enter Select · ESC Cancel");
   assert.ok(renderOverlayFooter().length > 0, "footer renders non-empty");
+});
+
+// ── 4b. OK-10 Wave 0 layout + terminal capability floor ───────────────────
+
+test("layout: one width+height resolver owns all five modes and short-height compaction", () => {
+  assert.equal(resolveLayoutMode(40, 12), "compact");
+  assert.equal(resolveLayoutMode(59, 60), "compact");
+  assert.equal(resolveLayoutMode(60, 18), "narrow");
+  assert.equal(resolveLayoutMode(79, 60), "narrow");
+  assert.equal(resolveLayoutMode(80, 24), "standard");
+  assert.equal(resolveLayoutMode(119, 60), "standard");
+  assert.equal(resolveLayoutMode(120, 30), "workspace");
+  assert.equal(resolveLayoutMode(159, 60), "workspace");
+  assert.equal(resolveLayoutMode(160, 40), "wide");
+  assert.equal(resolveLayoutMode(200, 12), "compact", "height below 16 forces compact at any width");
+
+  const short = resolveLayout(200, 12);
+  assert.equal(short.composerMaxRows, 4);
+  assert.equal(short.showBootExtras, false);
+  assert.deepEqual(overlaySpec(short, "60%", "70%"), {
+    anchor: "center",
+    width: "100%",
+    maxHeight: "100%",
+  });
+});
+
+test("capabilities: plain, NO_COLOR, 16, 256, truecolour, ASCII, and reduced motion resolve deterministically", () => {
+  const utf8 = { LANG: "C.UTF-8" };
+  assert.deepEqual(resolveCapabilities({ ...utf8, TERM: "dumb" }, true), {
+    plain: true,
+    colour: "none",
+    unicode: false,
+    altScreen: false,
+    mouse: false,
+    osc: false,
+    reducedMotion: true,
+  });
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color" }, false).plain, true, "non-TTY is plain");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color", NO_COLOR: "1" }, true).colour, "none");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color", NO_COLOR: "" }, true).colour, "ansi256");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "ansi", OPENKAI_COLOR: "16" }, true).colour, "ansi16");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm-256color" }, true).colour, "ansi256");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm", COLORTERM: "truecolor" }, true).colour, "truecolour");
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm", OPENKAI_ASCII: "1" }, true).unicode, false);
+  assert.equal(resolveCapabilities({ ...utf8, TERM: "xterm", OPENKAI_REDUCED_MOTION: "1" }, true).reducedMotion, true);
+});
+
+test("theme: dark accent is exact #B0E1CD in truecolour and index 152 only in 256-colour", () => {
+  try {
+    setTheme("dark");
+    configureCapabilities({ TERM: "xterm", COLORTERM: "truecolor", LANG: "C.UTF-8" }, true);
+    const exact = highlight.base("mint");
+    assert.ok(exact.includes("\x1b[38;2;176;225;205m"), "truecolour emits exact #B0E1CD");
+    assert.ok(!exact.includes("38;5;152"), "truecolour does not masquerade the fallback as exact");
+
+    configureCapabilities({ TERM: "xterm-256color", LANG: "C.UTF-8" }, true);
+    const fallback = highlight.base("mint");
+    assert.ok(fallback.includes("\x1b[38;5;152m"), "256-colour emits index 152 (#AFD7D7)");
+    assert.ok(!fallback.includes("38;2;176;225;205"), "the fallback remains explicitly distinct");
+  } finally {
+    resetCapabilities();
+    setTheme("dark");
+  }
+});
+
+test("capabilities: NO_COLOR frame has no colour SGR; ASCII+reduced-motion frame is stable", async () => {
+  const colourSgr = /\x1b\[(?:3[0-9]|4[0-9]|9[0-7]|10[0-7]|38(?:;[^m]*)?|48(?:;[^m]*)?)m/;
+  let transport: InProcessTransport | undefined;
+  let store: SessionStore | undefined;
+  try {
+    configureCapabilities({ TERM: "xterm-256color", LANG: "C.UTF-8", NO_COLOR: "1" }, true);
+    const built = await buildFauxApp({ scriptedText: "unused", sessionId: "01TESTNOCOLOR0001" });
+    transport = built.transport;
+    store = built.store;
+    const noColourFrame = built.app.root.render(80).join("\n");
+    assert.ok(!colourSgr.test(noColourFrame), "NO_COLOR emits no foreground/background colour SGR");
+
+    configureCapabilities({
+      TERM: "xterm-256color",
+      LANG: "C.UTF-8",
+      OPENKAI_ASCII: "1",
+      OPENKAI_REDUCED_MOTION: "1",
+    }, true);
+    const state = {
+      ...defaultStatusState("a-very-long-model-name", "01ASCII0000000001", "local"),
+      busy: true,
+      activity: "working…",
+      busyFrame: 1,
+    };
+    const status = new StatusLine(state, () => 12);
+    const first = status.render(40).join("\n");
+    status.update({ ...state, busyFrame: 9 });
+    const second = status.render(40).join("\n");
+    assert.equal(first, second, "reduced motion pins the busy frame");
+    assert.ok(!/[^\x00-\x7f]/.test(stripTerminalSequences(first)), "ASCII mode emits deterministic ASCII glyphs");
+    const asciiFrame = built.app.root.render(40).join("\n");
+    assert.equal(asciiFrame, built.app.root.render(40).join("\n"), "ASCII app rendering is deterministic");
+    assert.ok(
+      !/[^\x00-\x7f]/.test(stripTerminalSequences(asciiFrame)),
+      "ASCII mode covers boot, transcript, composer, and status rather than one isolated glyph",
+    );
+  } finally {
+    await store?.close();
+    await transport?.close();
+    resetCapabilities();
+  }
+});
+
+test("capabilities: the plain sink removes alt-screen, mouse, OSC, SGR, and Unicode", () => {
+  const hostile = "\x1b[?1049h\x1b[?1000h\x1b]11;?\x07\x1b[38;5;152mhello ●\x1b[0m\x1b[?1049l";
+  const plain = plainTerminalText(hostile);
+  assert.equal(plain, "hello *");
+  assert.ok(!plain.includes("\x1b"));
+  assert.ok(!/[^\x00-\x7f]/.test(plain));
 });
 
 // ── 5. Mode matrix (A1) ──────────────────────────────────────────────────────
@@ -397,10 +551,12 @@ test("mode matrix: managed mode ingests the session id into /sessions/ingested-i
   }
 
   const sessionId = uuidv7();
-  const tmpRoot = `/tmp/ok-tui-matrix-${sessionId}`;
+  const tmpRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-matrix-"));
   const store = new SessionStore({ root: tmpRoot, sessionId });
   await store.ensure();
   const cortex = new CortexClient({ project: "openkai" });
+
+  try {
 
   // Append a user + assistant message locally, then checkpoint to Cortex.
   await store.appendMessage({ role: "user", content: "matrix probe", timestamp: Date.now() } as never);
@@ -431,15 +587,19 @@ test("mode matrix: managed mode ingests the session id into /sessions/ingested-i
     ingested.ids.includes(sessionId),
     `session ${sessionId} must appear in /sessions/ingested-ids in managed mode`,
   );
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 // ── 6. Session store helpers ───────────────────────────────────────────────
 
 test("persist: listSessions + readSessionMessages round-trip", async () => {
-  const tmpRoot = `/tmp/ok-tui-list-${Math.random().toString(36).slice(2)}`;
+  const tmpRoot = await mkdtemp(path.join(tmpdir(), "ok-tui-list-"));
   const id = "01TESTLIST" + Math.random().toString(36).slice(2, 6);
   const store = new SessionStore({ root: tmpRoot, sessionId: id });
   await store.ensure();
+  try {
   await store.appendMessage({ role: "user", content: "hello list", timestamp: Date.now() } as never);
 
   const listed = await listSessions(tmpRoot);
@@ -447,6 +607,9 @@ test("persist: listSessions + readSessionMessages round-trip", async () => {
 
   const msgs = await readSessionMessages(store.filePath);
   assert.equal(msgs.length, 1, "readSessionMessages returns the appended message");
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
 });
 test("gradient: every ESC introduces a CSI — no bare ESC eats the next glyph", () => {
   // fg256 closes with `\x1b[39m` (five chars). Slicing four left a bare ESC

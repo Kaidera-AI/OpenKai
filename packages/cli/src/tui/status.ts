@@ -36,10 +36,14 @@ import {
 import { KAIDERA_GLYPH } from "./brand.js";
 import { gradientEscape } from "./gradient.js";
 import { paintShimmerLabel } from "./magic-keywords.js";
+import { capabilities, glyph, renderTerminalText } from "./capabilities.js";
+import { LAYOUT_ROWS, resolveLayoutMode } from "./layout.js";
 
 /** The logo at footer scale — the hex glyph in the Kaidera brand mint. */
 function brandGlyph(): string {
-  return `${gradientEscape(0.55)}${KAIDERA_GLYPH}\x1b[0m`;
+  const mark = glyph(KAIDERA_GLYPH, "*");
+  if (capabilities().colour === "none") return mark;
+  return `${gradientEscape(0.55)}${mark}\x1b[0m`;
 }
 
 /** The chrome state — mutated by the controller as events arrive. */
@@ -126,12 +130,18 @@ function tierChip(state: StatusState): string {
   if (tier === undefined) return "";
   const from = state.tierFrom;
   if (from !== undefined && from !== tier) {
-    return highlight.attention(`t:${TIER_SHORT[from]}▸${TIER_SHORT[tier]}`);
+    return highlight.attention(`t:${TIER_SHORT[from]}${glyph("▸", ">")}${TIER_SHORT[tier]}`);
   }
   return textToken.muted(`t:${TIER_SHORT[tier]}`);
 }
 
 const BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const BUSY_FRAMES_ASCII = ["|", "/", "-", "\\"];
+
+function busyFrame(index: number): string {
+  const frames = capabilities().unicode ? BUSY_FRAMES : BUSY_FRAMES_ASCII;
+  return capabilities().reducedMotion ? frames[0]! : (frames[index % frames.length] ?? frames[0]!);
+}
 
 /**
  * Render the spinner chip — animated while busy, and always telling the truth
@@ -140,9 +150,9 @@ const BUSY_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "�
  * awaiting > busy > attention > idle.
  */
 function spinnerChip(state: StatusState): string {
-  if (state.awaitingApproval) return highlight.danger("◐ waiting");
+  if (state.awaitingApproval) return highlight.danger(`${glyph("◐", "?")} waiting`);
   if (state.busy) {
-    const frame = BUSY_FRAMES[state.busyFrame % BUSY_FRAMES.length] ?? "⠋";
+    const frame = busyFrame(state.busyFrame);
     const elapsed = state.busySince ? Math.max(0, Math.round((Date.now() - state.busySince) / 1000)) : 0;
     const what = state.activity || "working";
     // Magic-keyword turns shimmer their activity label (E017 UK round 4);
@@ -152,8 +162,8 @@ function spinnerChip(state: StatusState): string {
     if (what === "ultrareviewing…") return `${frame} ${paintShimmerLabel(what, "ultrareview")} ${elapsed}s`;
     return `${highlight.base(frame)} ${paintShimmerLabel(what, "brand")} ${elapsed}s`;
   }
-  if (state.attention) return highlight.attention("◉ attention");
-  return textToken.muted("○ idle");
+  if (state.attention) return highlight.attention(`${glyph("◉", "!")} attention`);
+  return textToken.muted(`${glyph("○", "o")} idle`);
 }
 
 /**
@@ -166,7 +176,10 @@ export class StatusLine implements Component {
   private state: StatusState;
   private chips: StatuslineChip[];
 
-  constructor(state: StatusState) {
+  constructor(
+    state: StatusState,
+    private readonly viewportRows: () => number = () => LAYOUT_ROWS.tall,
+  ) {
     this.state = state;
     this.chips = readStatuslineChips();
     this.text = new Text("", 1, 0, (line) => surface["3"](line));
@@ -189,10 +202,13 @@ export class StatusLine implements Component {
    * RIGHT: tokens + model. Chips listed in config decide what renders; model
    * and tokens always sit on the right when present. */
   private renderLine(width: number): string {
-    const model = this.state.modelId.length > 24 ? this.state.modelId.slice(0, 23) + "…" : this.state.modelId;
+    const compact = resolveLayoutMode(width, this.viewportRows()) === "compact";
+    const modelCap = compact ? 12 : 24;
+    const ellipsis = glyph("…", "~");
+    const model = this.state.modelId.length > modelCap ? this.state.modelId.slice(0, modelCap - 1) + ellipsis : this.state.modelId;
     const session = this.state.sessionId.slice(0, 8);
-    const tokens = this.state.usage ? `${this.state.usage.totalTokens}t` : "—";
-    const sep = textToken.muted("·");
+    const tokens = this.state.usage ? `${this.state.usage.totalTokens}t` : glyph("—", "-");
+    const sep = textToken.muted(glyph("·", "|"));
 
     const chipRenderers: Record<StatuslineChip, string> = {
       brand: brandGlyph(),
@@ -213,7 +229,10 @@ export class StatusLine implements Component {
         : "",
     };
 
-    const active = this.chips
+    const configured: readonly StatuslineChip[] = compact
+      ? (["state", "tokens", "model"] as const)
+      : this.chips;
+    const active = configured
       .map((chip) => [chip, chipRenderers[chip]] as const)
       .filter(([, s]) => s.length > 0);
 
@@ -223,8 +242,8 @@ export class StatusLine implements Component {
     const right = active.filter(([chip]) => RIGHT_CHIPS.includes(chip)).map(([, s]) => s);
 
     // Contextual chips (not configurable): bash mode + autonomy + routed tier.
-    if (this.state.mode === "bash") left.push(highlight.base("$"));
-    if (this.state.autonomy) left.push(textToken.muted(`a:${this.state.autonomy}`));
+    if (!compact && this.state.mode === "bash") left.push(highlight.base("$"));
+    if (!compact && this.state.autonomy) left.push(textToken.muted(`a:${this.state.autonomy}`));
     if (this.state.tier) left.push(tierChip(this.state));
 
     const rightText = right.join(` ${sep} `);
@@ -261,7 +280,7 @@ export class StatusLine implements Component {
   render(width: number): string[] {
     this.lastWidth = width;
     this.text.setText(this.renderLine(width));
-    return this.text.render(width);
+    return this.text.render(width).map(renderTerminalText);
   }
   private lastWidth = 80;
   invalidate(): void {
@@ -271,5 +290,5 @@ export class StatusLine implements Component {
 
 /** A muted divider line rendered above the chrome (visual separation). */
 export function chromeDivider(): string {
-  return toolBorder("─".repeat(8));
+  return toolBorder(glyph("─", "-").repeat(8));
 }

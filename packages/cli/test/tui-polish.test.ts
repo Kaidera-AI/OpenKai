@@ -425,7 +425,8 @@ test("export: self-contained HTML with theme colours, escaped content, no extern
     assert.ok(html.includes("export me"), "the display name renders");
     assert.ok(html.includes("hello &lt;b&gt;world&lt;/b&gt;"), "model/user text is HTML-escaped");
     assert.ok(!html.includes("hello <b>world</b>"), "no raw markup survives");
-    assert.ok(html.includes("#00afff"), "the accent hex comes from the theme palette (xterm 39)");
+    assert.ok(html.includes("#b0e1cd"), "HTML uses exact Kaidera mint rather than the terminal fallback");
+    assert.ok(!html.includes("#afd7d7"), "xterm index 152 stays a terminal-only fallback");
     await store.close();
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -462,10 +463,47 @@ test("export: /export command writes the file", async () => {
   }
 });
 
+test("export: .jsonl target is a byte-faithful owner-only copy (the documented raw exception)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ok-polish-expjsonl-"));
+  try {
+    const sessionId = "01EXPJSONL000001";
+    const transport = fauxTransport(sessionId);
+    const store = new SessionStore({ root, sessionId });
+    await store.ensure();
+    await store.appendMessage({ role: "user", content: "raw copy me", timestamp: Date.now() });
+    const { tui } = headlessTui();
+    const app = buildTuiApp(tui, {
+      transport,
+      modelId: "faux-1",
+      sessionId,
+      persistMode: "local",
+      store,
+      sessionsRoot: root,
+      cwd: root,
+    });
+    const target = path.join(root, "out.jsonl");
+    await app.controller.dispatchCommand("export", target);
+    const copy = await readFile(target, "utf-8");
+    const original = await readFile(store.filePath, "utf-8");
+    // SECURITY.md's deliberate redact-on-read exception: byte-faithful, but
+    // the copy must keep the session store's owner-only mode.
+    assert.equal(copy, original, "the .jsonl branch is a byte-faithful copy of the session file");
+    if (process.platform !== "win32") {
+      const { stat } = await import("node:fs/promises");
+      assert.equal((await stat(target)).mode & 0o777, 0o600, "the copy keeps the store's owner-only mode");
+    }
+    await store.close();
+    await transport.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("export: xterm256ToHex covers base16, cube, and greyscale", () => {
   assert.equal(xterm256ToHex(0), "#000000");
   assert.equal(xterm256ToHex(15), "#ffffff");
-  assert.equal(xterm256ToHex(39), "#00afff", "cube index (the theme accent)");
+  assert.equal(xterm256ToHex(39), "#00afff", "representative colour-cube index");
+  assert.equal(xterm256ToHex(152), "#afd7d7", "Kaidera mint's deterministic 256-colour fallback");
   assert.equal(xterm256ToHex(234), "#1c1c1c", "greyscale ramp (the panel background)");
 });
 
@@ -520,10 +558,10 @@ test("history search: token highlighting merges overlapping ranges", () => {
   assert.deepEqual(tokens, ["aa", "aa"], "the query tokenises per word");
   const out = highlightTokens("aaxx", tokens);
   assert.equal(stripAnsi(out), "aaxx", "plain text is preserved");
-  const wraps = out.match(/\x1b\[38;5;39m/g) ?? [];
+  const wraps = out.match(/\x1b\[38;5;152m/g) ?? [];
   assert.equal(wraps.length, 1, "duplicate token ranges collapse into one highlight");
   const twice = highlightTokens("the quick brown quick", ["quick"]);
-  assert.equal((twice.match(/\x1b\[38;5;39m/g) ?? []).length, 2, "both occurrences highlight");
+  assert.equal((twice.match(/\x1b\[38;5;152m/g) ?? []).length, 2, "both occurrences highlight");
   assert.equal(highlightTokens("nothing here", ["zzz"]), "nothing here", "no match → untouched");
 });
 

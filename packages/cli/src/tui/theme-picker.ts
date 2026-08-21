@@ -20,7 +20,7 @@ export interface ThemePickerOptions {
 
 const DESCRIPTIONS: Record<string, string> = {
   auto: "follows your terminal background (OSC 11 / COLORFGBG)",
-  dark: "Kaidera dark — mint on graphite (default)",
+  dark: "Kaidera dark — exact #B0E1CD mint; #AFD7D7 is the 256-colour fallback",
   light: "Kaidera light",
   catppuccin: "pastel dark, soft contrast",
   dracula: "high-contrast purple dark",

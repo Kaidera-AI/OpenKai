@@ -8,6 +8,8 @@
 import { SelectList, fuzzyFilter, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component, SelectItem } from "@earendil-works/pi-tui";
 import { highlight, paletteSelectTheme, renderOverlayFooter, text as textToken, surface, opaquePanel } from "./theme.js";
+import { glyph, renderTerminalText } from "./capabilities.js";
+import { LAYOUT_ROWS, resolveLayout } from "./layout.js";
 
 export interface HubProvider {
   id: string;
@@ -61,6 +63,7 @@ export class ModelsHub implements Component {
     private readonly current: { provider: string; modelId: string },
     private readonly onPick: (provider: string, modelId: string) => void,
     private readonly onCancel: () => void,
+    private readonly viewportRows: () => number = () => LAYOUT_ROWS.tall,
   ) {
     this.scopeList = this.buildScopeList();
     this.modelList = this.buildModelList();
@@ -77,7 +80,7 @@ export class ModelsHub implements Component {
   private buildScopeList(): SelectList {
     const rows: ScopeRow[] = this.scopes().map((s) => ({
       value: s.id,
-      label: `${s.id === this.scope ? "▶ " : "  "}${s.label}`,
+      label: `${s.id === this.scope ? `${glyph("▶", ">")} ` : "  "}${s.label}`,
       description: s.id === "all" ? `${this.allModels().length}` : s.id === "recent" ? `${this.recent.length}` : `${this.modelsFor(s.id).length}`,
       scope: s.id,
     }));
@@ -119,7 +122,7 @@ export class ModelsHub implements Component {
       const isCurrent = provider === this.current.provider && model.id === this.current.modelId;
       return {
         value: `${provider}/${model.id}`,
-        label: `${isCurrent ? "● " : "  "}${model.name ?? model.id}`,
+        label: `${isCurrent ? `${glyph("●", "*")} ` : "  "}${model.name ?? model.id}`,
         description: [this.scope === "all" || this.scope === "recent" ? provider : "", meta].filter((s) => s.length > 0).join(" · "),
         modelId: model.id,
         providerId: provider,
@@ -164,24 +167,57 @@ export class ModelsHub implements Component {
   }
 
   render(width: number): string[] {
+    const layout = resolveLayout(width, this.viewportRows());
+    const dash = glyph("—", "-");
+    const separator = glyph("·", "|");
+    const filterLine = ` ${this.query ? `${textToken.dim("filter:")} ${this.query}` : textToken.dim("type to filter models")}`;
+    const blank = layout.decorativeRows ? [""] : [];
+
+    if (!layout.multiPane) {
+      const list = this.focus === "scope" ? this.scopeList : this.modelList;
+      const scopeLabel = this.scopes().find((candidate) => candidate.id === this.scope)?.label ?? this.scope;
+      const out = [
+        ` ${highlight.base("models")} ${textToken.dim(`${dash} Tab: ${this.focus === "scope" ? "models" : "scopes"} ${separator} Enter picks ${separator} Esc back`)}`,
+        ` ${textToken.dim("scope:")} ${scopeLabel}`,
+        ...(this.focus === "model" ? [filterLine] : []),
+        ...blank,
+        ...list.render(Math.max(1, width - 2)),
+        ...blank,
+        ` ${textToken.dim(renderOverlayFooter())}`,
+      ];
+      return opaquePanel(out, width).map(renderTerminalText);
+    }
+
     const sidebarWidth = Math.max(20, Math.min(30, Math.floor(width * 0.28)));
-    const bodyWidth = width - sidebarWidth - 3;
-    const scopeLines = this.scopeList.render(sidebarWidth - 2);
-    const modelLines = this.modelList.render(bodyWidth - 2);
+    const bodyWidth = Math.max(8, width - sidebarWidth - 3);
+    const scopeLines = this.scopeList.render(Math.max(1, sidebarWidth - 2));
+    const modelLines = this.modelList.render(Math.max(1, bodyWidth - 2));
     const rows = Math.max(scopeLines.length, modelLines.length);
     const out: string[] = [
-      ` ${highlight.base("models")} ${textToken.dim("— Tab switches pane · Enter picks · Esc back")}`,
-      ` ${this.query ? `${textToken.dim("filter:")} ${this.query}` : textToken.dim("type to filter models")}`,
-      "",
+      ` ${highlight.base("models")} ${textToken.dim(`${dash} Tab switches pane ${separator} Enter picks ${separator} Esc back`)}`,
+      filterLine,
+      ...blank,
     ];
     for (let i = 0; i < rows; i += 1) {
       const left = scopeLines[i] ?? "";
       const right = modelLines[i] ?? "";
       const leftPadded = left + " ".repeat(Math.max(0, sidebarWidth - visibleWidth(left)));
-      out.push(` ${surface["2"](leftPadded)} ${textToken.dim("│")} ${right}`);
+      out.push(` ${surface["2"](leftPadded)} ${textToken.dim(glyph("│", "|"))} ${right}`);
     }
-    out.push("", ` ${textToken.dim(renderOverlayFooter())}`);
-    return opaquePanel(out, width);
+    out.push(...blank, ` ${textToken.dim(renderOverlayFooter())}`);
+    return opaquePanel(out, width).map(renderTerminalText);
+  }
+
+  /** State-only resize evidence: rendering never rebuilds or resets these. */
+  selectionState(): { focus: "scope" | "model"; scope: string; selectedScope?: string; selectedModel?: string } {
+    const selectedScope = this.scopeList.getSelectedItem()?.value;
+    const selectedModel = this.modelList.getSelectedItem()?.value;
+    return {
+      focus: this.focus,
+      scope: this.scope,
+      ...(selectedScope !== undefined ? { selectedScope } : {}),
+      ...(selectedModel !== undefined ? { selectedModel } : {}),
+    };
   }
 
   invalidate(): void {

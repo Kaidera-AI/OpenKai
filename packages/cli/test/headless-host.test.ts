@@ -12,9 +12,20 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { HostedTui } from "../dist/tui/headless-host.js";
+import type { TuiApp } from "../dist/tui/app.js";
 import { fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { createModels, type MutableModels } from "@earendil-works/pi-ai";
+import { visibleWidth, type Component, type OverlayOptions } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+
+const WAVE0_VIEWPORTS = [
+  [40, 12],
+  [60, 18],
+  [80, 24],
+  [120, 30],
+  [160, 40],
+  [200, 60],
+] as const;
 
 const echoTool = {
   name: "echo",
@@ -94,6 +105,96 @@ test("headless host: state frames carry busy/model/session (S6)", async () => {
     assert.equal(state.sessionId, host.sessionId);
     assert.equal(state.plan, false);
     assert.equal(typeof state.busy, "boolean");
+  } finally {
+    await host.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("headless host: Wave 0 viewport matrix keeps composer and status inside every frame", async () => {
+  const { host, cwd } = await startHost("unused");
+  try {
+    for (const ch of "wave0-draft") host.input(ch);
+
+    for (const [columns, rows] of WAVE0_VIEWPORTS) {
+      host.resize(columns, rows);
+      const frame = host.settledFrame();
+      const lines = frame.split("\n");
+      assert.equal(lines.length, rows, `${columns}x${rows} renders exactly the viewport height`);
+      assert.ok(
+        lines.every((line) => visibleWidth(line) <= columns),
+        `${columns}x${rows} never computes or emits an over-wide row`,
+      );
+      assert.ok(frame.includes("wave0-draft"), `${columns}x${rows} keeps the composer visible`);
+      assert.ok(frame.includes("idle"), `${columns}x${rows} keeps status visible`);
+      if (columns === 40) {
+        assert.ok(!frame.includes("tip:"), "compact mode drops boot extras before operational chrome");
+      }
+    }
+  } finally {
+    await host.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("headless host: breakpoint resizes preserve draft, selection, scroll anchor, focus, and overlay state", async () => {
+  const { host, cwd } = await startHost("unused");
+  try {
+    const internals = host as unknown as {
+      app: TuiApp;
+      virtual: {
+        focusedComponent: Component | undefined;
+        topOverlay(): { component: Component; options?: OverlayOptions } | undefined;
+      };
+    };
+    const { app, virtual } = internals;
+    const draft = Array.from({ length: 18 }, (_, index) => `draft line ${index}`).join("\n");
+    app.composer.editor.setText(draft);
+
+    // Keep enough transcript behind every tested viewport that scrollTop=12
+    // remains a valid semantic anchor even at 200x60.
+    for (let index = 0; index < 180; index += 1) {
+      app.transcript.addNotice(`anchor row ${index}`);
+    }
+    host.resize(80, 24);
+    host.settledFrame();
+    app.scroll.scrollTo(12, { disableFollow: true });
+    assert.equal(app.scroll.scrollTop, 12, "fixture establishes a non-tail scroll anchor");
+
+    const hub = app.controller.openModelsHub();
+    host.input("\t");
+    host.input("\x1b[B");
+    host.input("\x1b[B");
+    const selection = hub.selectionState();
+    const focused = virtual.focusedComponent;
+    assert.equal(selection.focus, "model", "fixture establishes model-list focus");
+    assert.ok(selection.selectedModel, "fixture establishes a selected model row");
+    assert.equal(focused, hub, "fixture establishes overlay focus intent");
+
+    for (const [columns, rows] of WAVE0_VIEWPORTS) {
+      host.resize(columns, rows);
+      let frame = "";
+      assert.doesNotThrow(() => {
+        frame = host.settledFrame();
+      }, `${columns}x${rows} resize renders without throwing`);
+      assert.ok(
+        frame.split("\n").every((line) => visibleWidth(line) <= columns),
+        `${columns}x${rows} models hub never emits an over-wide row`,
+      );
+      assert.equal(app.composer.text, draft, `${columns}x${rows} preserves the draft`);
+      assert.equal(app.scroll.scrollTop, 12, `${columns}x${rows} preserves the scroll anchor`);
+      assert.deepEqual(hub.selectionState(), selection, `${columns}x${rows} preserves the selected row and pane`);
+      assert.equal(virtual.focusedComponent, focused, `${columns}x${rows} preserves overlay focus intent`);
+
+      const options = virtual.topOverlay()?.options;
+      assert.ok(options, "models hub remains open across resize");
+      assert.equal(options.width, columns === 40 ? "100%" : "80%", `${columns}x${rows} resolves overlay width live`);
+      assert.equal(options.maxHeight, columns === 40 ? "100%" : "80%", `${columns}x${rows} resolves overlay height live`);
+    }
+
+    host.resize(40, 12);
+    assert.ok(app.composer.editor.render(40).length <= 4, "short terminals cap the composer at four rows");
+    assert.equal(app.composer.text, draft, "composer row clipping never mutates the draft");
   } finally {
     await host.close();
     rmSync(cwd, { recursive: true, force: true });

@@ -116,3 +116,15 @@ The fix code is NEW and is itself the freshest attack surface. Areas and what to
   ReviewOrchestration, ReviewTuiUx, ReviewProviderConfig.
 - Registry: Program/FEATURE_REGISTRY.md — update when this pass lands.
 - When green: report to user; release decision is THEIRS (0.1.008 cut).
+- When green: report to user; release decision is THEIRS (0.1.008 cut).
+
+---
+
+## Status: EXECUTED (E019 inc 04, 2026-08-21)
+
+This handoff was executed by the E019 qwen3.8-pro adversarial pass (cole@openkai).
+The findings ledger is in `docs/HANDOFF_E019_QWEN_LEDGER.md` — all 8 attack areas
+were reviewed; 5 salvaged findings (S1–S5) + 4 new findings (N1–N4) were fixed;
+11 reported items (R1–R11) are consciously deferred with reasons. Go/no-go
+recommendation: GO for the 0.1.9 cut from the rebased tip. Release decision
+stays with the CTO. This handoff is closed.

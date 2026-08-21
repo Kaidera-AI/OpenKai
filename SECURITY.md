@@ -48,7 +48,7 @@ Redacting on WRITE is necessary but never sufficient. A session file outlives
 the version that wrote it: a turn recorded before the redactor covered a given
 provider still holds that key in cleartext on disk, and no future write-seam
 fix can retroactively clean it. **Every reader of stored session data must
-therefore redact on READ.** Four consumers exist today, and all four redact:
+therefore redact on READ.** Five consumers exist today, and all five redact:
 
 1. `openkai tail` (F1d) — `packages/cli/src/tail.ts`.
 2. `openkai sessions --show` (F1d2) — `contentSnippet` in
@@ -65,17 +65,61 @@ therefore redact on READ.** Four consumers exist today, and all four redact:
    `openkai sessions` listing (a seam that bypasses `contentSnippet` entirely)
    and the `/resume` picker's item description, plus the `allMessagesText`
    search haystack.
+5. `/export` HTML transcript (F1d5) — `renderText` in
+   `packages/cli/src/tui/export-html.ts`, the single render seam every string
+   enters the document through: redact, THEN truncate (the consumer-2
+   ordering — a key sliced below its pattern's length floor is still a leaked
+   key), THEN HTML-escape. Covers message text, tool-call arguments,
+   tool-result bodies, compaction summaries, and the session name/title.
 
-Consumer 4 is the standing lesson: `readSessionSearchRows` did not exist when
-the union below was certified, and a **new reader surface silently bypassed the
-existing seams**. Redaction therefore lives at the row-construction chokepoint,
-not at each render, so a future caller cannot bypass it. When adding any reader
-of stored session data, enumerate it here and add a reproducer.
+Consumers 4 and 5 are the standing lesson, proved twice: `readSessionSearchRows`
+did not exist when the union below was certified, and `/export` predated this
+section — in both cases a **new reader surface silently bypassed the existing
+seams** (the export even carried its own non-redacting replica of consumer 3's
+`messageText`). Redaction therefore lives at the row/block-construction
+chokepoint, not at each render, so a future caller cannot bypass it. When
+adding any reader of stored session data, enumerate it here and add a
+reproducer.
+
+### Deliberate exception — `/export <path>.jsonl`
+
+The `.jsonl` branch of `/export` (`app.ts`) is a **byte-faithful copy of the
+raw session file** and is exempt from redact-on-read BY DESIGN: a redacted
+copy could not seed a resume (the same reason consumer 3 redacts DISPLAY ONLY
+while `initialMessages` stays raw). Compensating controls: the copy is written
+with the session store's owner-only `0600` mode, and the TUI notice names it a
+RAW unredacted copy at the moment of export. Anything that would redact this
+branch breaks its purpose; anything that widens its exposure (default mode,
+location, any future remote destination) must come back through this section.
 
 Each consumer has an inverted control in
 `packages/cli/test/security-repro-e002.test.ts`: reverting any one redaction
 fails its own reproducer and no other (reverting consumer 4 additionally fails
 F1d2, because the listing renders through it).
+
+### E002 §2 CPO sign-off — 2026-08-22
+
+**SIGNED — ren@openkai.** Independently attested against the literal
+`origin/main` tree `c169f26a0b4daae9a2d42e22f3f82fb22c1094d4`. The ordering
+controls were first executed at its `bab5b4b2343324737a12a092ee5eab588444ca47`
+ancestor; `98b7be0`, `f048ff5`, `aaf6a37`, and `bab5b4b` are all confirmed as
+ancestors of the signed tree. Ren's `aacf9cf` contribution changes export
+palette/CSS only and authors no `renderText` mechanism line. The five consumers
+above are present. For F1d5, each source mutation was rebuilt and confirmed in
+both source and compiled `dist`: truncate-before-redact produced 18/19 passing
+E002 reproducers with F1d5 the sole failure on the half-key boundary assertion;
+removing redaction produced 18/19 with F1d5 the sole failure on cleartext in the
+session title. Both controls were then re-executed at `c169f26` with the same
+sole F1d5 failures; restoring redact, then truncate, then escape returned the
+current tree to 19/19. The current-tip full suite passed 464/464 and the security
+audit passed. The ordering is therefore falsifiably proven; no ordering carve-out
+is required.
+
+**`.jsonl` exception ruling: ACCEPT within the documented boundary.** The
+byte-faithful raw copy is required to preserve resume semantics, is constrained
+to owner-only `0600`, and is accompanied by an explicit RAW/unredacted warning
+at export. Its byte-faithful/owner-only production-path test passes. Any wider
+mode, location, or remote destination reopens this ruling for review.
 
 ### Provenance correction — `ebc666e`
 

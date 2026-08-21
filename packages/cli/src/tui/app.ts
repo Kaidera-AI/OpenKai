@@ -26,7 +26,7 @@
  */
 
 import { ScrollView, Text, VStack } from "@earendil-works/pi-tui";
-import type { Component, TUI, StackChild } from "@earendil-works/pi-tui";
+import type { Component, TUI, StackChild, OverlayOptions } from "@earendil-works/pi-tui";
 import { highlight, text as textToken } from "./theme.js";
 import {
   CortexCheckpoint,
@@ -120,6 +120,24 @@ import { PromptStash, FrecencyHistory } from "./stash.js";
 import { bootMark, capabilityRow, compactMark } from "./brand.js";
 import { CLI_VERSION } from "../version.js";
 import type { AttentionNotifier } from "./attention.js";
+import { renderTerminalText } from "./capabilities.js";
+import { overlaySpec, resolveLayout } from "./layout.js";
+
+const CAPABILITY_RENDER = Symbol("openkai-capability-render");
+
+/**
+ * Apply the terminal render policy without wrapping the component. Keeping the
+ * original instance is important: pi-tui owns its focus intent, while tests and
+ * controller flows also inspect concrete overlay types.
+ */
+function applyCapabilityRender(component: Component): Component {
+  const marked = component as Component & { [CAPABILITY_RENDER]?: true };
+  if (marked[CAPABILITY_RENDER]) return component;
+  const render = component.render.bind(component);
+  component.render = (width: number): string[] => render(width).map(renderTerminalText);
+  marked[CAPABILITY_RENDER] = true;
+  return component;
+}
 
 /** Run mode resolved at startup (A1). */
 export type RunMode = "local" | "managed";
@@ -194,6 +212,7 @@ export interface TuiAppOptions {
 export interface TuiApp {
   root: Component;
   transcript: Transcript;
+  scroll: ScrollView;
   composer: Composer;
   status: StatusLine;
   controller: TuiController;
@@ -202,7 +221,7 @@ export interface TuiApp {
 /** Build the TUI layout + controller against a `TUI`. */
 export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   const agentName = options.agentName ?? "openkai";
-  const transcript = new Transcript(agentName);
+  const transcript = new Transcript(agentName, () => tui.terminal.rows);
   if (options.replayMessages) {
     for (const msg of options.replayMessages) {
       if (!("role" in msg)) continue;
@@ -215,7 +234,7 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     // Brand fixture: the gradient hex mark + wordmark at the top of every
     // fresh transcript (droid's boot card; the animation is the moment,
     // this is the fixture). State is user-global, ~/.openkai/state.json.
-    transcript.addNotice(bootMark(CLI_VERSION), { boot: true });
+    transcript.addNotice(bootMark(CLI_VERSION), { boot: true, compact: compactMark(CLI_VERSION) });
     // The capability row (droid's boot pattern): what this setup actually has.
     transcript.addNotice(
       capabilityRow({
@@ -263,7 +282,7 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   } catch {
     statusState.gitBranch = "";
   }
-  const status = new StatusLine(statusState);
+  const status = new StatusLine(statusState, () => tui.terminal.rows);
 
   const controller = new TuiController(tui, options, transcript, status);
   const composer = new Composer(tui, {
@@ -296,13 +315,13 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   const root = new VStack(
     [
       { component: scroll, grow: 1 },
-      { component: header, basis: 1, shrink: 0, minSize: 1 },
+      { component: applyCapabilityRender(header), basis: 1, shrink: 0, minSize: 1 },
       { component: composer.editor, basis: "auto", shrink: 0 },
       { component: status, basis: 1, shrink: 0, minSize: 1 },
     ] as StackChild[],
     { gap: 0, align: "stretch" },
   );
-  return { root, transcript, composer, status, controller };
+  return { root, transcript, scroll, composer, status, controller };
 }
 
 /** Compact token counts for the settled row (12.4k / 1,892 style). */
@@ -426,6 +445,26 @@ export class TuiController {
     this.modelSwitch = options.onSetModel;
     this.effortSwitch = options.onSetEffort;
     this.autonomySwitch = options.onSetAutonomy;
+  }
+
+  /** Every overlay shares the same width+height policy and ASCII seam. */
+  private showOverlay(
+    component: Component,
+    width: `${number}%`,
+    maxHeight: `${number}%` = "80%",
+  ): void {
+    const options: OverlayOptions = {
+      ...overlaySpec(resolveLayout(this.tui.terminal.columns, this.tui.terminal.rows), width, maxHeight),
+    };
+    // pi-tui evaluates `visible` before resolving overlay geometry on every
+    // frame. Mutating this same options object there makes width/height policy
+    // live across breakpoint resizes without replacing the overlay (and thus
+    // without losing selection, scroll, or focus intent).
+    options.visible = (columns, rows) => {
+      Object.assign(options, overlaySpec(resolveLayout(columns, rows), width, maxHeight));
+      return true;
+    };
+    this.tui.showOverlay(applyCapabilityRender(component), options);
   }
 
   /** Attach the composer (set after construction so the controller can build it). */
@@ -601,7 +640,14 @@ export class TuiController {
         }
         try {
           if (target.endsWith(".jsonl")) {
+            // SECURITY (E002-F1d5): DELIBERATE exception to redact-on-read —
+            // the .jsonl branch is a byte-faithful copy of the raw session
+            // file (a redacted copy could not seed a resume; the consumer-3
+            // initialMessages rationale). The copy keeps the store's
+            // owner-only mode and the notice names the risk instead.
             await fsp.copyFile(this.store.filePath, target);
+            await fsp.chmod(target, 0o600).catch(() => undefined);
+            this.transcript.addNotice(`/export — RAW session copy (unredacted; may hold stored secrets) written to: ${target}`);
           } else {
             const html = exportSessionToHtml({
               sessionId: this.sessionId,
@@ -609,8 +655,8 @@ export class TuiController {
               entries,
             });
             await fsp.writeFile(target, html, "utf-8");
+            this.transcript.addNotice(`/export — session exported to: ${target}`);
           }
-          this.transcript.addNotice(`/export — session exported to: ${target}`);
         } catch (error) {
           this.transcript.addError(`/export — failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -1164,7 +1210,7 @@ export class TuiController {
       this.tui.hideOverlay();
       this.refocusComposer();
     }, rows);
-    this.tui.showOverlay(overlay, { anchor: "center", width: "80%", maxHeight: "80%" });
+    this.showOverlay(overlay, "80%", "80%");
   }
 
   /** Ctrl+R — search the prompt history and reuse a match. */
@@ -1192,7 +1238,7 @@ export class TuiController {
         this.refocusComposer();
       },
     );
-    this.tui.showOverlay(search, { anchor: "center", width: "60%", maxHeight: "60%" });
+    this.showOverlay(search, "60%", "60%");
   }
 
   /**
@@ -1219,7 +1265,7 @@ export class TuiController {
         this.refocusComposer();
       },
     );
-    this.tui.showOverlay(picker, { anchor: "center", width: "60%", maxHeight: "60%" });
+    this.showOverlay(picker, "60%", "60%");
   }
 
   /** Fork at the picked entry, restore its text, and switch sessions. */
@@ -1255,7 +1301,7 @@ export class TuiController {
         this.refocusComposer();
       },
     );
-    this.tui.showOverlay(picker, { anchor: "center", width: "64%", maxHeight: "70%" });
+    this.showOverlay(picker, "64%", "70%");
   }
 
   /** Bare `/fuse` — ask what to fuse instead of erroring (CTO feedback). */
@@ -1286,7 +1332,7 @@ export class TuiController {
       this.tui.hideOverlay();
       this.refocusComposer();
     });
-    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "60%" });
+    this.showOverlay(picker, "50%", "60%");
   }
 
   /** The active fusion pair as a one-line label (menu + notices). */
@@ -1315,7 +1361,7 @@ export class TuiController {
         this.tui.hideOverlay();
         this.refocusComposer();
       });
-      this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
+      this.showOverlay(picker, "50%", "70%");
     };
 
     const stepModel = (title: string, providerId: string, onPick: (modelId: string) => void): void => {
@@ -1332,7 +1378,7 @@ export class TuiController {
         this.tui.hideOverlay();
         this.refocusComposer();
       });
-      this.tui.showOverlay(picker, { anchor: "center", width: "56%", maxHeight: "70%" });
+      this.showOverlay(picker, "56%", "70%");
     };
 
     // Step 1 — model 1 (architect): the session-model reset, then every provider.
@@ -1410,14 +1456,14 @@ export class TuiController {
           this.tui.hideOverlay();
           this.refocusComposer();
         });
-        this.tui.showOverlay(modelPicker, { anchor: "center", width: "56%", maxHeight: "70%" });
+        this.showOverlay(modelPicker, "56%", "70%");
       },
       () => {
         this.tui.hideOverlay();
         this.refocusComposer();
       },
     );
-    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
+    this.showOverlay(picker, "50%", "70%");
   }
 
   /** Bash-mode turn: run the command through the gated tool; render the outcome. */
@@ -1477,7 +1523,7 @@ export class TuiController {
       this.tui.hideOverlay();
       this.refocusComposer();
     });
-    this.tui.showOverlay(picker, { anchor: "center", width: "56%", maxHeight: "60%" });
+    this.showOverlay(picker, "56%", "60%");
   }
 
   /** Routing posture picker (OK-9.7; visible list). */
@@ -1498,7 +1544,7 @@ export class TuiController {
       this.tui.hideOverlay();
       this.refocusComposer();
     });
-    this.tui.showOverlay(picker, { anchor: "center", width: "56%", maxHeight: "60%" });
+    this.showOverlay(picker, "56%", "60%");
   }
 
   /** Theme picker (E017 UX): a visible list — no blind cycling. */
@@ -1524,7 +1570,7 @@ export class TuiController {
         this.refocusComposer();
       },
     });
-    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "70%" });
+    this.showOverlay(picker, "50%", "70%");
   }
 
   /** `/autonomy` — open the level picker (droid). */
@@ -1552,7 +1598,7 @@ export class TuiController {
       this.tui.hideOverlay();
       this.refocusComposer();
     });
-    this.tui.showOverlay(picker, { anchor: "center", width: "50%", maxHeight: "60%" });
+    this.showOverlay(picker, "50%", "60%");
   }
 
   /** `/autonomy [off|low|med|high]` — the coarse visible axis (droid). */
@@ -1690,7 +1736,7 @@ export class TuiController {
       },
       tab,
     );
-    this.tui.showOverlay(overlay, { anchor: "center", width: "64%", maxHeight: "80%" });
+    this.showOverlay(overlay, "64%", "80%");
   }
 
   /**
@@ -1722,9 +1768,10 @@ export class TuiController {
     // unconditionally for oauth lanes (review: the OAuth overlay was dead
     // code and Codex/Copilot lanes printed a false "already signed in").
     if (info?.oauth && !status.via) {
-      this.tui.showOverlay(
+      this.showOverlay(
         new OAuthOverlay(this.tui, { providerId, providerLabel: info.label, onDone: done }),
-        { anchor: "center", width: "64%", maxHeight: "80%" },
+        "64%",
+        "80%",
       );
       return;
     }
@@ -1739,14 +1786,15 @@ export class TuiController {
       this.tui.requestRender();
       return;
     }
-    this.tui.showOverlay(
+    this.showOverlay(
       new SignInOverlay(this.tui, {
         providerId,
         providerLabel: info?.label ?? providerId,
         envKey,
         onDone: done,
       }),
-      { anchor: "center", width: "64%", maxHeight: "80%" },
+      "64%",
+      "80%",
     );
   }
 
@@ -1804,11 +1852,11 @@ export class TuiController {
         this.refocusComposer();
       },
     );
-    this.tui.showOverlay(picker, { anchor: "center", width: "60%", maxHeight: "70%" });
+    this.showOverlay(picker, "60%", "70%");
   }
 
   /** `/models` — the fullscreen hub (sidebar scopes + metadata model list). */
-  openModelsHub(): void {
+  openModelsHub(): ModelsHub {
     const catalogue = defaultModels();
     const hub = new ModelsHub(
       Object.entries(PROVIDERS).map(([id, info]) => {
@@ -1836,8 +1884,10 @@ export class TuiController {
         this.tui.hideOverlay();
         this.refocusComposer();
       },
+      () => this.tui.terminal.rows,
     );
-    this.tui.showOverlay(hub, { anchor: "center", width: "80%", maxHeight: "80%" });
+    this.showOverlay(hub, "80%", "80%");
+    return hub;
   }
 
   /** Apply a picker selection: switch the session model + update chrome. */
@@ -1904,7 +1954,7 @@ export class TuiController {
         this.refocusComposer();
       },
     });
-    this.tui.showOverlay(palette, { anchor: "center", width: "64%", maxHeight: "70%" });
+    this.showOverlay(palette, "64%", "70%");
   }
 
   /** Third-Esc rewind menu (droid panic-key grammar): undo discoverable from Esc. */
@@ -1926,7 +1976,7 @@ export class TuiController {
         this.refocusComposer();
       },
     });
-    this.tui.showOverlay(palette, { anchor: "center", width: "44%", maxHeight: "40%" });
+    this.showOverlay(palette, "44%", "40%");
   }
 
   /** Open the leader-key command palette (scope §1.3). */
@@ -1946,7 +1996,7 @@ export class TuiController {
         this.refocusComposer();
       },
     });
-    this.tui.showOverlay(palette, { anchor: "center", width: "50%", maxHeight: "60%" });
+    this.showOverlay(palette, "50%", "60%");
   }
 
   /** The palette action table — each value maps to a controller method. */
@@ -2346,7 +2396,7 @@ export class TuiController {
         this.tui.requestRender();
       },
     });
-    this.tui.showOverlay(overlay, { anchor: "center", width: "60%" });
+    this.showOverlay(overlay, "60%");
   }
 
   /**
