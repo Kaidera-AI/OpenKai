@@ -3,7 +3,7 @@
 # Block kinds: notice -> user -> assistant -> tool -> notice -> assistant -> notice
 # Chrome usage: {"input":65,"output":2,"cacheRead":49,"cacheWrite":65,"totalTokens":181,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}
 
- ▎ OpenKai 0.1.8 · by Kaidera — /help for commands, Ctrl+K palette
+ ▎ OpenKai 0.1.9 · by Kaidera — /help for commands, Ctrl+K palette
 
  You
 
