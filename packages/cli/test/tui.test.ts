@@ -170,6 +170,14 @@ test("golden-frame: faux turn renders streamed text, a tool card, and chrome upd
       .replace(/git:\S+/g, "git:<branch>")
       .replace(/(✓ settled|✗ failed) in [\d.]+s/g, "$1 in <t>s")
       .replace(/⚡[\d.]+ tok\/s/g, "⚡<tps> tok/s")
+      // The chrome row is two-sided (status.ts renderLine: left cluster,
+      // interior pad, right-aligned tokens+model), so the pad absorbing the
+      // branch-chip width is INTERIOR — the trailing strip below can't reach
+      // it, and the gap silently encodes the generating checkout's name
+      // length (chip is 12 cols for names >8 chars, narrower below: 4-char
+      // `main` failed against evidence from a 67-char branch). Collapse
+      // interior runs on that row so the golden is checkout-independent.
+      .replace(/^.*git:<branch>.*$/gm, (row) => row.replace(/ {2,}/g, " "))
       // The frame pads every row to the render width, so a volatile scalar's
       // original width would survive as trailing-pad drift — strip it.
       .replace(/[ ]+$/gm, "");
