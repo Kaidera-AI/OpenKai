@@ -11,7 +11,7 @@
 set -eu
 
 REPO="Kaidera-AI/OpenKai"
-VERSION="${OPENKAI_VERSION:-v0.1.008}"
+VERSION="${OPENKAI_VERSION:-v0.1.009}"
 PREFIX="${OPENKAI_PREFIX:-$HOME/.local}"
 DEST="$PREFIX/bin"
 
