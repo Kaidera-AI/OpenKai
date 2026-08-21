@@ -601,7 +601,14 @@ export class TuiController {
         }
         try {
           if (target.endsWith(".jsonl")) {
+            // SECURITY (E002-F1d5): DELIBERATE exception to redact-on-read —
+            // the .jsonl branch is a byte-faithful copy of the raw session
+            // file (a redacted copy could not seed a resume; the consumer-3
+            // initialMessages rationale). The copy keeps the store's
+            // owner-only mode and the notice names the risk instead.
             await fsp.copyFile(this.store.filePath, target);
+            await fsp.chmod(target, 0o600).catch(() => undefined);
+            this.transcript.addNotice(`/export — RAW session copy (unredacted; may hold stored secrets) written to: ${target}`);
           } else {
             const html = exportSessionToHtml({
               sessionId: this.sessionId,
@@ -609,8 +616,8 @@ export class TuiController {
               entries,
             });
             await fsp.writeFile(target, html, "utf-8");
+            this.transcript.addNotice(`/export — session exported to: ${target}`);
           }
-          this.transcript.addNotice(`/export — session exported to: ${target}`);
         } catch (error) {
           this.transcript.addError(`/export — failed: ${error instanceof Error ? error.message : String(error)}`);
         }
