@@ -35,6 +35,8 @@
 
 import { exec } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { isIP } from "node:net";
+import { lookup } from "node:dns/promises";
 import path from "node:path";
 import { Type, type Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
@@ -42,6 +44,7 @@ import type { TextContent } from "@earendil-works/pi-ai";
 import type { PermissionGate } from "./permission-gate.js";
 import type { PermissionPreview } from "./transport.js";
 import { floorDeny, resolveCanonical } from "./permissions.js";
+import { redactSecrets } from "../secrets.js";
 import { buildDiffPreview, readForPreview, resolvePreviewPath } from "./permission-gate.js";
 import { hashlineEditTool } from "./hashline.js";
 import { lspTool } from "./lsp.js";
@@ -303,6 +306,12 @@ export const globTool = (cwd: string): AgentTool<typeof GlobParams, unknown> => 
   parameters: GlobParams,
   async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
     const max = params.maxResults ?? 100;
+    // Pattern cost cap — mirror grep: a model-authored pattern compiles to a
+    // RegExp (** → .*) walked over every path, so bound its length the same way
+    // grep does rather than leaving glob the one uncapped compile seam.
+    if (params.pattern.length > 500) {
+      return textResult(`Error: pattern too long (${params.pattern.length} > 500 chars)`, params.pattern);
+    }
     const guard = guardPath(cwd, params.path ?? ".");
     if (guard.refusal !== undefined) return textResult(`Error: ${guard.refusal}`, { denied: true });
     const regex = globToRegex(params.pattern);
@@ -367,6 +376,125 @@ async function walkGlob(target: string, regex: RegExp, max: number, out: string[
   }
 }
 
+// ── web_fetch SSRF guard (E002 Inc 07) ──────────────────────────────────────
+//
+// web_fetch is model-authored and UNGATED (it sits in readOnlyTools with no
+// PermissionGate), so its URL is an attacker-controlled network channel the
+// moment the model is prompt-injected. Two directions must be closed:
+//  - INBOUND: the URL must not reach a loopback / private / link-local target.
+//    This deployment runs services on localhost (cortex-api, the openkai hub's
+//    token-free loopback /sessions + /memory), and 169.254.169.254 is the cloud
+//    metadata endpoint — both are trust-on-loopback services a model call must
+//    never reach. bash can only reach them WITH consent; web_fetch must not
+//    reach them consent-free.
+//  - OUTBOUND: a secret already in model context (e.g. a provider 401 body that
+//    echoed a key) must not ride out in the query string. redactSecrets guards
+//    transcripts + activity.jsonl but not this seam.
+
+/** True when an IPv4 literal is loopback / private / link-local / reserved. */
+function isBlockedV4(ip: string): boolean {
+  const p = ip.split(".").map((n) => Number(n));
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true; // malformed → deny
+  const [a, b] = p as [number, number, number, number];
+  if (a === 0) return true; // 0.0.0.0/8 "this host"
+  if (a === 10) return true; // 10/8 private
+  if (a === 127) return true; // 127/8 loopback
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
+  if (a === 169 && b === 254) return true; // 169.254/16 link-local (cloud metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12 private
+  if (a === 192 && b === 168) return true; // 192.168/16 private
+  if (a >= 224) return true; // 224/4 multicast + 240/4 reserved
+  return false;
+}
+
+/** True when an IPv6 literal is loopback / ULA / link-local (or maps to a blocked v4). */
+function isBlockedV6(ip: string): boolean {
+  const norm = ip.toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, ""); // strip brackets + zone id
+  if (norm === "::1" || norm === "::") return true; // loopback / unspecified
+  if (norm.startsWith("fe8") || norm.startsWith("fe9") || norm.startsWith("fea") || norm.startsWith("feb")) return true; // fe80::/10 link-local
+  if (norm.startsWith("fc") || norm.startsWith("fd")) return true; // fc00::/7 unique-local
+  const v4 = mappedV4(norm); // ::ffff:0:0/96 in any textual form → the embedded a.b.c.d
+  if (v4 !== null) return isBlockedV4(v4);
+  return false;
+}
+
+/**
+ * If `norm` is an IPv4-mapped IPv6 address (::ffff:0:0/96), return the embedded
+ * a.b.c.d; else null. `new URL()` serialises `::ffff:127.0.0.1` to compressed
+ * hex (`::ffff:7f00:1`) BEFORE this guard runs, so a dotted-quad-only match is
+ * dead code on the live path (the pass-4 SSRF bypass). Expanding to 8 groups
+ * catches every textual form — dotted-quad, compressed hex, uncompressed — so
+ * no serialisation of a loopback/metadata address slips past isBlockedV4.
+ */
+function mappedV4(norm: string): string | null {
+  // Rewrite a dotted-quad tail (::ffff:127.0.0.1) to two hex groups so the
+  // group expansion below is uniform across every textual form.
+  let s = norm;
+  const dq = norm.match(/:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dq && dq.index !== undefined) {
+    const q = [dq[1]!, dq[2]!, dq[3]!, dq[4]!].map(Number);
+    if (q.some((n) => n > 255)) return null; // out-of-range octet → not a valid mapped literal
+    s = norm.slice(0, dq.index) + `:${((q[0]! << 8) | q[1]!).toString(16)}:${((q[2]! << 8) | q[3]!).toString(16)}`;
+  }
+  const parts = s.split("::");
+  if (parts.length > 2) return null; // more than one "::" is invalid
+  const head = parts[0] ? parts[0].split(":") : [];
+  const rest = parts.length > 1 ? parts[1] : undefined;
+  const tail = rest ? rest.split(":") : [];
+  let groups: string[];
+  if (parts.length > 1) {
+    const fill = 8 - head.length - tail.length;
+    if (fill < 0) return null;
+    groups = [...head, ...new Array<string>(fill).fill("0"), ...tail];
+  } else {
+    groups = head;
+  }
+  if (groups.length !== 8) return null;
+  const n = groups.map((g) => parseInt(g, 16));
+  if (n[0] || n[1] || n[2] || n[3] || n[4] || n[5] !== 0xffff) return null; // not ::ffff:0:0/96
+  return `${(n[6]! >> 8) & 0xff}.${n[6]! & 0xff}.${(n[7]! >> 8) & 0xff}.${n[7]! & 0xff}`;
+}
+
+/**
+ * True when a host LITERAL (already known to be an IP) is a non-public address.
+ * A non-IP host returns false here — the caller resolves it via DNS first.
+ * Exported so the security reproducer can assert the range table directly.
+ */
+export function isBlockedFetchAddress(host: string): boolean {
+  const bare = host.replace(/^\[|\]$/g, "");
+  const v = isIP(bare);
+  if (v === 4) return isBlockedV4(bare);
+  if (v === 6) return isBlockedV6(bare);
+  return false; // not a literal IP
+}
+
+/**
+ * Resolve a URL hostname and return the blocking reason, or undefined when the
+ * target is a public address. A DNS name is resolved and EVERY returned address
+ * is checked, so `localhost` (→127.0.0.1) and an attacker domain whose A record
+ * points inward are both refused.
+ *
+ * ponytail: lookup-then-connect leaves a DNS-rebinding TOCTOU window (fetch may
+ * re-resolve to a different address than we saw). Closing it fully needs a
+ * custom undici dispatcher that pins the vetted IP; the literal-IP guard plus
+ * this resolve-check close the realistic exploit (metadata + localhost). Pin
+ * the resolved IP if rebinding becomes a live threat.
+ */
+async function blockedFetchTarget(hostname: string): Promise<string | undefined> {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host)) return isBlockedFetchAddress(host) ? host : undefined;
+  let addrs: { address: string }[];
+  try {
+    addrs = await lookup(host, { all: true });
+  } catch {
+    return undefined; // resolution failure → let fetch surface the network error
+  }
+  for (const { address } of addrs) {
+    if (isBlockedFetchAddress(address)) return `${host} → ${address}`;
+  }
+  return undefined;
+}
+
 const WebFetchParams = Type.Object({
   url: Type.String({ description: "Absolute http(s) URL to fetch." }),
   maxBytes: Type.Optional(Type.Integer({ description: "Cap body size in bytes (default 65536).", minimum: 1 })),
@@ -390,6 +518,12 @@ export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unkn
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       return textResult("Error: only http(s) URLs are supported", params.url);
     }
+    // OUTBOUND exfil guard: a secret-shaped value in the model-authored URL is
+    // never sent — the query string is an egress channel that bypasses the
+    // transcript/activity redaction seams.
+    if (redactSecrets(params.url) !== params.url) {
+      return textResult("Error: refusing to fetch a URL containing a secret-shaped value", { url: params.url, denied: true });
+    }
     // 30 s wall-clock timeout + 1 MiB response-read cap: a slow or endless
     // endpoint must not stall the turn or balloon memory. The caller's signal
     // (task timeout / session abort) joins the timeout's (K3: in-flight tools
@@ -400,7 +534,34 @@ export const webFetchTool = (cwd: string): AgentTool<typeof WebFetchParams, unkn
     if (signal?.aborted) controller.abort();
     else signal?.addEventListener("abort", onCallerAbort, { once: true });
     try {
-      const res = await fetch(url, { redirect: "follow", signal: controller.signal });
+      // INBOUND SSRF guard + manual redirect follow: refuse a loopback/private/
+      // link-local target on the ORIGINAL url AND on every redirect hop, so a
+      // public URL that 302s to 169.254.169.254 or 127.0.0.1 is still refused.
+      let current = url;
+      let res: Response;
+      const MAX_REDIRECTS = 5;
+      for (let hop = 0; ; hop += 1) {
+        const blocked = await blockedFetchTarget(current.hostname);
+        if (blocked !== undefined) {
+          return textResult(`Error: refusing to fetch a non-public address (${blocked})`, { url: params.url, denied: true });
+        }
+        res = await fetch(current, { redirect: "manual", signal: controller.signal });
+        const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+        if (location === null) break;
+        if (hop >= MAX_REDIRECTS) {
+          return textResult(`Error fetching ${params.url}: too many redirects`, params.url);
+        }
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          return textResult(`Error fetching ${params.url}: invalid redirect target`, params.url);
+        }
+        if (next.protocol !== "http:" && next.protocol !== "https:") {
+          return textResult("Error: only http(s) URLs are supported", params.url);
+        }
+        current = next;
+      }
       const CAP = 1 << 20; // 1 MiB read cap
       const chunks: Uint8Array[] = [];
       let received = 0;
