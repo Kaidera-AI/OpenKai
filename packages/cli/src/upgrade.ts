@@ -580,6 +580,47 @@ export async function runUpgrade(
 ): Promise<UpgradeRunResult> {
   const ctx = resolveContext(options);
 
+  // --check / --rollback are the safety valves, and every managed branch
+  // below dispatches the real package manager — so the flags must be
+  // resolved FIRST (E019 S3: `--check` used to run the very upgrade it was
+  // meant to preview, and `--rollback` forward-upgraded a managed install).
+  const managedBy =
+    isBrewManaged() && options.currentBinary === undefined
+      ? "brew"
+      : isBunManaged() && options.currentBinary === undefined
+        ? "bun"
+        : ctx.channel === "npm"
+          ? "npm"
+          : undefined;
+  if (managedBy !== undefined && (options.rollback === true || options.check === true)) {
+    if (options.rollback === true) {
+      const pin =
+        managedBy === "brew"
+          ? "reinstall the prior formula version with brew"
+          : `${managedBy} ${managedBy === "npm" ? "install" : "add"} -g @kaidera/openkai@<version>`;
+      return {
+        exitCode: 1,
+        message: [
+          `openkai upgrade — channel: ${managedBy} (managed)`,
+          `--rollback is not available here: ${managedBy} owns the install history.`,
+          `Pin a prior version instead: ${pin}`,
+        ].join("\n"),
+        channel: ctx.channel,
+        autoUpdateEnabled: ctx.autoUpdateEnabled,
+      };
+    }
+    return {
+      exitCode: 0,
+      message: [
+        `openkai upgrade — channel: ${managedBy} (managed)`,
+        `--check: read-only — current version ${ctx.currentVersion}; no ${managedBy} command was run.`,
+        `Upgrade with: openkai upgrade`,
+      ].join("\n"),
+      channel: ctx.channel,
+      autoUpdateEnabled: ctx.autoUpdateEnabled,
+    };
+  }
+
   // Brew-managed install: Homebrew owns the binary lifecycle.
   if (isBrewManaged() && options.currentBinary === undefined) {
     const deps = options.deps ?? defaultDeps;

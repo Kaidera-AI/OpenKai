@@ -9,8 +9,21 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { SessionStore } from "@kaidera/openkai-core";
+import { SessionStore, redactSecrets } from "@kaidera/openkai-core";
 import { filterAndSortSessions, readSessionSearchRows } from "./tui/session-search.js";
+import { sanitizeTerminalText } from "./tui/sanitize.js";
+
+/**
+ * Session names and message text are file-sourced and `/name`-authored, so
+ * they are hostile terminal input (OSC title/clipboard, CSI clears). The TUI
+ * /resume picker already sanitises at its render boundary; this CLI listing is
+ * a SEPARATE reader of the same data (E019 render-boundary finding). Strip
+ * control/ESC/BEL, then collapse remaining whitespace so an embedded TAB can't
+ * break the TSV columns (sanitizeTerminalText keeps \t and \n as layout).
+ */
+function cleanCell(text: string, max: number): string {
+  return sanitizeTerminalText(text).replace(/\s+/g, " ").trim().slice(0, max);
+}
 
 /** Options for the `sessions` command. */
 export interface SessionsOptions {
@@ -53,9 +66,10 @@ export async function runSessions(options: SessionsOptions): Promise<number> {
 
   process.stdout.write("session_id\tname\tentries\tfirst_user_message\n");
   for (const row of filtered) {
-    const snippet = row.firstUserMessage.replace(/\n/g, " ").slice(0, 60);
+    const name = row.name ? cleanCell(row.name, 60) : "";
+    const snippet = cleanCell(row.firstUserMessage, 60);
     const parent = row.parentSessionId ? ` ← ${row.parentSessionId.slice(0, 8)}` : "";
-    process.stdout.write(`${row.id}\t${row.name ?? ""}\t${row.messageCount}\t${snippet}${parent}\n`);
+    process.stdout.write(`${row.id}\t${name}\t${row.messageCount}\t${snippet}${parent}\n`);
   }
   return 0;
 }
@@ -91,11 +105,23 @@ async function showSession(root: string, sessionId: string): Promise<number> {
   }
 }
 
-/** Extract a short text snippet from a message. */
+/**
+ * Extract a short text snippet from a message.
+ *
+ * The chokepoint `showSession` uses to put stored message text on screen, so
+ * redaction goes here once. Redact BEFORE slicing: slicing first can cut a
+ * token below the pattern's length floor, and a half-printed key is still a
+ * leaked key. (`runSessions` renders a different seam — see
+ * `readSessionSearchRows`, which redacts at row construction.)
+ */
 function contentSnippet(message: { role?: string; content?: unknown }): string {
   const content = "content" in message ? (message as { content?: unknown }).content : undefined;
+  // Union of the two protections on this seam: redact SECRETS first (before any
+  // slice — a half-printed key is still a key, E002-F1d2), then strip terminal
+  // ESCAPES + collapse whitespace + slice (E019 render-boundary). cleanCell does
+  // the slice, so redactSecrets must wrap inside it.
   if (typeof content === "string") {
-    return content.replace(/\n/g, " ").slice(0, 60);
+    return cleanCell(redactSecrets(content), 60);
   }
   if (Array.isArray(content)) {
     const text = content
@@ -105,7 +131,7 @@ function contentSnippet(message: { role?: string; content?: unknown }): string {
       )
       .map((part) => part.text)
       .join("");
-    return text.replace(/\n/g, " ").slice(0, 60);
+    return cleanCell(redactSecrets(text), 60);
   }
   return "";
 }

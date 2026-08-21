@@ -267,6 +267,9 @@ function colorEscape(h: number, s: number, l: number): string {
 
 const FG_RESET = "\x1b[39m";
 
+/** Grapheme segmenter for shimmer painting — never split a surrogate pair. */
+const SHIMMER_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 export type KeywordHighlighter = (text: string, resetTo?: string, phase?: number) => string;
 
 export interface GradientHighlightSpec {
@@ -339,6 +342,8 @@ export function createGradientHighlighter(spec: GradientHighlightSpec): KeywordH
 // ── The OpenKai keyword registry ────────────────────────────────────────────
 
 export type MagicKeyword = "ultrathink" | "ultrareview";
+/** The brand shimmer sweep (status-line activity) — Kaidera mint. */
+export type ShimmerPalette = MagicKeyword | "brand";
 
 interface KeywordSpec {
   gradient: GradientHighlightSpec;
@@ -427,10 +432,21 @@ export function shimmerPhase(now = Date.now()): number {
  * Paint an arbitrary label with a keyword's gradient palette (no boundary
  * matching — for the status line's "ultrathinking…" / "ultrareviewing…"
  * activity chips, where the label itself IS the keyword's surface).
+ * `brand` is the generic busy sweep (E019: every working state shimmers).
  */
-export function paintShimmerLabel(label: string, keyword: MagicKeyword, phase = shimmerPhase()): string {
-  const spec = KEYWORD_SPECS[keyword].gradient;
-  const n = label.length;
+export function paintShimmerLabel(label: string, keyword: ShimmerPalette, phase = shimmerPhase()): string {
+  const spec =
+    keyword === "brand"
+      ? { stops: 14, hue: (t: number) => 140 + t * 60, saturation: 55, lightness: 68 }
+      : { ...KEYWORD_SPECS[keyword].gradient };
+  // Iterate GRAPHEMES, not UTF-16 code units: a per-unit loop inserts the SGR
+  // between the halves of an astral surrogate pair (emoji) or before a
+  // combining mark, corrupting the glyph into U+FFFD. The status-line brand
+  // sweep paints `state.activity`, which carries a model/MCP-chosen tool name
+  // (`tool: <name>`) — so an emoji-named tool is a model-reachable corruption
+  // (E019 area 4/F5). Same Segmenter idiom as composer.ts positionCursorAt.
+  const graphemes = [...SHIMMER_SEGMENTER.segment(label)];
+  const n = graphemes.length;
   if (n === 0) return label;
   const wrappedPhase = ((phase % 1) + 1) % 1;
   let out = "";
@@ -442,7 +458,7 @@ export function paintShimmerLabel(label: string, keyword: MagicKeyword, phase = 
       out += escape;
       prev = escape;
     }
-    out += label[i];
+    out += graphemes[i]!.segment;
   }
   return `${out}${FG_RESET}`;
 }

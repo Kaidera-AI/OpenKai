@@ -27,6 +27,10 @@ v0.1.008 shipped the update-channel work (signed standalone upgrades, `openkai u
 | 03 | **Ship the carried batches** | Version bump 0.1.9 lockstep + CHANGELOG stating plainly that 0.1.9 delivers the fixes 0.1.8 missed (users on 0.1.8 carry the theme-crash and hub-kill bugs) | release SOP run on CTO consent only |
 | 04 | **qwen3.8 adversarial pass on the fix batch** | The held handoff (docs/HANDOFF_E017_ROUND4.md, attack areas 1–8) executed against the merged tree; findings triaged and fixed | handoff closed; findings landed or consciously deferred with reasons |
 | 05 | **Registry + docs sync** | FEATURE_REGISTRY rows for magic keywords + mouse guard; CHANGELOG 0.1.9 section; handoff doc updated to final state | registry matches shipped surface |
+| 04b | **Turn aliveness restructure** (OMP-derived) | Boot card collapses on first prompt; lazy thinking rows with the starburst pulse that settles at turn_end; brand-shimmer busy activity; `✓ settled in Ns · tokens · tok/s` full stop | lifecycle tests + frame evidence |
+| 05b | **Access-control surface** (OMP-derived) | Denials name tool/target/reason/remediation to the operator; model-facing denial text carries config remediation (never "run this yourself"); autonomy levels renamed to plain access language (ask every time → full access) | denial test + lifecycle tests green |
+| 06 | **Docs + test guides** | docs/CAPABILITIES.md (code-grounded can/can't) + docs/TEST_GUIDE.md (per-feature UAT drives) | user UAT pass |
+| 07 | **OK-11 folding plan** | research/2026-08-20-ok11-deepseek-folding-plan.md — DeepSeek lessons sequenced into E020-E023 with decision gates | plan ratified |
 
 ## 3. The mouse/crash evidence log (increment 01 — updated as it lands)
 

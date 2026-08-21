@@ -138,7 +138,7 @@ type Block =
   | { kind: "user"; text: string; comp: Markdown | Text }
   | { kind: "assistant"; text: string; comp: Markdown }
   | { kind: "thinking"; text: string; revealed: boolean; comp: Text }
-  | { kind: "notice"; text: string; comp: Text }
+  | { kind: "notice"; text: string; boot?: boolean; comp: Text }
   | { kind: "btw"; question: string; text: string; comp: Markdown }
   | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result: unknown | null; isError: boolean; settled: boolean; progress?: TaskProgress; comp: Text };
 
@@ -160,6 +160,15 @@ export class Transcript implements Component {
   /** Index of the live btw block (the `/btw` side channel, scope §1.5). */
   private liveBtw: number | null = null;
   private openTools = new Map<string, number>();
+
+  /** Rebuild every block index after a mid-list splice (lazy thinking insert). */
+  private reindexOpenTools(): void {
+    this.openTools.clear();
+    for (let i = 0; i < this.blocks.length; i += 1) {
+      const block = this.blocks[i]!;
+      if (block.kind === "tool" && !block.settled) this.openTools.set(block.toolCallId, i);
+    }
+  }
   private thinkingRevealed = false;
   /** Agent name for the assistant identity pill (scope §1.2). */
   private readonly agentName: string;
@@ -191,7 +200,7 @@ export class Transcript implements Component {
    * Sanitised here (single choke point): notice bodies routinely embed
    * model/tool text — error messages, paths, session ids (E001 §2).
    */
-  addNotice(lines: string | string[]): void {
+  addNotice(lines: string | string[], options?: { boot?: boolean }): void {
     const body = Array.isArray(lines) ? lines.join("\n") : lines;
     const clean = sanitizeTerminalText(body);
     const comp = new Text(
@@ -199,7 +208,20 @@ export class Transcript implements Component {
       1,
       0,
     );
-    this.blocks.push({ kind: "notice", text: clean, comp });
+    this.blocks.push({ kind: "notice", text: clean, ...(options?.boot === true ? { boot: true } : {}), comp });
+  }
+
+  /**
+   * Collapse the boot chrome (brand card + capability row + tips) into one
+   * compact line once the operator starts working (E019 inc 04): the card's
+   * moment is the boot animation; during the session it was spending ~13
+   * rows of the viewport forever. Called on the first prompt submit.
+   */
+  collapseBoot(compactLine: string): void {
+    const bootCount = this.blocks.filter((b) => b.kind === "notice" && b.boot === true).length;
+    if (bootCount === 0) return;
+    this.blocks = this.blocks.filter((b) => !(b.kind === "notice" && b.boot === true));
+    this.addNotice(compactLine);
   }
 
   /**
@@ -375,6 +397,13 @@ export class Transcript implements Component {
         this.settleTool(event.toolCallId ?? "?", event.result, event.isError ?? false);
         break;
       case "turn_end":
+        // Settle the thinking row to its static summary — the live pulse
+        // stops here (E019 inc 04: the operator can tell finished from
+        // in-flight at a glance).
+        if (this.liveThinking !== null) {
+          const settled = this.blocks[this.liveThinking]!;
+          if (settled.kind === "thinking" && !settled.revealed) settled.comp.setText(this.thinkingLine(settled.text));
+        }
         this.liveAssistant = null;
         this.liveThinking = null;
         this.liveBtw = null;
@@ -399,10 +428,9 @@ export class Transcript implements Component {
 
   /** Begin a new assistant turn block (called on `connected`, unless btw). */
   private beginAssistantTurn(): void {
-    const thinkComp = new Text(this.thinkingLine(""), 1, 0);
-    const thinkBlock: Block = { kind: "thinking", text: "", revealed: this.thinkingRevealed, comp: thinkComp };
-    this.blocks.push(thinkBlock);
-    this.liveThinking = this.blocks.length - 1;
+    // The thinking block is LAZY (E019 inc 04): created by the first thinking
+    // delta, never on turn begin — a model that emits no thinking leaves no
+    // dead "⤷ thinking…" row in the transcript.
     const comp = new Markdown("", 1, 0, markdownTheme);
     const block: Block = { kind: "assistant", text: "", comp };
     this.blocks.push(block);
@@ -436,7 +464,17 @@ export class Transcript implements Component {
   /** Append a thinking delta to the live thinking block (suppressed in btw mode). */
   private appendThinking(delta: string): void {
     if (this.liveBtw !== null) return; // keep the btw block clean (no thinking)
-    if (this.liveThinking === null) this.beginAssistantTurn();
+    if (this.liveThinking === null) {
+      // First thinking delta of the turn — create the block now, positioned
+      // BEFORE the assistant block when one exists (thinking precedes text).
+      const thinkComp = new Text(this.thinkingLine(""), 1, 0);
+      const thinkBlock: Block = { kind: "thinking", text: "", revealed: this.thinkingRevealed, comp: thinkComp };
+      const insertAt = this.liveAssistant ?? this.blocks.length;
+      this.blocks.splice(insertAt, 0, thinkBlock);
+      if (this.liveAssistant !== null) this.liveAssistant += 1;
+      this.liveThinking = insertAt;
+      this.reindexOpenTools();
+    }
     const block = this.blocks[this.liveThinking!]!;
     if (block.kind !== "thinking") return;
     block.text += sanitizeTerminalText(delta);
@@ -456,6 +494,21 @@ export class Transcript implements Component {
   private thinkingLine(text: string): string {
     if (text.length === 0) return textToken.dim("⤷ thinking…");
     return textToken.dim(`⤷ thinking… ${text.length} chars (Ctrl+O to reveal)`);
+  }
+
+  /**
+   * The live thinking pulse (E019 inc 04): while a turn streams, the open
+   * thinking row shows the eased starburst frame + live char count, so the
+   * reasoning is SEEN breathing instead of a dead static row. Driven by the
+   * controller's busy tick; settles to the static line at turn_end.
+   */
+  tickThinking(frame?: number): void {
+    if (this.liveThinking === null) return;
+    const block = this.blocks[this.liveThinking]!;
+    if (block.kind !== "thinking" || block.revealed) return;
+    const glyph = THINKING_PULSE_FRAMES[(frame ?? Math.floor(Date.now() / 120)) % THINKING_PULSE_FRAMES.length] ?? "✻";
+    const count = block.text.length > 0 ? ` ${block.text.length} chars` : "";
+    block.comp.setText(`${highlight.base(glyph)} ${textToken.dim(`thinking…${count} (Ctrl+O to reveal)`)}`);
   }
 
   /** Open a tool card (muted left-border). */
@@ -620,4 +673,7 @@ export class Transcript implements Component {
   blockTexts(): string[] {
     return this.blocks.map((b) => ("text" in b ? String(b.text) : ""));
   }
-}
+}/** Starburst frames for the live thinking pulse (OMP's eased glyph set). */
+const THINKING_PULSE_FRAMES = ["✻", "✼", "❉", "❊", "✺", "✹", "✸", "✶"];
+
+

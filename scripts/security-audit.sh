@@ -7,6 +7,16 @@ cd "$(dirname "$0")/.."
 
 failures=0
 
+# Fail CLOSED outside a git work tree (E019 S5): `git grep` dies with
+# "not a git repository" in a source archive, and the old `|| true` read
+# that error as "no hits" — the gate printed PASSED having scanned nothing.
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "FAIL: not a git work tree — the tracked-file secret scan cannot run here."
+    echo "Run the audit from a git clone, not a source archive."
+    echo "SECURITY AUDIT FAILED (preconditions)"
+    exit 1
+fi
+
 echo "== 1. Secret scan (tracked files) =="
 # API-key/token shapes in tracked source. .env and .openkai are gitignored;
 # this scan proves nothing tracked carries a secret.
@@ -21,8 +31,15 @@ echo "== 1. Secret scan (tracked files) =="
 # Thresholds are {20,} here vs {10,} in secrets.ts on purpose: this scan runs
 # over tracked source where a false positive blocks the gate, and a real key
 # is always long.
-secret_hits="$(git grep -nE '(sk-[A-Za-z0-9_-]{20,}|csk-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|fw_[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[opusr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY)' -- . ':!*.md' || true)"
-if [ -n "${secret_hits}" ]; then
+# git grep exits 0 = hits, 1 = clean, >=2 = the scan itself failed. The old
+# `|| true` collapsed all three into "clean" (E019 S5) — discriminate.
+# Pattern list carries tgp_v1_ (Together) from the E002 redaction union on main.
+grep_status=0
+secret_hits="$(git grep -nE '(sk-[A-Za-z0-9_-]{20,}|csk-[A-Za-z0-9_-]{20,}|nvapi-[A-Za-z0-9_-]{20,}|gsk_[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|fw_[A-Za-z0-9_-]{20,}|tgp_v1_[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[opusr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY)' -- . ':!*.md')" || grep_status=$?
+if [ "${grep_status}" -ge 2 ]; then
+    echo "FAIL: git grep exited ${grep_status} — the secret scan did not run"
+    failures=$((failures + 1))
+elif [ -n "${secret_hits}" ]; then
     echo "FAIL: possible secrets in tracked files:"
     echo "${secret_hits}" | head -10
     failures=$((failures + 1))

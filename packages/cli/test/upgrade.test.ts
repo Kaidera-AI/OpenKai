@@ -333,24 +333,96 @@ test("upgrade then rollback round-trip restores the original binary", async () =
 
 // ─── CLI runner (channel selection end-to-end) ───────────────────────────────
 
-test("CLI: npm channel never self-mutates — upgrade prints pin message, exit 0", async () => {
+test("CLI: npm channel runs `npm install -g` through injected deps — no real spawn", async () => {
   const { runUpgrade } = await import("../dist/upgrade.js");
+  const calls: Array<{ cmd: string; args: string[] }> = [];
   const res = await runUpgrade({
     env: { OPENKAI_CHANNEL: "npm" },
     currentBinary: "/tmp/x",
     currentVersion: "0.0.0",
-    // Without a fake, defaultDeps.runExternal really spawns
-    // `npm install -g @kaidera/openkai` against the developer's global
-    // node_modules — the suite mutated the machine it ran on, and failed
-    // wherever that install could not complete (ENOTEMPTY/offline).
-    deps: fakeDeps({ manifest: manifest("0.0.0", new TextEncoder().encode("x")), artifactBytes: new TextEncoder().encode("x") }),
+    deps: recordingDeps(calls),
   });
   assert.equal(res.channel, "npm");
   assert.equal(res.exitCode, 0);
-  // npm channel now EXECUTES `npm install -g` via runExternal (faked ok).
   assert.match(res.message, /channel: npm/);
   assert.match(res.message, /ran successfully/);
   assert.match(res.message, /npm install -g/);
+  // the fake — never a real package manager — received the exact command
+  assert.deepEqual(calls, [
+    { cmd: "npm", args: ["install", "-g", "@kaidera/openkai@latest"] },
+  ]);
+});
+
+// ─── E019: bun channel (isBunManaged detection + managed branch) ─────────────
+// Ported from unmerged a23368c (cole/autonomy-aaf1d122…): the bun channel
+// shipped in 153717c with zero coverage.
+
+test("isBunManaged: interpreter under ~/.bun is bun-managed", async () => {
+  const { isBunManaged } = await import("../dist/upgrade.js");
+  assert.equal(isBunManaged("/Users/u/.bun/bin/bun"), true);
+});
+
+test("isBunManaged: bin shim under ~/.bun via argv[1] is bun-managed even under node", async () => {
+  const { isBunManaged } = await import("../dist/upgrade.js");
+  const oldArgv = [...process.argv];
+  try {
+    process.argv[1] = "/Users/u/.bun/bin/openkai";
+    assert.equal(isBunManaged("/usr/local/bin/node"), true);
+  } finally {
+    process.argv = oldArgv;
+  }
+});
+
+test("isBunManaged: plain node + plain script is not bun-managed", async () => {
+  const { isBunManaged } = await import("../dist/upgrade.js");
+  const oldArgv = [...process.argv];
+  try {
+    process.argv[1] = "/usr/local/lib/node_modules/@kaidera/openkai/dist/index.js";
+    assert.equal(isBunManaged("/usr/local/bin/node"), false);
+  } finally {
+    process.argv = oldArgv;
+  }
+});
+
+test("CLI: bun-managed install defers to `bun add -g` through injected deps — no real spawn", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  const oldExec = process.execPath;
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  try {
+    // bun-pathed and not brew-pathed; currentBinary stays undefined so the
+    // managed-install branch (src/upgrade.ts bun gate) is the one exercised
+    process.execPath = "/Users/u/.bun/bin/bun";
+    const res = await runUpgrade({
+      env: {},
+      currentVersion: "0.0.0",
+      deps: recordingDeps(calls),
+    });
+    assert.equal(res.exitCode, 0);
+    assert.match(res.message, /channel: bun \(managed\)/);
+    assert.match(res.message, /bun add -g @kaidera\/openkai ran successfully/);
+    assert.deepEqual(calls, [{ cmd: "bun", args: ["add", "-g", "@kaidera/openkai"] }]);
+  } finally {
+    process.execPath = oldExec;
+  }
+});
+
+test("CLI: bun add failure surfaces exit 1 with the exit code in the message", async () => {
+  const { runUpgrade } = await import("../dist/upgrade.js");
+  const oldExec = process.execPath;
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  try {
+    process.execPath = "/Users/u/.bun/bin/bun";
+    const res = await runUpgrade({
+      env: {},
+      currentVersion: "0.0.0",
+      deps: recordingDeps(calls, 7),
+    });
+    assert.equal(res.exitCode, 1);
+    assert.match(res.message, /bun add failed \(exit 7\)/);
+    assert.equal(calls.length, 1, "the injected fake — not a real bun — was invoked");
+  } finally {
+    process.execPath = oldExec;
+  }
 });
 
 test("CLI: standalone upgrade applies with kill-switch unset; --check reports available", async () => {
@@ -486,6 +558,27 @@ function fakeDeps(state: FakeState): UpgradeDeps {
     stat: async (p: string) => {
       const st = await fsp.stat(p);
       return { isFile: st.isFile() };
+    },
+  };
+}
+
+/**
+ * fakeDeps plus a runExternal that records instead of spawning — for the
+ * managed-channel (brew/bun/npm) branches, which must never reach a real
+ * package manager from the test suite.
+ */
+function recordingDeps(
+  calls: Array<{ cmd: string; args: string[] }>,
+  code = 0,
+): UpgradeDeps {
+  return {
+    ...fakeDeps({
+      manifest: manifest("0.0.0", new TextEncoder().encode("x")),
+      artifactBytes: new TextEncoder().encode("x"),
+    }),
+    runExternal: async (cmd, args) => {
+      calls.push({ cmd, args });
+      return { code, output: code === 0 ? "ok" : "boom" };
     },
   };
 }

@@ -125,7 +125,14 @@ export async function runHub(options: HubOptions): Promise<number> {
       // Attach hello (S3): the settled frame at the client's width, then the
       // live frame/state streams via the host's tap registry.
       const widthParam = Number(url.searchParams.get("width") ?? "100");
-      const width = Number.isFinite(widthParam) && widthParam >= 20 ? widthParam : 100;
+      // Clamp to the SAME bounds resize() enforces (E019 area 6/H1): the hello
+      // frame renders at this width, and an unclamped value (?width=200000)
+      // allocates a multi-MB frame — the resize path clamps for exactly this
+      // reason, and the hello path must not be the bypass. Auth-gated, but a
+      // token holder should not be able to OOM the host with one query param.
+      const width = Number.isFinite(widthParam)
+        ? Math.min(HostedTui.MAX_COLUMNS, Math.max(20, Math.floor(widthParam)))
+        : 100;
       channel.send(JSON.stringify({ type: "hello", sessionId: hostedSession.sessionId, mode, frame: hostedSession.settledFrame(width) }));
       untap = hostedSession.addTap(
         (frame) => channel.send(JSON.stringify({ type: "frame", data: frame })),

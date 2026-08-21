@@ -137,7 +137,7 @@ export function hashlineEditTool(
         buildDiffPreview(target, content, result.content!),
       );
       if (outcome.decision === "reject") {
-        return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
+        return textResult(`Permission denied: ${outcome.reason} — the operator controls this via /autonomy, /settings -> routing, or tools.approval in ~/.openkai/config.json.`, { path: params.path, denied: true });
       }
       if (hooks?.beforeMutation) {
         await hooks.beforeMutation("hashline_edit", params.path).catch(() => undefined);

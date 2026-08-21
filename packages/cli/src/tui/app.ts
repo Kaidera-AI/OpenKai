@@ -117,7 +117,7 @@ import { SignInOverlay } from "./signin.js";
 import { OAuthOverlay } from "./oauth.js";
 import { CommandPalette, type PaletteItem } from "./palette.js";
 import { PromptStash, FrecencyHistory } from "./stash.js";
-import { bootMark, capabilityRow } from "./brand.js";
+import { bootMark, capabilityRow, compactMark } from "./brand.js";
 import { CLI_VERSION } from "../version.js";
 import type { AttentionNotifier } from "./attention.js";
 
@@ -209,7 +209,7 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     // Brand fixture: the gradient hex mark + wordmark at the top of every
     // fresh transcript (droid's boot card; the animation is the moment,
     // this is the fixture). State is user-global, ~/.openkai/state.json.
-    transcript.addNotice(bootMark(CLI_VERSION));
+    transcript.addNotice(bootMark(CLI_VERSION), { boot: true });
     // The capability row (droid's boot pattern): what this setup actually has.
     transcript.addNotice(
       capabilityRow({
@@ -218,10 +218,11 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
         mcpServers: countMcpServers(),
         agentsMdPresent: existsSync(path.join(process.cwd(), "AGENTS.md")),
       }),
+      { boot: true },
     );
     // The daily tip (disable via /features tips) — teaching, not noise.
     if (featureEnabled("tips")) {
-      transcript.addNotice(tipOfTheDay());
+      transcript.addNotice(tipOfTheDay(), { boot: true });
     }
     // Project memory (E003): surface the shared learnings when they exist so
     // every session in this folder sees what the others learned.
@@ -229,6 +230,7 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
     if (memory.initialized && memory.learnings > 0) {
       transcript.addNotice(
         `memory: ${memory.learnings} shared learning(s)${memory.agents.length > 0 ? ` across ${memory.agents.length} agent(s)` : ""} — /memory to view, /memory add to record`,
+        { boot: true },
       );
     }
     // Session goal (E006): keep the guiding objective visible on every boot.
@@ -294,18 +296,58 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
   return { root, transcript, composer, status, controller };
 }
 
-/** Extract text from an AgentMessage for replay display. */
-function messageText(msg: AgentMessage): string {
+/** Compact token counts for the settled row (12.4k / 1,892 style). */
+function formatTokens(value: number): string {
+  if (value >= 10_000) return `${(value / 1000).toFixed(1)}k`;
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`.replace(/\.0k$/, "k");
+  return String(value);
+}
+
+/** Pull the human denial reason out of a denied tool result's text. */
+function denyReasonFromResult(event: SessionEvent): string {
+  const result = (event as { result?: { content?: unknown } }).result;
+  const content = result?.content;
+  if (Array.isArray(content)) {
+    const text = content
+      .filter((p): p is { type: "text"; text: string } => typeof p === "object" && p !== null && "text" in p)
+      .map((p) => p.text)
+      .join(" ");
+    const match = /Permission denied:\s*(.+)$/s.exec(text);
+    // Flatten newlines: the notice renders each line with a danger border, so
+    // an unflattened newline in the model's denial text would forge a second
+    // bordered "adjust:" line indistinguishable from OpenKai's own chrome
+    // (E019 area 5). ANSI/BEL is stripped downstream by addError's sanitiser.
+    if (match) return match[1]!.replace(/[\r\n]+/g, " ").trim().slice(0, 200);
+  }
+  return "refused at the permission gate";
+}
+
+/**
+ * Extract text from a stored AgentMessage for replay DISPLAY, redacted.
+ *
+ * SECURITY (E002-F1d3, third consumer) — `/resume` and `openkai chat --resume`
+ * render a stored transcript through this seam (see {@link buildTuiApp}). Like
+ * `openkai tail` (F1d) and `openkai sessions` (F1d2), the file outlives any one
+ * version: a turn written before the redactor covered a provider still holds
+ * that key in cleartext, so redact on READ here too. This is the display path
+ * only — the raw messages still seed the model context via `initialMessages`
+ * (runtime.ts), which must NOT be redacted or the resumed conversation loses
+ * its history. Redaction lives in the helper so a future replay caller cannot
+ * bypass it.
+ */
+export function messageText(msg: AgentMessage): string {
   if (!("content" in msg)) return "";
   const content = (msg as { content: unknown }).content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
+  let raw = "";
+  if (typeof content === "string") {
+    raw = content;
+  } else if (Array.isArray(content)) {
+    raw = content
       .filter((p): p is { type: "text"; text: string } => typeof p === "object" && p !== null && "type" in p && p.type === "text")
       .map((p) => p.text)
       .join("");
   }
-  return "";
+  return redactSecrets(raw);
 }
 
 /** Controller — bridges the transport event stream to the transcript + chrome. */
@@ -349,6 +391,8 @@ export class TuiController {
   private done = false;
   /** True while the current turn is a `/btw` side channel (scope §1.5) — persistTurn skips it so the ephemeral exchange never re-persists the prior assistant block. */
   private btwTurn = false;
+  /** Elapsed ms captured when the `error` event landed (null = turn clean). Consumed at `turn_end` so the settle row reports the failure — with the real elapsed, since the error path already reset busySince (E019 S1). */
+  private turnErrorElapsedMs: number | null = null;
 
   constructor(tui: TUI, options: TuiAppOptions, transcript: Transcript, status: StatusLine) {
     this.tui = tui;
@@ -812,6 +856,12 @@ export class TuiController {
       return;
     }
     this.lastPrompt = text;
+    // The boot card's moment is over the first time the operator works —
+    // collapse it to a compact line and give the viewport to the session.
+    if (!this.bootCollapsed) {
+      this.bootCollapsed = true;
+      this.transcript.collapseBoot(compactMark(CLI_VERSION));
+    }
     const userMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
     await this.store.appendMessage(userMsg);
     this.transcript.addUserMessage(text);
@@ -1480,10 +1530,10 @@ export class TuiController {
       return;
     }
     const entries = [
-      { id: "off", label: "off", description: "every mutation asks (default)" },
-      { id: "low", label: "low", description: "reads + in-cwd writes auto; bash gates" },
-      { id: "med", label: "med", description: "in-cwd writes auto; floor + bash gate" },
-      { id: "high", label: "high", description: "all auto except the deny floor" },
+      { id: "off", label: "off — ask every time", description: "every write/bash asks first (default)" },
+      { id: "low", label: "low — trusted reads", description: `reads + writes inside ${this.cwd} auto; bash always asks` },
+      { id: "med", label: "med — trusted folder", description: "writes in the working folder auto-approve; bash still asks" },
+      { id: "high", label: "high — full access", description: "writes + bash auto-approve; only the protected-path floor (.env, keys, .ssh) still refuses" },
     ];
     const picker = new LevelPicker("autonomy", entries, this.autonomySwitch.current(), (id) => {
       this.tui.hideOverlay();
@@ -2001,12 +2051,56 @@ export class TuiController {
       case "tool_result":
         this.setActivity("settling");
         this.transcript.applyEvent(event);
+        // Denial visibility (E019 inc 05): a gated refusal must tell the
+        // OPERATOR plainly — which tool, why, and where to change it. The
+        // tool result text is written for the model; this notice is for the
+        // human.
+        {
+          const details = (event as { result?: { details?: unknown } }).result?.details;
+          if (details !== null && typeof details === "object" && (details as { denied?: unknown }).denied === true) {
+            const toolName = (event as { toolName?: string }).toolName ?? "tool";
+            // `command`/`path` are model-controlled; flatten newlines so the
+            // target can't forge extra danger-bordered notice lines (E019
+            // area 5). ANSI/BEL stripped downstream by addError's sanitiser.
+            const target = ((details as { command?: string }).command ?? (details as { path?: string }).path ?? "")
+              .replace(/[\r\n]+/g, " ");
+            const reason = denyReasonFromResult(event);
+            this.transcript.addError([
+              `permission denied: ${toolName}${target !== "" ? ` — ${target.slice(0, 80)}` : ""}`,
+              `  ${reason}`,
+              "  adjust: /autonomy (access level) · /settings → routing (per-tool policy) · ~/.openkai/config.json tools.approval",
+            ]);
+            this.tui.requestRender();
+          }
+        }
         break;
       case "usage":
         this.updateUsage(event.usage);
         break;
       case "turn_end":
         this.transcript.applyEvent(event);
+        // The settled row (E019 inc 04): elapsed + tokens make the turn's
+        // completion a visible full stop — finished vs crashed is never in
+        // doubt, and a turn that produced nothing says so honestly. A turn
+        // that settled as an error says THAT (E019 S1): the core emits
+        // [error, turn_end] for stopReason "error", and a green ✓ after the
+        // danger row would render the failure as success.
+        const failedElapsedMs = this.turnErrorElapsedMs;
+        this.turnErrorElapsedMs = null;
+        const turnFailed = failedElapsedMs !== null;
+        {
+          const s = this.status.currentState;
+          const elapsedMs = failedElapsedMs ?? (s.busySince !== null ? Date.now() - s.busySince : 0);
+          const seconds = (elapsedMs / 1000).toFixed(1);
+          const usage = s.usage;
+          const parts = [turnFailed ? `✗ failed in ${seconds}s` : `✓ settled in ${seconds}s`];
+          if (usage !== null && usage.totalTokens > 0) {
+            parts.push(`↑${formatTokens(usage.input)} ↓${formatTokens(usage.output)}`);
+            const tps = elapsedMs > 0 ? (usage.output / (elapsedMs / 1000)).toFixed(1) : "0";
+            parts.push(`⚡${tps} tok/s`);
+          }
+          this.transcript.addNotice(parts.join(" · "));
+        }
         this.setBusy(false);
         if (this.wantsAutoCompact) {
           // Deferred from updateUsage — safe now that no run is in flight.
@@ -2022,7 +2116,7 @@ export class TuiController {
         }
         this.btwTurn = false;
         // Attention (scope §1.1): a turn settled — if unfocused, bell/OSC + chrome.
-        this.signalAttention("Turn complete");
+        this.signalAttention(turnFailed ? "Turn failed" : "Turn complete");
         break;
       case "permission_request":
         if (this.transport.planMode) {
@@ -2047,10 +2141,16 @@ export class TuiController {
         this.transcript.applyEvent(event);
         this.setBusy(false);
         break;
-      case "error":
+      case "error": {
         this.transcript.applyEvent(event);
+        // For stopReason "error" the paired turn_end arrives in the same
+        // batch (core events.ts) — capture the real elapsed NOW, because
+        // setBusy(false) clears busySince before turn_end reads it (E019 S1).
+        const busySince = this.status.currentState.busySince;
+        this.turnErrorElapsedMs = busySince !== null ? Date.now() - busySince : 0;
         this.setBusy(false);
         break;
+      }
       default:
         break;
     }
@@ -2165,9 +2265,14 @@ export class TuiController {
   }
 
   private busyTick?: ReturnType<typeof setInterval>;
+  /** The boot card collapses on the first prompt (E019 inc 04). */
+  private bootCollapsed = false;
 
   private setBusy(busy: boolean): void {
     this.busy = busy;
+    // A new turn starts clean: drop any error captured by a turn that closed
+    // without a paired turn_end, so it can't stamp the next settle row (E019 S1).
+    if (busy) this.turnErrorElapsedMs = null;
     const state = this.status.currentState;
     this.status.update({
       ...state,
@@ -2184,6 +2289,8 @@ export class TuiController {
         const s = this.status.currentState;
         if (!s.busy) return;
         this.status.update({ ...s, busyFrame: s.busyFrame + 1 });
+        // The thinking pulse rides the same tick (E019 inc 04).
+        this.transcript.tickThinking(s.busyFrame);
         this.tui.requestRender();
       }, 80);
     } else if (!busy && this.busyTick !== undefined) {
@@ -2252,8 +2359,7 @@ export class TuiController {
     this.transcript.addNotice(`plan mode — ${pending.toolName} blocked (read-only)`);
   }
 
-  private updateUsage(usage: UsageSnapshot): void {
-    const state = this.status.currentState;
+  private updateUsage(usage: UsageSnapshot): void {    const state = this.status.currentState;
     const ctxWindow = this.transport.getContextWindow();
     const ctxPercent =
       ctxWindow > 0 && usage.totalTokens > 0

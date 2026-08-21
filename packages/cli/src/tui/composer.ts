@@ -9,7 +9,7 @@
  * (used by the palette's `/btw` / `/resume` actions, scope §1.3).
  */
 
-import { CombinedAutocompleteProvider, Editor } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, CURSOR_MARKER, Editor, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { editorTheme } from "./theme.js";
 import { SLASH_COMMANDS } from "./commands.js";
@@ -47,6 +47,109 @@ class ComposerEditor extends Editor {
     const lines = super.render(width);
     if (!mightContainMagicKeyword(this.getExpandedText())) return lines;
     return lines.map((line) => paintMagicKeywords(line, shimmerPhase()));
+  }
+
+  /**
+   * Click-to-cursor (E019 inc 03): position the cursor at a clicked CONTENT
+   * point (0-based row within the rendered content area, 0-based grapheme
+   * column within that row). The visual→logical mapping replays the exact
+   * wrap the editor rendered, so clicks land where the operator pointed —
+   * Claude Code's grammar.
+   */
+  positionCursorAt(row: number, col: number): void {
+    // Vendored-private access (E019): pi-tui's Editor exposes getCursor but
+    // no setter; the state shape below is the editor's own, used nowhere
+    // else in OpenKai. The mapping itself uses only the public render().
+    const internals = this as unknown as {
+      state: { lines: string[]; cursorLine: number; cursorCol: number };
+      setCursorCol(col: number): void;
+    };
+    const width = this.lastRenderedContentWidth();
+    const rows = this.render(width);
+    // Content rows sit between the top and bottom border rows.
+    const content = rows.slice(1, rows.length - 1).map((line) => {
+      const stripped = line.replace(/\x1b\[[0-9;]*m/g, "").replace(CURSOR_MARKER, "");
+      // One leading padding column (paddingX=1); trailing pad is not text.
+      return stripped.slice(1).replace(/\s+$/, "");
+    });
+    const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    const gLen = (s: string): number => [...seg.segment(s)].length;
+    // The editor's cursorCol is a UTF-16 code-unit offset (every slice/length
+    // in pi-tui's editor is code-unit arithmetic), while the click arrives in
+    // terminal CELLS and the wrap walk below counts GRAPHEMES — three units
+    // that only coincide for ASCII (E019 S2). Convert explicitly:
+    //   clicked cells → graphemes (walking cell widths within the row)
+    //   graphemes     → code units (summing segment lengths on the line)
+    const cellsToGraphemes = (rowText: string, cells: number): number => {
+      let cellsSeen = 0;
+      let count = 0;
+      for (const g of seg.segment(rowText)) {
+        const w = Math.max(1, visibleWidth(g.segment));
+        if (cellsSeen + w > cells) break; // a click inside a wide glyph targets its start
+        cellsSeen += w;
+        count += 1;
+      }
+      return count;
+    };
+    const graphemesToUnits = (line: string, count: number): number => {
+      let units = 0;
+      let seen = 0;
+      for (const g of seg.segment(line)) {
+        if (seen >= count) break;
+        units += g.segment.length;
+        seen += 1;
+      }
+      return units;
+    };
+
+    const lines = internals.state.lines;
+    let logical = 0;
+    let visualRow = 0;
+    let targetCol = 0;
+    let resolved = false;
+    while (logical < lines.length && !resolved) {
+      const line = lines[logical] ?? "";
+      const lineLen = gLen(line);
+      if (lineLen === 0) {
+        if (visualRow === row) {
+          targetCol = 0;
+          resolved = true;
+          break;
+        }
+        visualRow += 1;
+        logical += 1;
+        continue;
+      }
+      // Consume this logical line's rendered rows in order.
+      let consumed = 0;
+      while (consumed < lineLen) {
+        const rowText = content[visualRow] ?? "";
+        const rowLen = gLen(rowText);
+        if (visualRow === row) {
+          const grapheme = Math.min(consumed + cellsToGraphemes(rowText, col), lineLen);
+          targetCol = graphemesToUnits(line, grapheme);
+          resolved = true;
+          break;
+        }
+        consumed += Math.max(1, rowLen);
+        visualRow += 1;
+      }
+      if (!resolved) logical += 1;
+    }
+    if (!resolved) {
+      // Past the end: cursor to the document end (click below the text).
+      logical = Math.max(0, lines.length - 1);
+      targetCol = (lines[logical] ?? "").length;
+    }
+    internals.state.cursorLine = logical;
+    internals.setCursorCol(targetCol);
+    this.invalidate();
+  }
+
+  /** The width the editor last rendered at (defaults sanely pre-render). */
+  private lastRenderedContentWidth(): number {
+    const terminal = (this as unknown as { tui: { terminal: { columns: number } } }).tui.terminal;
+    return Math.max(20, terminal.columns);
   }
 
   override handleInput(data: string): void {
@@ -150,5 +253,16 @@ export class Composer {
   /** Submitted-prompt history (frecency ordering is P4b; here: append order). */
   get promptHistory(): readonly string[] {
     return this.history;
+  }
+
+  /** Click-to-cursor geometry (E019 inc 03): rendered height + padding. */
+  composerGeometry(): { height: number; paddingX: number } {
+    const terminal = (this.editor as unknown as { tui: { terminal: { columns: number } } }).tui.terminal;
+    return { height: this.editor.render(Math.max(20, terminal.columns)).length, paddingX: 1 };
+  }
+
+  /** Position the text cursor at a clicked content point. */
+  positionCursorAt(row: number, col: number): void {
+    (this.editor as ComposerEditor).positionCursorAt(row, col);
   }
 }

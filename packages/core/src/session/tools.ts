@@ -51,6 +51,18 @@ import { DEFAULT_MODEL_ID } from "./local-transport.js";
 import type { CastConfig } from "../fusion/casts.js";
 
 /** Common text-result helper: wrap a string into the tool-result content shape. */
+/** Model-facing denial text (E019 inc 05): the refusal always carries the
+ * concrete action the operator can take, so the model RELAYS a config path
+ * instead of improvising or asking the human to run the command. */
+function deniedText(reason: string): string {
+  return (
+    `Permission denied: ${reason}\n` +
+    "The operator can change this: the /autonomy level (off asks every time; med auto-approves in-folder " +
+    "writes; high is full access including bash), per-tool policy at /settings -> routing, or " +
+    "tools.approval in ~/.openkai/config.json. Relay the option — never ask the operator to run commands for you."
+  );
+}
+
 function textResult(text: string, details?: unknown): AgentToolResult<unknown> {
   const content: TextContent[] = [{ type: "text", text }];
   return { content, details: details ?? text };
@@ -510,7 +522,7 @@ export function writeFileTool(
         return buildDiffPreview(abs, before, params.content);
       });
       if (outcome.decision === "reject") {
-        return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
+        return textResult(deniedText(outcome.reason), { path: params.path, denied: true });
       }
       // TOCTOU: re-canonicalise AFTER approval — the path the operator saw in
       // the preview and the path on disk may have diverged (symlink swap)
@@ -585,7 +597,7 @@ export function editFileTool(
       const after = before.replace(params.oldString, params.newString);
       const outcome = await gate.request("edit_file", _id, params, async () => buildDiffPreview(abs, before, after));
       if (outcome.decision === "reject") {
-        return textResult(`Permission denied: ${outcome.reason}`, { path: params.path, denied: true });
+        return textResult(deniedText(outcome.reason), { path: params.path, denied: true });
       }
       try {
         if (hooks?.beforeMutation) {
@@ -631,7 +643,7 @@ export function bashTool(
         cwd: runCwd,
       }));
       if (outcome.decision === "reject") {
-        return textResult(`Permission denied: ${outcome.reason}`, { command: params.command, denied: true });
+        return textResult(deniedText(outcome.reason), { command: params.command, denied: true });
       }
       try {
         // A model-hallucinated cwd must not reach posix_spawn raw: report it
