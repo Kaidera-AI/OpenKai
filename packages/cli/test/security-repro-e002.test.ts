@@ -31,7 +31,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   readSessionMessages,
@@ -46,7 +45,10 @@ import { runSessions } from "../dist/sessions.js";
 import { messageText } from "../dist/tui/app.js";
 import { readSessionSearchRows } from "../dist/tui/session-search.js";
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+// Runner-independent: both `node --test` and tui-test run from packages/cli —
+// import.meta.url breaks when the runner relocates compiled tests (tui-test
+// caches them under .tui-test/). Anchor on cwd instead.
+const REPO_ROOT = path.resolve(process.cwd(), "..", "..");
 
 /**
  * CANARY FIXTURES ARE ASSEMBLED AT RUNTIME — never written as literals.
