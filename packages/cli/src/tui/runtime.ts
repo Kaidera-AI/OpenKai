@@ -17,7 +17,8 @@
  */
 
 import path from "node:path";
-import { ProcessTerminal, TuiAltScreen } from "@earendil-works/pi-tui";
+import { ProcessTerminal, TuiAltScreen, TuiMainScreen, isViewportTUI } from "@earendil-works/pi-tui";
+import type { Terminal, TUI } from "@earendil-works/pi-tui";
 import {
   CortexClient,
   CortexCheckpoint,
@@ -68,6 +69,72 @@ import { featureEnabled } from "./features.js";
 import { appendActivity } from "../tail.js";
 import { CLI_VERSION } from "../version.js";
 import { configuredProviders, providerKeyStatus, resolveProvider } from "../providers.js";
+import { configureCapabilities, plainTerminalText } from "./capabilities.js";
+
+/**
+ * Protocol-free terminal used for non-TTY/TERM=dumb runs. pi-tui may request
+ * cursor movement while diff-rendering; the sink strips every terminal
+ * sequence so the emitted stream remains deterministic plain ASCII.
+ */
+export class PlainProcessTerminal implements Terminal {
+  private wasRaw = false;
+  private inputHandler?: (data: string) => void;
+  private resizeHandler?: () => void;
+
+  get kittyProtocolActive(): boolean {
+    return false;
+  }
+
+  start(onInput: (data: string) => void, onResize: () => void): void {
+    this.inputHandler = onInput;
+    this.resizeHandler = onResize;
+    this.wasRaw = process.stdin.isRaw === true;
+    if (process.stdin.setRawMode) process.stdin.setRawMode(true);
+    process.stdin.setEncoding("utf8");
+    process.stdin.resume();
+    process.stdin.on("data", this.onData);
+    process.stdout.on("resize", onResize);
+  }
+
+  private readonly onData = (data: string | Buffer): void => {
+    this.inputHandler?.(typeof data === "string" ? data : data.toString("utf8"));
+  };
+
+  stop(): void {
+    process.stdin.off("data", this.onData);
+    if (this.resizeHandler) process.stdout.off("resize", this.resizeHandler);
+    this.inputHandler = undefined;
+    this.resizeHandler = undefined;
+    process.stdin.pause();
+    if (process.stdin.setRawMode) process.stdin.setRawMode(this.wasRaw);
+  }
+
+  async drainInput(): Promise<void> {}
+
+  write(data: string): void {
+    process.stdout.write(plainTerminalText(data));
+  }
+
+  get columns(): number {
+    return process.stdout.columns || Number(process.env.COLUMNS) || 80;
+  }
+
+  get rows(): number {
+    return process.stdout.rows || Number(process.env.LINES) || 24;
+  }
+
+  moveBy(lines: number): void {
+    if (lines > 0) process.stdout.write("\n".repeat(lines));
+  }
+
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(_title: string): void {}
+  setProgress(_active: boolean): void {}
+}
 
 /** Options for {@link runTui}. */
 export interface RunTuiOptions {
@@ -353,6 +420,8 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     },
   });
 
+  const terminalCapabilities = configureCapabilities(process.env, process.stdout.isTTY === true);
+
   // Theme (E008): explicit choice wins; otherwise auto-detect the terminal's
   // background (OSC 11 → COLORFGBG → dark) before the alt screen takes over.
   const themeChoice = (readConfig().theme as string | undefined) ?? "auto";
@@ -363,26 +432,29 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     setTheme(themeChoice);
   }
 
-  const terminal = new ProcessTerminal();
+  const terminal: Terminal = terminalCapabilities.plain ? new PlainProcessTerminal() : new ProcessTerminal();
   // First-run brand moment: animated Kaidera mark + OpenKai wordmark with the
   // shine traversal (omp choreography, any key skips, TTY only), before the
   // alt-screen app takes over. DROPPED in the mouse-feature edit (b50232d)
   // and restored here — the feature registry exists to catch exactly this.
-  await playBrandAnimation(CLI_VERSION);
-  const tui = new TuiAltScreen(terminal, true, undefined, {
-    // Claude Code-style mouse (E012): wheel scrolls the transcript, drag
-    // selects (copied to the clipboard), scrollbar drags, and OSC 8 URLs open
-    // on click. Feature-gated; the bash tool never inherits the TUI stdin so
-    // subprocesses can't flood SGR coordinates.
-    mouse: featureEnabled("mouse"),
-    wheelScrollLines: 3,
-    openUrl: (url) => {
-      void import("node:child_process").then(({ execFile }) => {
-        const opener = process.platform === "darwin" ? "open" : "xdg-open";
-        execFile(opener, [url], () => undefined);
-      });
-    },
-  });
+  if (terminalCapabilities.unicode && !terminalCapabilities.reducedMotion && terminalCapabilities.altScreen) {
+    await playBrandAnimation(CLI_VERSION);
+  }
+  const tui: TUI = terminalCapabilities.altScreen
+    ? new TuiAltScreen(terminal, true, undefined, {
+        // Claude Code-style mouse (E012): wheel scrolls the transcript, drag
+        // selects (copied to the clipboard), scrollbar drags, and OSC 8 URLs
+        // open on click. Both the feature flag and capability must permit it.
+        mouse: terminalCapabilities.mouse && featureEnabled("mouse"),
+        wheelScrollLines: 3,
+        openUrl: (url) => {
+          void import("node:child_process").then(({ execFile }) => {
+            const opener = process.platform === "darwin" ? "open" : "xdg-open";
+            execFile(opener, [url], () => undefined);
+          });
+        },
+      })
+    : new TuiMainScreen(terminal, true);
   const manager = installKeymap();
 
   // P4b: focus-aware attention notifier (scope §1.1). DEC 1004 focus reporting
@@ -489,13 +561,14 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
   // Seed the composer's up-arrow recall with frecency-ranked prompts (§1.4).
   await controller.seedHistory();
 
-  tui.setLayoutRoot(root);
+  if (isViewportTUI(tui)) tui.setLayoutRoot(root);
+  else tui.addChild(root);
   tui.setFocus(composer.editor);
 
   // Click-to-cursor (E019 inc 03): Claude Code's grammar — click inside the
   // composer moves the text cursor there; drag still selects. Wraps the alt
   // screen's viewport input; feature-gated with the rest of the mouse work.
-  if (featureEnabled("mouse")) {
+  if (terminalCapabilities.mouse && featureEnabled("mouse") && tui instanceof TuiAltScreen) {
     installMouseRouting(
       tui,
       {
@@ -555,7 +628,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     }
     if (isToggleThinking(data, manager)) {
       const revealed = controller.toggleThinking();
-      tui.flash(revealed ? "thinking: shown" : "thinking: hidden");
+      (tui as TUI & { flash?: (message: string) => void }).flash?.(revealed ? "thinking: shown" : "thinking: hidden");
       return { consume: true };
     }
     if (isChangelog(data, manager)) {
@@ -573,7 +646,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     }
     if (escDetector.feed(data)) {
       composer.clear();
-      tui.flash("draft cleared");
+      (tui as TUI & { flash?: (message: string) => void }).flash?.("draft cleared");
       return { consume: true };
     }
     if (isQuit(data, manager)) {
@@ -583,14 +656,14 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
         return { consume: true };
       }
       lastQuitConfirmAt = now;
-      tui.flash("Press Ctrl+C again to quit");
+      (tui as TUI & { flash?: (message: string) => void }).flash?.("Press Ctrl+C again to quit");
       return { consume: true };
     }
     return undefined;
   });
 
   // ── Start the terminal + event loop ────────────────────────────────────
-  terminal.write(FOCUS_REPORT_ENABLE); // enable DEC 1004 focus reporting
+  if (terminalCapabilities.mouse) terminal.write(FOCUS_REPORT_ENABLE);
   tui.start();
 
   // Crash guard (CTO report 2026-08-19): an uncaught error inside the
@@ -604,7 +677,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
       // best effort — the terminal must not stay wedged
     }
     try {
-      terminal.write(FOCUS_REPORT_DISABLE);
+      if (terminalCapabilities.mouse) terminal.write(FOCUS_REPORT_DISABLE);
     } catch {
       // best effort
     }
@@ -644,7 +717,7 @@ async function runSession(options: RunTuiOptions): Promise<{ code: number; next:
     await consumePromise.catch(() => undefined);
 
     tui.stop();
-    terminal.write(FOCUS_REPORT_DISABLE); // leave the terminal clean
+    if (terminalCapabilities.mouse) terminal.write(FOCUS_REPORT_DISABLE);
     await terminal.drainInput();
     return { code: 0, next };
   } finally {

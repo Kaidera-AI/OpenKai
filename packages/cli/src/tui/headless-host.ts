@@ -12,8 +12,9 @@
  * reconstructible state, so any attach width re-renders).
  */
 
-import type { TUI, Component } from "@earendil-works/pi-tui";
+import type { TUI, Component, OverlayOptions } from "@earendil-works/pi-tui";
 import { compositeTuiLine } from "@earendil-works/pi-tui";
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import type { Models } from "@earendil-works/pi-ai";
 import {
   InProcessTransport,
@@ -21,6 +22,7 @@ import {
   type SessionTransport,
 } from "@kaidera/openkai-core";
 import { buildTuiApp, type TuiApp } from "./app.js";
+import { clampColumns, clampRows } from "./layout.js";
 
 /** Structured state frame (S6 — status without parsing ANSI). */
 export interface HostState {
@@ -52,7 +54,7 @@ type InputListener = (data: string) => { consume?: boolean } | void;
 /** An overlay entry, mirroring pi-tui's stack (top = last). */
 interface OverlayEntry {
   component: Component;
-  options: { width?: string | number; maxHeight?: string; anchor?: string } | undefined;
+  options: OverlayOptions | undefined;
 }
 
 /** The virtual TUI: listeners held, focus tracked, dirty-flag render pull. */
@@ -130,16 +132,19 @@ class VirtualTui {
 
 /** Composite root + top overlay (center anchor, % width, maxHeight clip). */
 function compositeFrame(app: TuiApp, tui: VirtualTui, width: number): string {
-  const base = app.root.render(width);
+  // Use pi-tui's real height-aware layout engine. Calling root.render()
+  // directly gives VStack an infinite height and lets transcript/composer push
+  // status below a short served viewport.
+  const base = renderLayoutFrame(app.root, width, tui.terminal.rows, () => tui.requestRender()).lines;
   const overlay = tui.topOverlay();
   if (!overlay) return base.join("\n");
+  overlay.options?.visible?.(width, tui.terminal.rows);
   // pi-tui's compositeTuiLine preserves base content left/right of the
   // overlay — the previous whole-row replacement blanked the transcript
   // beside every picker/prompt in served frames.
   const oWidth = Math.min(overlayWidth(overlay.options?.width, width), width);
   const oLines = overlay.component.render(oWidth);
-  const maxHeight = overlay.options?.maxHeight !== undefined ? Number.parseInt(overlay.options.maxHeight, 10) : undefined;
-  const clipped = maxHeight !== undefined && !Number.isNaN(maxHeight) ? oLines.slice(0, Math.max(1, Math.floor((maxHeight / 100) * base.length))) : oLines;
+  const clipped = oLines.slice(0, overlayHeight(overlay.options?.maxHeight, base.length));
   const padLeft = Math.max(0, Math.floor((width - oWidth) / 2));
   const startRow = Math.max(0, Math.floor((base.length - clipped.length) / 2));
   for (let i = 0; i < clipped.length && startRow + i < base.length; i += 1) {
@@ -155,6 +160,15 @@ function overlayWidth(spec: string | number | undefined, width: number): number 
     if (!Number.isNaN(pct)) return Math.max(20, Math.floor((pct / 100) * width));
   }
   return Math.floor(width * 0.6);
+}
+
+function overlayHeight(spec: string | number | undefined, height: number): number {
+  if (typeof spec === "number") return Math.max(1, Math.min(Math.floor(spec), height));
+  if (typeof spec === "string" && spec.endsWith("%")) {
+    const pct = Number.parseInt(spec, 10);
+    if (!Number.isNaN(pct)) return Math.max(1, Math.min(height, Math.floor((pct / 100) * height)));
+  }
+  return height;
 }
 
 export class HostedTui {
@@ -229,8 +243,15 @@ export class HostedTui {
   }
 
   /** The settled frame (attach hello / replay): render at the given width. */
-  settledFrame(width: number): string {
-    return compositeFrame(this.app, this.virtual, width);
+  settledFrame(width: number = this.virtual.terminal.columns): string {
+    const safeWidth = Math.min(HostedTui.MAX_COLUMNS, clampColumns(width));
+    const previousWidth = this.virtual.terminal.columns;
+    this.virtual.terminal.columns = safeWidth;
+    try {
+      return compositeFrame(this.app, this.virtual, safeWidth);
+    } finally {
+      this.virtual.terminal.columns = previousWidth;
+    }
   }
 
   /** Inject input (read-write attaches only — the caller enforces S5). */
@@ -272,8 +293,8 @@ export class HostedTui {
   static readonly MAX_ROWS = 200;
 
   resize(columns: number, rows: number): void {
-    this.virtual.terminal.columns = Math.min(HostedTui.MAX_COLUMNS, Math.max(20, Math.floor(columns)));
-    this.virtual.terminal.rows = Math.min(HostedTui.MAX_ROWS, Math.max(4, Math.floor(rows)));
+    this.virtual.terminal.columns = Math.min(HostedTui.MAX_COLUMNS, clampColumns(columns));
+    this.virtual.terminal.rows = Math.min(HostedTui.MAX_ROWS, clampRows(rows));
     this.virtual.dirty = true;
   }
 

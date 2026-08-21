@@ -15,6 +15,19 @@ import { editorTheme } from "./theme.js";
 import { SLASH_COMMANDS } from "./commands.js";
 import { atomicTokenAt, decodePastedChunk } from "./paste.js";
 import { mightContainMagicKeyword, paintMagicKeywords, shimmerPhase } from "./magic-keywords.js";
+import { capabilities, renderTerminalText } from "./capabilities.js";
+import { clampColumns, resolveLayout } from "./layout.js";
+
+/** Keep both borders and the cursor-bearing content rows inside the cap. */
+export function clampComposerRows(lines: string[], maxRows: number): string[] {
+  if (lines.length <= maxRows || lines.length < 3) return lines;
+  const innerRows = Math.max(1, maxRows - 2);
+  const content = lines.slice(1, -1);
+  const cursorIndex = content.findIndex((line) => line.includes(CURSOR_MARKER));
+  const anchor = cursorIndex === -1 ? content.length - 1 : cursorIndex;
+  const start = Math.min(Math.max(0, anchor - innerRows + 1), Math.max(0, content.length - innerRows));
+  return [lines[0]!, ...content.slice(start, start + innerRows), lines[lines.length - 1]!];
+}
 
 /**
  * The composer editor (E017 dossier picks 4+5): the vendored pi-tui Editor
@@ -45,8 +58,12 @@ class ComposerEditor extends Editor {
    */
   override render(width: number): string[] {
     const lines = super.render(width);
-    if (!mightContainMagicKeyword(this.getExpandedText())) return lines;
-    return lines.map((line) => paintMagicKeywords(line, shimmerPhase()));
+    const painted = mightContainMagicKeyword(this.getExpandedText())
+      ? lines.map((line) => paintMagicKeywords(line, shimmerPhase()))
+      : lines;
+    const terminal = (this as unknown as { tui: { terminal: { columns: number; rows: number } } }).tui.terminal;
+    return clampComposerRows(painted, resolveLayout(terminal.columns, terminal.rows).composerMaxRows)
+      .map(renderTerminalText);
   }
 
   /**
@@ -149,7 +166,7 @@ class ComposerEditor extends Editor {
   /** The width the editor last rendered at (defaults sanely pre-render). */
   private lastRenderedContentWidth(): number {
     const terminal = (this as unknown as { tui: { terminal: { columns: number } } }).tui.terminal;
-    return Math.max(20, terminal.columns);
+    return clampColumns(terminal.columns);
   }
 
   override handleInput(data: string): void {
@@ -217,6 +234,7 @@ export class Composer {
     // gradient moves. Probe is a substring check — cheap; the timer is
     // unref'd and never blocks exit.
     this.shimmerTimer = setInterval(() => {
+      if (capabilities().reducedMotion) return;
       if (mightContainMagicKeyword(this.editor.getExpandedText())) {
         tui.requestRender();
       }
@@ -258,7 +276,7 @@ export class Composer {
   /** Click-to-cursor geometry (E019 inc 03): rendered height + padding. */
   composerGeometry(): { height: number; paddingX: number } {
     const terminal = (this.editor as unknown as { tui: { terminal: { columns: number } } }).tui.terminal;
-    return { height: this.editor.render(Math.max(20, terminal.columns)).length, paddingX: 1 };
+    return { height: this.editor.render(clampColumns(terminal.columns)).length, paddingX: 1 };
   }
 
   /** Position the text cursor at a clicked content point. */

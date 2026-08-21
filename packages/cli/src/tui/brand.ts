@@ -9,6 +9,7 @@ import path from "node:path";
 import { openkaiHome } from "@kaidera/openkai-core";
 
 import { gradientLogo, introLogoFrame } from "./gradient.js";
+import { capabilities } from "./capabilities.js";
 
 
 /**
@@ -175,7 +176,12 @@ export async function playBrandAnimation(
   options: { force?: boolean } = {},
 ): Promise<boolean> {
   void options;
-  if (!process.stdout.isTTY) return false;
+  if (
+    !process.stdout.isTTY ||
+    !capabilities().altScreen ||
+    !capabilities().unicode ||
+    capabilities().reducedMotion
+  ) return false;
 
   const frame = [...KAIDERA_MARK, "", ...OPENKAI_LOGO, "", `  ${BRAND_TAGLINE} · ${version}`, "", `  press any key to skip`];
   const totalMs = 2600;
