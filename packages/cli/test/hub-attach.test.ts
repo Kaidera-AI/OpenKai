@@ -205,9 +205,32 @@ test("hub attach: create session, attach ro+rw, input drives the rw attach only 
     await rw.next(); // hello
     rw.send({ type: "input", data: "h" });
     rw.send({ type: "input", data: "i" });
-    const frame = await rw.next(8000);
-    assert.equal(frame["type"], "frame");
-    assert.ok(String(frame["data"]).includes("hi"), "the typed text renders in the frame stream");
+    // The host renders one coalesced frame per pump tick (~15fps). The two
+    // sends above are synchronous on a fast machine and coalesce into a
+    // single render, but on CI the pump tick can fire between them, so the
+    // FIRST frame may contain only "h". Asserting on exactly one frame is a
+    // timing race (the CI failure is a fast assert, not a timeout — the frame
+    // arrived early with partial content). Accumulate frame data within the
+    // 8s deadline until the typed text renders, then assert on the
+    // accumulation. Do NOT raise the timeout: the bug is ordering, not
+    // latency. S2/S3/S5 semantics are unchanged — rw input still drives
+    // frames and ro input is still ignored at the seam.
+    const deadline = 8000;
+    const started = Date.now();
+    let sawFrame = false;
+    let acc = "";
+    while (Date.now() - started < deadline) {
+      const remaining = deadline - (Date.now() - started);
+      if (remaining <= 0) break;
+      const msg = await rw.next(remaining);
+      if (msg["type"] === "frame") {
+        sawFrame = true;
+        acc += String(msg["data"]);
+        if (acc.includes("hi")) break;
+      }
+    }
+    assert.ok(sawFrame, "rw input produced at least one frame (S2)");
+    assert.ok(acc.includes("hi"), "the typed text renders in the frame stream");
 
     ro.close();
     rw.close();
