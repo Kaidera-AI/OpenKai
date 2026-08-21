@@ -221,12 +221,18 @@ export class SessionPermissionGate implements PermissionGate {
     // neither a config `allow` nor autonomy `high` ever lifts it.
     if (decision === "deny") return { decision: "reject", reason };
 
+    // Doom-loop guard (opencode pattern, E019): the same tool called with
+    // identical args a third consecutive time forces the ask path — even at
+    // autonomy high or under a persisted allow policy. A runaway retry loop
+    // stops at the operator instead of burning the session.
+    const doomed = this.noteDoomLoop(toolName, args);
+
     // Persisted per-tool policy (config.json tools.approval.<toolName>) —
     // consulted live so mid-session writes take effect. Sits above the
     // autonomy axis: a `deny` pin holds even at autonomy high, an `allow`
     // pre-approves even at autonomy off/low (the headless/CI unblock path).
     const policy = this.toolPolicy?.()[toolName];
-    if (policy === "allow") return { decision: "approve" };
+    if (!doomed && policy === "allow") return { decision: "approve" };
     if (policy === "deny") {
       return {
         decision: "reject",
@@ -237,14 +243,14 @@ export class SessionPermissionGate implements PermissionGate {
     // The autonomy axis (operator's live posture): med auto-approves in-cwd
     // file mutations; high also auto-approves bash. The floor already
     // rejected above — this never lifts a deny.
-    if (this.autonomy === "high") return { decision: "approve" };
-    if (this.autonomy === "med" && (toolName === "write_file" || toolName === "edit_file")) {
+    if (!doomed && this.autonomy === "high") return { decision: "approve" };
+    if (!doomed && this.autonomy === "med" && (toolName === "write_file" || toolName === "edit_file")) {
       return { decision: "approve" };
     }
 
     // `ask` — consult the session-scoped `always` cache first.
     const key = alwaysKey(toolName, args);
-    if (this.alwaysCache.has(key)) return { decision: "approve" };
+    if (!doomed && this.alwaysCache.has(key)) return { decision: "approve" };
 
     // Emit the request and await the operator's answer. The preview is built
     // lazily (and may be async for file-reading diff previews) so an `allow`
@@ -258,7 +264,7 @@ export class SessionPermissionGate implements PermissionGate {
       toolName,
       args,
       preview,
-      rule: reason,
+      rule: doomed ? `doom loop — ${toolName} called 3× with identical input; confirm this is not a loop` : reason,
     });
 
     const outcome = await new Promise<{ d: "once" | "always" | "reject"; reason?: string }>(
@@ -274,12 +280,36 @@ export class SessionPermissionGate implements PermissionGate {
     return { decision: "approve" };
   }
 
+  /**
+   * Doom-loop tracking (E019): a sliding window of recent gated calls. The
+   * same (tool, args) three times consecutively trips the guard; any
+   * different call resets the run. Args identity is a cheap stable stringify
+   * — the gate's hot path stays allocation-light.
+   */
+  private doomKey = "";
+  private doomCount = 0;
+
+  private noteDoomLoop(toolName: string, args: unknown): boolean {
+    let key = toolName;
+    try {
+      key += `:${JSON.stringify(args) ?? ""}`;
+    } catch {
+      key += ":<unstringifiable>";
+    }
+    if (key === this.doomKey) {
+      this.doomCount += 1;
+    } else {
+      this.doomKey = key;
+      this.doomCount = 1;
+    }
+    return this.doomCount >= 3;
+  }
+
   respond(requestId: string, decision: "once" | "always" | "reject"): void {
     const resolve = this.pending.get(requestId);
     if (resolve) {
       this.pending.delete(requestId);
-      resolve({ d: decision });
-    }
+      resolve({ d: decision });    }
     // Unknown / already-resolved requests are ignored — fail-safe, never allow.
   }
 
