@@ -99,6 +99,29 @@ test("paintShimmerLabel paints any label with the keyword palette", () => {
   assert.equal(typeof shimmerPhase(), "number");
 });
 
+// E019 area 4/F5: the brand sweep paints `state.activity`, which carries a
+// model/MCP-chosen tool name. A per-code-unit painter split a surrogate pair
+// (emoji) with an SGR, corrupting the glyph to U+FFFD in the status chip.
+test("paintShimmerLabel never splits a surrogate pair (emoji-named tool activity)", () => {
+  for (const palette of ["brand", "ultrathink"] as const) {
+    for (const phase of [0, 0.25, 0.5, 0.9]) {
+      const out = paintShimmerLabel("🤔 tool: 你好", palette, phase);
+      // No ANSI escape may land immediately after a lone high surrogate.
+      assert.ok(
+        !/[\uD800-\uDBFF]\x1b/.test(out),
+        `SGR inserted mid-surrogate (${palette}@${phase}): ${JSON.stringify(out)}`,
+      );
+      // Round-trips through UTF-8 with no replacement char.
+      assert.ok(
+        !Buffer.from(out, "utf8").includes(Buffer.from("�")),
+        `U+FFFD corruption (${palette}@${phase})`,
+      );
+      // The astral glyph survives intact after SGR stripping.
+      assert.ok(out.replace(/\x1b\[[0-9;]*m/g, "").includes("🤔"), "emoji preserved");
+    }
+  }
+});
+
 // ── 4. config gating ────────────────────────────────────────────────────────
 
 test("magicKeywords config gates detection and painting", () => {
