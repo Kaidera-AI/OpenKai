@@ -155,5 +155,11 @@ manual npm publish (core then cli) → repoint install.sh + Homebrew formula
 ## Bun channel (added 2026-08-20)
 
 `bun add -g @kaidera/openkai` is a supported install channel. `openkai update`
-detects it (bin shim under ~/.bun via argv[1] or execPath) and executes
-`bun add -g @kaidera/openkai`. Documented in README alongside npm/brew/curl.
+detects it (bin shim under ~/.bun via argv[1]/execPath, plus realpath for custom
+BUN_INSTALL roots) and executes `bun add -g @kaidera/openkai`. Documented in
+README alongside npm/brew/curl.
+
+Bun quirk (learned shipping 0.1.9): `bun add -g`/`bun update -g` do NOT move a
+pinned global lockfile entry — the package stays at the old version while
+reporting success. Repair: bump the entry in ~/.bun/install/global/package.json,
+delete ~/.bun/install/global/bun.lock, run `bun install` there.
