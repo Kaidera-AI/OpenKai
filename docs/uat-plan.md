@@ -1,5 +1,7 @@
 # OpenKai UAT Plan — v0.01.001 line
 
+> **SUPERSEDED for 0.1.9+** by `docs/TEST_GUIDE.md` (2026-08-20). Kept for the 0.01.001-line record.
+
 **Purpose:** physical acceptance testing you drive. Each scenario lists steps + what you should SEE. Anything that deviates is a finding — note it and it becomes a handoff.
 
 **Setup (once):**
