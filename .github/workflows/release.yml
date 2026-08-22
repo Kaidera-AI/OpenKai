@@ -98,9 +98,13 @@ jobs:
         # Pinned binaries refuse unsigned manifests (fail-closed) — this step
         # is what keeps self-upgrade possible. The private key is a repo
         # secret; the public half is pinned in build-binaries.sh.
-        # sign-manifest.mjs is dependency-free Node — no npm install, no build
-        # (a v0.1.009 run failed here compiling without node_modules).
+        # sign-manifest.mjs imports the built dist (canonicalManifestBytes) —
+        # npm ci + build first (two v0.1.009 runs failed on the missing
+        # install, then on the missing build).
         run: |
+          npm ci
+          npm run build -w @kaidera/openkai-core
+          npm run build -w @kaidera/openkai
           OPENKAI_RELEASE_PRIVATE_KEY="$OPENKAI_RELEASE_PRIVATE_KEY" \
             node packages/cli/scripts/sign-manifest.mjs bin/latest.json
           test -n "$(python3 -c 'import json; print(json.load(open("bin/latest.json"))["signature"])')"
