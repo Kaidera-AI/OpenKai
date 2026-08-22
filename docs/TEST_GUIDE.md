@@ -92,7 +92,15 @@ Each drive lists steps + what you MUST see. Report anything that differs.
 4. `/settings → features → mouse support → off` — **See:** mouse traffic stops
    affecting the UI entirely.
 
-## 9. Crash guard
+## 9. Magic keyword + context hygiene
+
+1. Run a session with a thinking model, then `/shake thinking`. **See:** the
+   notice counts tool results AND thinking blocks; the next turn's context is
+   smaller (`/context` before/after).
+2. Type during boot (before the chrome appears). **See:** your text lands in
+   the composer intact — no dropped keystrokes.
+
+## 10. Crash guard
 
 1. If the TUI ever crashes: **See** the terminal restores itself and a full
    stack prints to stderr — `openkai crashed (terminal restored): …`. Send that

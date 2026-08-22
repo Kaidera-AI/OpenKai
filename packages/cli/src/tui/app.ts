@@ -822,20 +822,39 @@ export class TuiController {
       }
       case "shake": {
         // omp's /shake elide: strip heavy tool results from context to
-        // reclaim tokens without a full /compact. We replace tool_result
-        // content with a lightweight placeholder.
+        // reclaim tokens without a full /compact. `/shake thinking` (OMP v18)
+        // additionally strips reasoning blocks — the thinking payload is
+        // often the heaviest part of a long session.
+        const stripThinking = argument.trim() === "thinking";
         const messages = this.transport.getMessages();
         let stripped = 0;
+        let thinkingStripped = 0;
         const shaken = messages.map((msg) => {
+          const content = (msg as { content?: unknown }).content;
           if (msg.role === "toolResult") {
             stripped += 1;
             return { ...msg, content: [{ type: "text", text: "[elided by /shake]" }] } as typeof msg;
+          }
+          if (stripThinking && Array.isArray(content)) {
+            const kept = content.filter(
+              (part) => !(typeof part === "object" && part !== null && (part as { type?: string }).type === "thinking"),
+            );
+            const dropped = content.length - kept.length;
+            if (dropped > 0) {
+              thinkingStripped += dropped;
+              if (kept.length === 0) {
+                return { ...msg, content: [{ type: "text", text: "[thinking elided by /shake]" }] } as typeof msg;
+              }
+              return { ...msg, content: kept } as typeof msg;
+            }
           }
           return msg;
         });
         this.transport.setMessages(shaken);
         this.transcript.addNotice(
-          `/shake — stripped ${stripped} tool result(s) from context (content replaced with placeholders)`,
+          stripThinking
+            ? `/shake thinking — stripped ${stripped} tool result(s) + ${thinkingStripped} thinking block(s) from context`
+            : `/shake — stripped ${stripped} tool result(s) from context (content replaced with placeholders)`,
         );
         break;
       }
