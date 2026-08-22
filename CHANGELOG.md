@@ -45,6 +45,50 @@ Users on 0.1.8 carry these defects:
   (`magicKeywords.{enabled,ultrathink,ultrareview}`), hidden-notice
   discipline. This batch also missed the 0.1.8 cut.
 
+### Magic keywords (E017 UK round 4 — `fc4cb6e`)
+
+- `ultrathink` / `ultrareview` as standalone prose keywords — cherry-picked
+  from OMP's magic-keyword machinery (boundary regex, prose masking, gradient
+  painter) and upgraded to the fusion panel: ultrathink runs a multi-model
+  think, ultrareview a multi-model adversarial review of the shadow diff.
+  Hidden system-notice rides the model payload only (never persists, never
+  renders). Rainbow shimmer while typing, static gradient in sent messages,
+  shimmering status while the panel runs. Toggles: settings → interaction →
+  magic keywords (all / think / review / off).
+
+### Access control surface (E019 inc 05)
+
+- Denials now name the tool, target, reason, and remediation surface to the
+  operator (transcript error row); the model's denial text carries the config
+  path so it relays options instead of asking you to run commands.
+- Autonomy levels in plain language: ask every time / trusted reads / trusted
+  folder / **high — full access**; the settings row is "access level".
+- Doom-loop guard (opencode's missing semantic): the same gated call 3×
+  consecutively forces the ask path through every auto-approval layer;
+  an operator "always" answer resets the window.
+
+### Channels (E019 inc 06)
+
+- Bun is a first-class install channel: `bun add -g @kaidera/openkai`;
+  `openkai update` detects the bun shim (incl. custom `BUN_INSTALL` via
+  realpath) and executes `bun add -g`. Verified live.
+- 0.1.8 regression fixed: `update --check` / `--rollback` on the npm channel
+  EXECUTED the install — both are read-only again.
+
+### Second adversarial round (four slices, all findings fixed — `1ece3f0`)
+
+- WS skip-path recursion → loop (a 120 KB out-of-scope burst crashed the hub).
+- Orchestrator `escalate()` spent-budget guard no longer re-arms across stages.
+- maskNonProse O(n²) killed (short-circuit + probe gating); always-cache
+  nested-key collision closed; ultrareview is honest about untracked files,
+  truncation, and no-snapshot state; shimmer timer disposed across session
+  restarts; config reads TTL-cached.
+- Hub: MAX_HOSTED reservation (TOCTOU), 503 for upgrades in the shutdown
+  window; headless host: `visible()` honoured, empty-stack hideOverlay is a
+  no-op; fuse: the halt verdict no longer claims a cascade that never ran.
+- Click-to-cursor replays pi-tui's own wordWrapLine (exact mapping); overlay
+  gate; release-time coordinates.
+
 ### Mouse investigation + click-to-cursor (E019 inc 01–03)
 
 The CTO-reported crash ("numbers change with moving mouse", recurring
@@ -128,32 +172,26 @@ New findings surfaced and fixed this pass:
 
 ### Consciously deferred (scheduled as fast-follows)
 
-These are real but lower-severity / gated / latent, and were held to avoid
-piling more changes onto a release candidate. Each has a file:line and a
-repro direction.
+Refreshed at release: the second adversarial round (above) fixed most of the
+earlier R-list (R1 key validation, R2 palette caching, R4 boundary classes,
+collapseBoot reindex, shimmer timer dispose, MAX_HOSTED TOCTOU, WS skip
+recursion). Still open, all low-severity with named repro directions:
 
-- **R1** (MEDIUM, latent, gated): `provider-config.ts` env-key strip — a
-  newline in `providerId` could inject an extra env line, but no in-repo
-  caller reaches the ungated surface. Defense-in-depth strip is a cheap
-  fast-follow.
-- **R2** (MEDIUM, perf): activity string has no length cap; brand shimmer
-  repaints O(n) per 80ms frame. Cheap: `.slice()` at `setActivity`.
-- **R3** (MEDIUM, affordance): shimmer paints per wrapped rendered line but
-  submit-time detection runs on the full buffer — a multi-line fence
-  shimmers but does not reroute. Fix needs detection + paint to share one
-  masking pass.
-- **R4–R11** (LOW→LOW-MED): magic-keyword boundary classes (`\p{Cf}`/`\p{M}`
-  omission), `maskNonProse` XML/PHP gaps, `collapseBoot` reindex symmetry,
-  shimmer `setInterval` dispose, hub MAX_HOSTED TOCTOU, WS RFC 6455 control
-  frames, `WsChannel.send` backpressure, `setTheme("auto")` dead branch.
+- served-frame overlay anchor/minWidth/margin options (center-only today).
+- `WsChannel.send` write() backpressure (slow consumer buffers outbound).
+- per-attach render width (resize is host-wide; documented wart).
+- `setTheme("auto")` dead branch; calibration default-runs producer.
+- maskNonProse residual XML edge cases (PHP openers, CDATA) — bounded by the
+  short-circuit; worst case is one O(n) scan per submit.
 
-Full findings ledger: `docs/HANDOFF_E019_QWEN_LEDGER.md`.
+Full findings ledgers: `docs/HANDOFF_E019_QWEN_LEDGER.md`,
+`docs/HANDOFF_E019_QWEN_REVIEW.md`.
 
 ### Governance
 
-- `docs/RELEASE_SOP.md` binding: no publish without explicit CTO consent,
-  re-confirmed 2026-08-20 after v0.1.008 went out early. This release is
-  PREPARE ONLY — nothing publishes until the CTO says go.
+- `docs/RELEASE_SOP.md` binding: no publish without explicit CTO consent.
+  CTO consent for v0.1.009 recorded 2026-08-21 ("lets release v0.1.9 and
+  publish everything on all the channels").
 - npm versions immutable: 0.1.8 stays as-is publicly; 0.1.9 is the honest
   follow-up.
 
