@@ -90,6 +90,12 @@ export function installMouseRouting(
   routable.handleViewportInput = (data: string): ViewportResult => {
     const event = parseSgr(data);
     if (event === undefined) return original.call(routable, data);
+    // An open overlay owns the screen — clicks route to the viewport's own
+    // handling (AdvMouse: the composer rect math must not fire beneath one).
+    if (tui.hasOverlay()) {
+      pendingClick = undefined;
+      return original.call(routable, data);
+    }
 
     // Left press inside the composer: hold as a candidate click (consumed so
     // the viewport's selection never starts).
@@ -113,11 +119,12 @@ export function installMouseRouting(
     }
 
     // Release while a click is pending: position the cursor, swallow the
-    // release (no selection was started).
+    // release (no selection was started). The RELEASE's own coordinates are
+    // the target — a resize between press and release makes press coords
+    // stale (AdvMouse).
     if (event.release && event.button === 0 && pendingClick !== undefined) {
-      const held = pendingClick;
       pendingClick = undefined;
-      const point = toComposerPoint(held.x, held.y);
+      const point = toComposerPoint(event.x, event.y);
       if (point !== undefined) target.positionCursorAt(point.row, point.col);
       return { consume: true };
     }

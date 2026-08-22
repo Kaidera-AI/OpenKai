@@ -328,6 +328,9 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
     // to the escalated (capable-tier) model as a self-pair (E016 default).
     let panel = { architectModel: architect, builderModel: builder, judgeModel: judge };
     let cascadeSpent = false;
+    // True only when the cascade actually produced a retry (L2: the verdict
+    // must not claim "after the cascade retry" when escalation was suppressed).
+    let cascadeRan = false;
     // Set when the cascade block already recorded this attempt's fail — the
     // bottom writeback must not double-count it (E017 review). Reset per
     // attempt at the loop top.
@@ -423,6 +426,7 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
               );
             }
             panel = { architectModel: escalatedModel, builderModel: escalatedModel, judgeModel: judge };
+            cascadeRan = true;
             continue;
           }
         }
@@ -479,7 +483,7 @@ export async function runFuse(options: FuseCliOptions): Promise<number> {
               ? "WEAK GATE — baseline was green before work; gate proves nothing"
               : result.gate.outcome === "refused"
                 ? "REFUSED — checks not approved (rerun with --yes to execute)"
-                : `HALT — gate still failing after the retry cap${cascadeSpent ? " and the cascade retry" : ""} (escalate to triage)`;
+                : `HALT — gate still failing after the retry cap${cascadeRan ? " and the cascade retry" : cascadeSpent ? " (cascade suppressed — no retry ran)" : ""} (escalate to triage)`;
         process.stdout.write(`\n══ GATE: ${verdict} ══\n`);
       }
 

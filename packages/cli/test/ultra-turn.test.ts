@@ -169,6 +169,9 @@ test("ultrareview refuses cleanly when the shadow has no diff", async () => {
 
   assert.equal(fusionCalls.length, 0, "no panel run without a diff");
   const transcriptText = app.transcript.blockTexts().join("\n");
-  assert.ok(transcriptText.includes("nothing to review"), "honest refusal renders");
+  assert.ok(
+    /no shadow snapshot yet|nothing to review/.test(transcriptText),
+    "honest refusal renders (no snapshot and clean tree are distinct messages)",
+  );
   await transport.close();
 });

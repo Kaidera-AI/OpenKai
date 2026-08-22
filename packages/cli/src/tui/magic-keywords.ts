@@ -5,6 +5,8 @@
  *
  * - Detection is prose-delimited, lowercase, and never fires inside code
  *   spans, fenced blocks, or XML/HTML sections ({@link maskNonProse}).
+ *   Quoted and blockquoted mentions DO fire (documented OMP semantics —
+ *   "quotes may touch the keyword"); the hidden notice is benign and static.
  * - The composer paints standalone keywords with an animated rainbow
  *   shimmer ({@link paintMagicKeywords}); sent messages get the static
  *   gradient. Painting adds zero-width SGR only — visible width is stable.
@@ -22,10 +24,12 @@ import { capabilities } from "./capabilities.js";
 // ── Boundary regex (OMP magic-keyword-boundary.ts, verbatim semantics) ──────
 
 /** Characters that bind a magic keyword into an identifier or path segment. */
-const LEFT_BOUNDARY = String.raw`(?<![\p{L}\p{N}_./\\-])(?<!::)`;
+// \p{M} (combining marks) included: an NFD-decomposed letter abutting the
+// keyword renders as one token and must not split (E019 AdvKeywords KW-04).
+const LEFT_BOUNDARY = String.raw`(?<![\p{L}\p{M}\p{N}_./\\-])(?<!::)`;
 
 /** Characters that cannot immediately follow a standalone magic keyword. */
-const RIGHT_BOUNDARY = String.raw`(?![\p{L}\p{N}_/\\-])(?!\.[\p{L}\p{N}_-])(?!\()`;
+const RIGHT_BOUNDARY = String.raw`(?![\p{L}\p{M}\p{N}_/\\-])(?!\.[\p{L}\p{N}_-])(?!\()`;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
@@ -91,6 +95,10 @@ function findTagEnd(text: string, j: number, n: number): number {
 
 function findMatchingClose(text: string, start: number, n: number, name: string, masked: Uint8Array): number {
   const lname = name.toLowerCase();
+  // Quadratic-kill (E019 AdvKeywords KW-01): a substring miss on the close
+  // tag proves there is no close — skip the scan-to-EOF entirely. Repeated
+  // unclosed same-name tags used to each cost a full remainder scan.
+  if (!text.slice(start).toLowerCase().includes(`</${lname}`)) return -1;
   let depth = 1;
   let k = start;
   while (k < n) {
@@ -309,7 +317,10 @@ export function createGradientHighlighter(spec: GradientHighlightSpec): KeywordH
   const paint = (word: string, resetTo: string, phase: number): string => {
     const stopsArr = palette();
     const m = stopsArr.length;
-    const n = word.length;
+    // Graphemes, not UTF-16 units (AdvLifecycle P1): per-unit painting splits
+    // surrogate pairs and orphan combining marks into U+FFFD.
+    const graphemes = [...SHIMMER_SEGMENTER.segment(word)];
+    const n = graphemes.length;
     let out = "";
     let prev = "";
     for (let i = 0; i < n; i += 1) {
@@ -319,7 +330,7 @@ export function createGradientHighlighter(spec: GradientHighlightSpec): KeywordH
         out += color;
         prev = color;
       }
-      out += word[i];
+      out += graphemes[i]!.segment;
     }
     return `${out}${resetTo}`;
   };
@@ -386,12 +397,32 @@ export const ULTRAREVIEW_NOTICE =
 
 /** Config slice for the magic keywords (default-on posture). */
 export function magicKeywordEnabled(keyword: MagicKeyword): boolean {
-  const config = readConfigFile();
-  const slice = config["magicKeywords"];
-  if (typeof slice !== "object" || slice === null) return true;
-  const record = slice as Record<string, unknown>;
-  if (record["enabled"] === false) return false;
-  return record[keyword] !== false;
+  const config = readMagicKeywordsConfig();
+  if (config === undefined) return true;
+  if (config["enabled"] === false) return false;
+  return config[keyword] !== false;
+}
+
+// The composer paints per visible row at keystroke + 120ms shimmer cadence —
+// an uncached sync config read per keyword per row stalls the render path
+// (AdvKeywords KW-03). TTL-cache the slice; settings writes take effect
+// within 500ms, which a toggle row easily tolerates.
+let magicKeywordsCache: { at: number; slice: Record<string, unknown> | undefined } | undefined;
+
+/** Drop the cached magicKeywords slice (settings writes + tests). */
+export function invalidateMagicKeywordsCache(): void {
+  magicKeywordsCache = undefined;
+}
+
+function readMagicKeywordsConfig(): Record<string, unknown> | undefined {
+  const now = Date.now();
+  if (magicKeywordsCache !== undefined && now - magicKeywordsCache.at < 500) {
+    return magicKeywordsCache.slice;
+  }
+  const raw = readConfigFile()["magicKeywords"];
+  const slice = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : undefined;
+  magicKeywordsCache = { at: now, slice };
+  return slice;
 }
 
 /** The keywords present (as standalone prose) in `text`, honouring toggles. */
@@ -438,13 +469,29 @@ export function shimmerPhase(now = Date.now()): number {
  * activity chips, where the label itself IS the keyword's surface).
  * `brand` is the generic busy sweep (E019: every working state shimmers).
  */
-export function paintShimmerLabel(label: string, keyword: ShimmerPalette, phase = shimmerPhase()): string {
+const shimmerPaletteCache = new Map<string, string[]>();
+
+function shimmerPalette(keyword: ShimmerPalette): string[] {
   const depth = capabilities().colour;
-  if (depth === "none" || depth === "ansi16") return label;
+  const cacheKey = `${keyword}:${depth}`;
+  const cached = shimmerPaletteCache.get(cacheKey);
+  if (cached !== undefined) return cached;
   const spec =
     keyword === "brand"
       ? { stops: 14, hue: (t: number) => 140 + t * 60, saturation: 55, lightness: 68 }
       : { ...KEYWORD_SPECS[keyword].gradient };
+  const stops: string[] = [];
+  for (let i = 0; i < spec.stops; i += 1) {
+    stops.push(colorEscape(spec.hue(i / spec.stops), spec.saturation ?? 90, spec.lightness ?? 62));
+  }
+  shimmerPaletteCache.set(cacheKey, stops);
+  return stops;
+}
+
+export function paintShimmerLabel(label: string, keyword: ShimmerPalette, phase = shimmerPhase()): string {
+  const depth = capabilities().colour;
+  if (depth === "none" || depth === "ansi16") return label;
+  const palette = shimmerPalette(keyword);
   // Iterate GRAPHEMES, not UTF-16 code units: a per-unit loop inserts the SGR
   // between the halves of an astral surrogate pair (emoji) or before a
   // combining mark, corrupting the glyph into U+FFFD. The status-line brand
@@ -455,11 +502,12 @@ export function paintShimmerLabel(label: string, keyword: ShimmerPalette, phase 
   const n = graphemes.length;
   if (n === 0) return label;
   const wrappedPhase = ((phase % 1) + 1) % 1;
+  const m = palette.length;
   let out = "";
   let prev = "";
   for (let i = 0; i < n; i += 1) {
     const t = (i / n + wrappedPhase) % 1;
-    const escape = colorEscape(spec.hue(t), spec.saturation ?? 90, spec.lightness ?? 62);
+    const escape = palette[Math.floor(t * m) % m] ?? palette[0] ?? "";
     if (escape !== prev) {
       out += escape;
       prev = escape;

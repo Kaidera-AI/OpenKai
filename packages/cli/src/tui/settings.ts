@@ -13,6 +13,7 @@ import { FEATURES, featureEnabled, setFeature } from "./features.js";
 import { themeName, themeNames, setTheme } from "./theme.js";
 import { DEFAULT_STATUSLINE_CHIPS, readStatuslineChips, readConfigFile, readToolApprovals, writeShiftPosture, type StatuslineChip } from "../config.js";
 import { readShiftConfig } from "../fuse.js";
+import { invalidateMagicKeywordsCache } from "./magic-keywords.js";
 import { writeConfigFile } from "../config.js";
 
 // ── Magic keywords (ultrathink/ultrareview — E017 UK round 4) ──────────────
@@ -47,6 +48,7 @@ function magicKeywordsState(): string {
 
 /** Cycle all → think → review → off; persists the magicKeywords config slice. */
 function cycleMagicKeywords(): string {
+  invalidateMagicKeywordsCache();
   const order: MagicKeywordsMode[] = ["all", "think", "review", "off"];
   const next = order[(order.indexOf(readMagicKeywordsMode()) + 1) % order.length]!;
   const config = readConfigFile();

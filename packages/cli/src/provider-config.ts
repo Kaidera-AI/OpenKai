@@ -84,14 +84,24 @@ function applyEnvEdit(key: string, value: string | undefined): void {
  * (including harness knobs the project-.env trust boundary exists to block).
  */
 export function writeProviderKey(key: string, value: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new Error(`invalid env key name: ${JSON.stringify(key)}`);
+  }
   if (/[\r\n]/.test(value)) {
     throw new Error("key values must be single-line (no newlines)");
   }
   // Values with whitespace or '#' are quoted on write — both readers (this
   // module and env.ts's loader) round-trip quoted values; unquoted they
-  // skew on next boot (truncated at the first space). A value containing
-  // its own double quote falls back to the legacy unquoted form.
-  const stored = /[\s#]/.test(value) && !value.includes('"') ? `"${value}"` : value;
+  // skew on next boot (truncated at the first space). Quote-wrapped inputs
+  // and quote+whitespace mixes don't round-trip either (AdvChannels I1) —
+  // reject them rather than store a value that reads back differently.
+  if (/^["']|["']$/.test(value)) {
+    throw new Error("key values must not start or end with a quote character (store the raw credential)");
+  }
+  if (/[\s#]/.test(value) && value.includes('"')) {
+    throw new Error("key values with both whitespace and double quotes are not storable — strip one");
+  }
+  const stored = /[\s#]/.test(value) ? `"${value}"` : value;
   applyEnvEdit(key, stored);
   process.env[key] = value;
 }

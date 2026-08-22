@@ -241,6 +241,10 @@ export class Orchestrator {
       // disagrees, reaffirms it when it agrees.
       tier = raw.score > 0 ? "capable" : "efficient";
       source = "dimensions";
+      // decideTier gates at TIER_THRESHOLD; the posture gate can be lower, in
+      // which case raw.reason says "below threshold" on a flip (AdvChannels
+      // L1 — latent today by the score lattice, but not invariant).
+      reason = `corroborative score ${raw.score.toFixed(3)} past the ${this.posture} posture threshold (${raw.confidence.toFixed(3)} ≥ ${this.threshold})`;
     } else if (latchedTier !== undefined) {
       // Below threshold with a live latch: stickiness wins (no mid-phase thrash).
       tier = latchedTier;
@@ -280,17 +284,28 @@ export class Orchestrator {
    * pin suppresses the escalation (same documented posture as overrides).
    */
   escalate(stage: Stage): TierRouteResult {
-    // Budget spent: return the latched decision UNCHANGED — re-forcing
-    // capable here would escalate a stage whose one retry already ran
-    // (E017 review: the old path re-escalated and only noted it in prose).
-    if (this.escalatedStages.has(stage) && this.latch !== undefined && this.latch.stage === stage) {
+    // Budget spent: never re-escalate a stage whose one retry already ran
+    // (E017 review + AdvChannels M2: the latch conjunct let an interleaved
+    // decide() on ANOTHER stage re-arm this stage's budget). When the last
+    // decision was this stage's, serve it back noted; otherwise re-derive the
+    // pick WITHOUT touching the latch, lastDecision, or the event stream.
+    if (this.escalatedStages.has(stage)) {
+      const note = "escalation budget for this stage already spent";
       const latched = this.lastDecision;
       if (latched !== undefined && latched.stage === stage) {
-        return {
-          ...latched,
-          reason: `${latched.reason}; escalation budget for this stage already spent — returning the latched decision`,
-        };
+        return { ...latched, reason: `${latched.reason}; ${note} — returning the latched decision` };
       }
+      const tier = this.latch?.stage === stage ? this.latch.tier : "capable";
+      const pick = this.pickModel(stage, tier);
+      return {
+        stage,
+        tier,
+        model: pick.target.model,
+        provider: pick.target.provider,
+        source: "override",
+        score: 1,
+        reason: `cascade escalation after gate halt; ${note} — no new escalation armed`,
+      };
     }
     let tier: Tier = "capable";
     let reason = "cascade escalation after gate halt (OK-9.3 rule 2 — one retry)";

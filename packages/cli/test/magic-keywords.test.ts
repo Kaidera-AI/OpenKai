@@ -21,6 +21,7 @@ import path from "node:path";
 
 import {
   detectMagicKeywords,
+  invalidateMagicKeywordsCache,
   keywordInProse,
   magicKeywordRegex,
   maskNonProse,
@@ -132,6 +133,7 @@ test("magicKeywords config gates detection and painting", () => {
     assert.deepEqual(detectMagicKeywords("ultrathink and ultrareview"), ["ultrathink", "ultrareview"], "default-on");
 
     writeFileSync(path.join(home, "config.json"), JSON.stringify({ magicKeywords: { enabled: false } }));
+    invalidateMagicKeywordsCache();
     assert.deepEqual(detectMagicKeywords("ultrathink"), [], "global switch gates all");
     assert.equal(paintMagicKeywords("ultrathink", 0), "ultrathink", "gated keywords stay plain");
 
@@ -139,6 +141,7 @@ test("magicKeywords config gates detection and painting", () => {
       path.join(home, "config.json"),
       JSON.stringify({ magicKeywords: { enabled: true, ultrareview: false } }),
     );
+    invalidateMagicKeywordsCache();
     assert.deepEqual(detectMagicKeywords("ultrathink and ultrareview"), ["ultrathink"], "per-keyword gate");
   } finally {
     if (prev === undefined) delete process.env.OPENKAI_HOME;

@@ -29,7 +29,9 @@ export type WsMessage =
   | { kind: "text"; text: string }
   | { kind: "ping"; payload: Buffer }
   | { kind: "pong"; payload: Buffer }
-  | { kind: "close"; code: number; reason: string };
+  | { kind: "close"; code: number; reason: string }
+  /** Internal: an ignored out-of-scope frame (filtered in push, never emitted). */
+  | { kind: "skipped" };
 
 /** Encode a server→client text frame (unmasked). */
 export function encodeTextFrame(text: string): Buffer {
@@ -98,6 +100,7 @@ export class WsDecoder {
     for (;;) {
       const frame = this.tryReadFrame();
       if (frame === null) break;
+      if (frame.kind === "skipped") continue;
       out.push(frame);
     }
     return out;
@@ -148,10 +151,14 @@ export class WsDecoder {
       return { kind: "close", code, reason };
     }
     if (opcode === 0x1) return { kind: "text", text: payload.toString("utf-8") };
-    // Binary/other opcodes are out of protocol scope — skip the frame.
-    return this.tryReadFrame();
+    // Binary/other opcodes are out of protocol scope — skip WITHOUT recursion:
+    // a burst of ~20k tiny out-of-scope frames (~120 KB, well under the buffer
+    // cap) used to overflow the stack through one frame per recursive call —
+    // a bearer-holder DoS on the whole hub (AdvChannels M1).
+    return { kind: "skipped" };
   }
 }
+
 
 /** A raw-text WS channel over a socket: send text/control, receive messages. */
 export class WsChannel {

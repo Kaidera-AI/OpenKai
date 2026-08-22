@@ -11,6 +11,9 @@
 
 import { CombinedAutocompleteProvider, CURSOR_MARKER, Editor, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
+// Deep import (pi-tui has no exports map, so subpaths resolve): the editor's
+// own word-wrap — the click mapping must replay the exact wrap the render used.
+import { wordWrapLine } from "@earendil-works/pi-tui/dist/components/editor.js";
 import { editorTheme } from "./theme.js";
 import { SLASH_COMMANDS } from "./commands.js";
 import { atomicTokenAt, decodePastedChunk } from "./paste.js";
@@ -76,42 +79,37 @@ class ComposerEditor extends Editor {
   positionCursorAt(row: number, col: number): void {
     // Vendored-private access (E019): pi-tui's Editor exposes getCursor but
     // no setter; the state shape below is the editor's own, used nowhere
-    // else in OpenKai. The mapping itself uses only the public render().
+    // else in OpenKai.
     const internals = this as unknown as {
       state: { lines: string[]; cursorLine: number; cursorCol: number };
       setCursorCol(col: number): void;
     };
     const width = this.lastRenderedContentWidth();
-    const rows = this.render(width);
-    // Content rows sit between the top and bottom border rows.
-    const content = rows.slice(1, rows.length - 1).map((line) => {
-      const stripped = line.replace(/\x1b\[[0-9;]*m/g, "").replace(CURSOR_MARKER, "");
-      // One leading padding column (paddingX=1); trailing pad is not text.
-      return stripped.slice(1).replace(/\s+$/, "");
-    });
+    // The wrap must be EXACT: replay the editor's own wordWrapLine (same
+    // function, same width) so chunk startIndex/endIndex land in the editor's
+    // code-unit coordinates. The earlier render-row replay drifted on
+    // space-heavy wraps (AdvMouse review) and read overlay/border rows.
+    const layoutWidth = Math.max(1, width - 2); // paddingX=1 both sides
     const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
     const gLen = (s: string): number => [...seg.segment(s)].length;
-    // The editor's cursorCol is a UTF-16 code-unit offset (every slice/length
-    // in pi-tui's editor is code-unit arithmetic), while the click arrives in
-    // terminal CELLS and the wrap walk below counts GRAPHEMES — three units
-    // that only coincide for ASCII (E019 S2). Convert explicitly:
-    //   clicked cells → graphemes (walking cell widths within the row)
-    //   graphemes     → code units (summing segment lengths on the line)
+    // Clicked terminal cells → graphemes within a chunk (a click inside a
+    // wide glyph targets its start); chunk offsets are UTF-16 code units —
+    // convert explicitly (emoji/CJK rows differ).
     const cellsToGraphemes = (rowText: string, cells: number): number => {
       let cellsSeen = 0;
       let count = 0;
       for (const g of seg.segment(rowText)) {
         const w = Math.max(1, visibleWidth(g.segment));
-        if (cellsSeen + w > cells) break; // a click inside a wide glyph targets its start
+        if (cellsSeen + w > cells) break;
         cellsSeen += w;
         count += 1;
       }
       return count;
     };
-    const graphemesToUnits = (line: string, count: number): number => {
+    const graphemesToUnits = (text: string, count: number): number => {
       let units = 0;
       let seen = 0;
-      for (const g of seg.segment(line)) {
+      for (const g of seg.segment(text)) {
         if (seen >= count) break;
         units += g.segment.length;
         seen += 1;
@@ -120,35 +118,19 @@ class ComposerEditor extends Editor {
     };
 
     const lines = internals.state.lines;
-    let logical = 0;
     let visualRow = 0;
+    let logical = 0;
     let targetCol = 0;
     let resolved = false;
     while (logical < lines.length && !resolved) {
       const line = lines[logical] ?? "";
-      const lineLen = gLen(line);
-      if (lineLen === 0) {
+      const chunks = gLen(line) <= layoutWidth ? [{ text: line, startIndex: 0, endIndex: line.length }] : wordWrapLine(line, layoutWidth);
+      for (const chunk of chunks) {
         if (visualRow === row) {
-          targetCol = 0;
+          targetCol = chunk.startIndex + graphemesToUnits(chunk.text, cellsToGraphemes(chunk.text, col));
           resolved = true;
           break;
         }
-        visualRow += 1;
-        logical += 1;
-        continue;
-      }
-      // Consume this logical line's rendered rows in order.
-      let consumed = 0;
-      while (consumed < lineLen) {
-        const rowText = content[visualRow] ?? "";
-        const rowLen = gLen(rowText);
-        if (visualRow === row) {
-          const grapheme = Math.min(consumed + cellsToGraphemes(rowText, col), lineLen);
-          targetCol = graphemesToUnits(line, grapheme);
-          resolved = true;
-          break;
-        }
-        consumed += Math.max(1, rowLen);
         visualRow += 1;
       }
       if (!resolved) logical += 1;
@@ -243,6 +225,12 @@ export class Composer {
   }
 
   private readonly shimmerTimer: NodeJS.Timeout;
+
+  /** Tear down the shimmer clock (E019 KW-02: an orphaned interval per
+   *  /new /resume restart pinned the old editor+TUI forever). */
+  dispose(): void {
+    clearInterval(this.shimmerTimer);
+  }
 
   /** Current draft text (paste markers expanded). */
   get text(): string {

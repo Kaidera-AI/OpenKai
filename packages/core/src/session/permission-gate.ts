@@ -276,7 +276,13 @@ export class SessionPermissionGate implements PermissionGate {
     if (outcome.d === "reject") {
       return { decision: "reject", reason: outcome.reason ?? "rejected by operator" };
     }
-    if (outcome.d === "always") this.alwaysCache.add(key);
+    if (outcome.d === "always") {
+      this.alwaysCache.add(key);
+      // Operator-confirmed repetition is not a loop (PG-02): reset the doom
+      // window so this call stops prompting for the rest of the session.
+      this.doomKey = "";
+      this.doomCount = 0;
+    }
     return { decision: "approve" };
   }
 
@@ -290,12 +296,9 @@ export class SessionPermissionGate implements PermissionGate {
   private doomCount = 0;
 
   private noteDoomLoop(toolName: string, args: unknown): boolean {
-    let key = toolName;
-    try {
-      key += `:${JSON.stringify(args) ?? ""}`;
-    } catch {
-      key += ":<unstringifiable>";
-    }
+    // Canonical args (PG-03): the same keying the always-cache uses — a
+    // key-order reformat can no longer read as a different call.
+    const key = `${toolName}:${stableStringify(args)}`;
     if (key === this.doomKey) {
       this.doomCount += 1;
     } else {
@@ -324,16 +327,28 @@ function alwaysKey(toolName: string, args: unknown): string {
   return `${toolName}|${stableStringify(args)}`;
 }
 
-/** Deterministic JSON stringification (stable key order) for cache keys. */
+/** Deterministic JSON stringification (stable key order) for cache keys.
+ *  Recursive — the replacer-array form applied the top-level key list as a
+ *  whitelist at EVERY depth, silently dropping nested keys and collapsing
+ *  different calls onto one `always` key (E019 AdvKeywords PG-01). */
 function stableStringify(value: unknown): string {
   try {
-    if (value !== null && typeof value === "object") {
-      return JSON.stringify(value, Object.keys(value).sort());
-    }
-    return JSON.stringify(value) ?? "undefined";
+    return JSON.stringify(sortKeysDeep(value));
   } catch {
-    return JSON.stringify(value) ?? "undefined";
+    return String(value);
   }
+}
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
 }
 
 // ── Diff preview builders (used by the gated tools) ───────────────────────

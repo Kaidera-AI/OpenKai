@@ -105,6 +105,7 @@ import { Transcript } from "./transcript.js";
 import { sanitizeTerminalText } from "./sanitize.js";
 import {
   detectMagicKeywords,
+  mightContainMagicKeyword,
   ULTRAREVIEW_NOTICE,
   ULTRATHINK_NOTICE,
   type MagicKeyword,
@@ -294,8 +295,10 @@ export function buildTuiApp(tui: TUI, options: TuiAppOptions): TuiApp {
       }
       // Magic keywords (ultrathink/ultrareview): multi-model ultra turns —
       // the fusion panel combines the models' efforts. Bash mode and busy
-      // steering keep the plain submit semantics.
-      const keywords = detectMagicKeywords(text);
+      // steering keep the plain submit semantics. The substring probe gates
+      // the masker — maskNonProse is O(n·tags) on adversarial HTML and must
+      // never run on keyword-free text (AdvKeywords KW-01).
+      const keywords = mightContainMagicKeyword(text) ? detectMagicKeywords(text) : [];
       if (keywords.length > 0) {
         controller.guard(controller.runUltraTurn(text, keywords), "ultra");
         return;
@@ -883,6 +886,13 @@ export class TuiController {
   }
 
   /** Submit a user prompt: persist + display + fire the transport turn. */
+  /** Collapse the boot chrome once, on the first operator action (submit / ultra / btw). */
+  private collapseBootChrome(): void {
+    if (this.bootCollapsed) return;
+    this.bootCollapsed = true;
+    this.transcript.collapseBoot(compactMark(CLI_VERSION));
+  }
+
   async submit(text: string): Promise<void> {
     if (this.busy) {
       // Steer-while-busy (E017 dossier pick 2): route the text into the
@@ -913,10 +923,7 @@ export class TuiController {
     this.lastPrompt = text;
     // The boot card's moment is over the first time the operator works —
     // collapse it to a compact line and give the viewport to the session.
-    if (!this.bootCollapsed) {
-      this.bootCollapsed = true;
-      this.transcript.collapseBoot(compactMark(CLI_VERSION));
-    }
+    this.collapseBootChrome();
     const userMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
     await this.store.appendMessage(userMsg);
     this.transcript.addUserMessage(text);
@@ -943,6 +950,7 @@ export class TuiController {
       return;
     }
     const keyword = keywords.includes("ultrareview") ? "ultrareview" : "ultrathink";
+    this.collapseBootChrome();
     this.lastPrompt = text;
     const userMsg: AgentMessage = { role: "user", content: text, timestamp: Date.now() };
     await this.store.appendMessage(userMsg);
@@ -985,15 +993,49 @@ export class TuiController {
   private async runUltraReview(text: string): Promise<void> {
     const shadow = new ShadowGit(this.cwd);
     const view = await shadow.diff();
-    if (view === undefined || (view.diff.length === 0 && view.untracked.length === 0)) {
-      this.transcript.addNotice("ultrareview: no changes against the shadow snapshot — nothing to review");
+    if (view === undefined) {
+      // No snapshot ≠ no changes (AdvKeywords UR-01) — say which.
+      this.transcript.addNotice(
+        "ultrareview: no shadow snapshot yet — gated mutations snapshot the tree as they run; run one first (or /diff)",
+      );
       this.tui.requestRender();
       return;
     }
-    const diffText =
-      view.diff.length > 0
-        ? view.diff
-        : `untracked since snapshot (${view.untracked.length}):\n${view.untracked.join("\n")}`;
+    if (view.diff.length === 0 && view.untracked.length === 0) {
+      this.transcript.addNotice("ultrareview: work tree clean against the snapshot — nothing to review");
+      this.tui.requestRender();
+      return;
+    }
+    // Untracked files carry CONTENT (names alone produce a content-free
+    // verdict read as a review). Tracked-diff files stay as the diff.
+    const sections: string[] = [];
+    if (view.diff.length > 0) sections.push(view.diff);
+    let untrackedSent = 0;
+    if (view.untracked.length > 0) {
+      const blocks: string[] = [];
+      for (const name of view.untracked.slice(0, 10)) {
+        try {
+          const content = readFileSync(path.join(this.cwd, name), "utf-8");
+          blocks.push(`new file: ${name}\n${content.slice(0, 2000)}`);
+          untrackedSent += 1;
+        } catch {
+          blocks.push(`new file: ${name} (unreadable — name only)`);
+        }
+      }
+      sections.push(`untracked since snapshot (${view.untracked.length}):\n${blocks.join("\n\n")}`);
+    }
+    const fullText = sections.join("\n\n");
+    // Truncation is disclosed, newline-aligned, and code-point-safe (UR-02) —
+    // a verdict over a partial input must say so.
+    const MAX = 12000;
+    let diffText = fullText;
+    let truncated = false;
+    if (fullText.length > MAX) {
+      const cut = fullText.slice(0, MAX);
+      const lastNewline = cut.lastIndexOf("\n");
+      diffText = cut.slice(0, lastNewline > MAX * 0.8 ? lastNewline : MAX);
+      truncated = true;
+    }
     const task = [
       "Adversarial review of the change set below. Each reviewer attacks independently: bugs,",
       "logic errors, security issues, and regressions, with file/line evidence and severities.",
@@ -1003,18 +1045,21 @@ export class TuiController {
       "",
       ULTRAREVIEW_NOTICE,
       "",
+      truncated
+        ? `NOTE: the change set is truncated — ${diffText.length} of ${fullText.length} chars sent; files past the cut are unreviewed.`
+        : "",
       "```diff",
-      diffText.slice(0, 12000),
+      diffText,
       "```",
-    ].join("\n");
+    ].filter((l) => l !== "").join("\n");
     this.setBusy(true);
     this.status.update({ ...this.status.currentState, activity: "ultrareviewing…" });
     this.tui.requestRender();
     try {
       if (this.runFusion) {
-        const files = (view.diff.match(/^diff --git/gm) ?? []).length + view.untracked.length;
+        const files = (view.diff.match(/^diff --git/gm) ?? []).length + untrackedSent;
         this.transcript.addNotice(
-          `ultrareview: multi-model review — ${this.fusionPairLabel()} — ${files} file(s) under review…`,
+          `ultrareview: multi-model review — ${this.fusionPairLabel()} — ${files} file(s) sent for review${truncated ? " (truncated)" : ""}…`,
         );
         this.tui.requestRender();
         const result = await this.runFusion(task);
@@ -1081,6 +1126,7 @@ export class TuiController {
       this.tui.requestRender();
       return;
     }
+    this.collapseBootChrome();
     this.transcript.beginBtwTurn(question);
     this.btwTurn = true; // mark the turn ephemeral — turn_end must NOT persist (scope §1.5)
     this.setBusy(true);
@@ -2280,6 +2326,7 @@ export class TuiController {
 
   /** Tear down: abort + flush store + checkpoint + close transport. */
   async shutdown(): Promise<void> {
+    this.composer?.dispose(); // the shimmer clock must not outlive the session
     if (this.busyTick !== undefined) {
       clearInterval(this.busyTick);
       this.busyTick = undefined;

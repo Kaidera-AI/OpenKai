@@ -90,6 +90,9 @@ class VirtualTui {
     this.dirty = true;
   }
   hideOverlay(): void {
+    // pi-tui parity (AdvChannels L4): hide on an empty stack is a no-op —
+    // popping the focus stack here would deafen rw-attach input forever.
+    if (this.overlayStack.length === 0) return;
     this.overlayStack.pop();
     // pi-tui restores the pre-overlay focus on pop (overlayFocusRestore);
     // without it, rw-attach input routes into the popped component (E017
@@ -138,7 +141,9 @@ function compositeFrame(app: TuiApp, tui: VirtualTui, width: number): string {
   const base = renderLayoutFrame(app.root, width, tui.terminal.rows, () => tui.requestRender()).lines;
   const overlay = tui.topOverlay();
   if (!overlay) return base.join("\n");
-  overlay.options?.visible?.(width, tui.terminal.rows);
+  // pi-tui parity (AdvChannels L3): visible() === false means NOT rendered —
+  // compositing anyway would leak a hidden overlay into served frames.
+  if (overlay.options?.visible?.(width, tui.terminal.rows) === false) return base.join("\n");
   // pi-tui's compositeTuiLine preserves base content left/right of the
   // overlay — the previous whole-row replacement blanked the transcript
   // beside every picker/prompt in served frames.

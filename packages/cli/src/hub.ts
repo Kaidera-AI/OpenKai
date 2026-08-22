@@ -64,9 +64,15 @@ export async function runHub(options: HubOptions): Promise<number> {
 
   // ── OK-10 served TUI: hosted sessions + WS attach channel ──────────────
   const hosted = new Map<string, HostedTui>();
+  /** In-flight POST /sessions reservations (the cap is checked before the
+   *  session exists — the slot is held across the start await). */
+  let pendingHosted = 0;
   /** Live attach sockets — destroyed on shutdown (server.close() doesn't
    *  touch upgraded sockets, so the hub would hang with any attach open). */
   const attachSockets = new Set<import("node:stream").Duplex>();
+  /** Set before server.close() — upgrades arriving in the shutdown window
+   *  used to leak a socket on a closing host (AdvChannels L6). */
+  let closing = false;
   /** Cap concurrent hosted sessions — each is a full Agent + 15fps pump. */
   const MAX_HOSTED = 16;
 
@@ -79,6 +85,7 @@ export async function runHub(options: HubOptions): Promise<number> {
         socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\n\r\n`);
       };
       try {
+        if (closing) return fail(503, "Service Unavailable — hub is shutting down");
         const reqHost = req.headers.host;
         if (!reqHost || allowedHosts[reqHost] !== true) return fail(403, "Forbidden");
         if (!bearerMatches(req.headers.authorization, tokenHash)) return fail(401, "Unauthorized");
@@ -108,6 +115,11 @@ export async function runHub(options: HubOptions): Promise<number> {
         if (parsed.type === "input" && mode === "rw" && "data" in parsed && typeof parsed.data === "string") {
           hostedSession.input(parsed.data);
         } else if (parsed.type === "resize" && "columns" in parsed && "rows" in parsed) {
+          // KNOWN WART (AdvChannels L7): resize mutates the SHARED virtual
+          // terminal — two attaches with different geometry fight over one
+          // size. The hello width (?width=) is per-attach; live frames are
+          // host-wide. Per-attach render width is the proper fix, deferred.
+
           const columns = Number(parsed.columns);
           const rows = Number(parsed.rows);
           if (Number.isFinite(columns) && Number.isFinite(rows) && columns >= 20 && rows >= 4) {
@@ -210,10 +222,14 @@ export async function runHub(options: HubOptions): Promise<number> {
         json(res, 400, { error: "invalid JSON body" });
         return;
       }
-      if (hosted.size >= MAX_HOSTED) {
+      // Check-then-act across an await used to let N concurrent POSTs all
+      // pass the cap check (AdvChannels L5). Reserve a slot first; roll back
+      // on failure.
+      if (hosted.size + pendingHosted >= MAX_HOSTED) {
         json(res, 429, { error: `too many hosted sessions (cap ${MAX_HOSTED}) — close one first` });
         return;
       }
+      pendingHosted += 1;
       const modelId = body.model ?? process.env.OPENKAI_MODEL ?? "nvidia/nemotron-3-nano-30b-a3b:free";
       try {
         const host = await HostedTui.start({
@@ -232,6 +248,8 @@ export async function runHub(options: HubOptions): Promise<number> {
         json(res, 200, { sessionId: host.sessionId, attach: `/attach/${host.sessionId}?mode=ro|rw` });
       } catch (error) {
         json(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      } finally {
+        pendingHosted -= 1;
       }
       return;
     }
@@ -292,6 +310,7 @@ export async function runHub(options: HubOptions): Promise<number> {
     else options.signal.addEventListener("abort", () => shutdown.resolve(), { once: true });
   }
   await shutdown.promise;
+  closing = true;
   process.off("SIGINT", onSigint);
   process.off("SIGTERM", onSigterm);
   server.close();
