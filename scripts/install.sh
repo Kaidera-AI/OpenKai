@@ -11,12 +11,12 @@
 set -eu
 
 REPO="Kaidera-AI/OpenKai"
-# Held at v0.1.008 deliberately: this file is served from main (see line 2), so
+# Now at v0.1.009 (released 2026-08-22; tag + assets live).
 # this default is live for every `curl | sh` the moment it lands. Repointing it
 # is RELEASE_SOP gated action #5 and belongs to release sequence step 7, which
 # runs AFTER `gh release create` at step 6. v0.1.009 has no tag or release yet,
 # so bumping it here would 404 every fresh install. Bump on CTO consent.
-VERSION="${OPENKAI_VERSION:-v0.1.008}"
+VERSION="${OPENKAI_VERSION:-v0.1.009}"
 PREFIX="${OPENKAI_PREFIX:-$HOME/.local}"
 DEST="$PREFIX/bin"
 
