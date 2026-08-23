@@ -24,21 +24,22 @@ import { capabilities } from "./capabilities.js";
  * circles. Mint green (#B0E1CD) is the canonical brand accent colour.
  */
 export const KAIDERA_MARK: readonly string[] = [
-  "              ╭────────────╮",
-  "             ╱              ╲",
-  "            ╱                ╲",
-  "           ╱     ●    ●       ╲",
-  "          ╱       ╲    ╲       ╲",
-  "         ╱    ●    ╲    ╲       ╲",
-  "        ╱      ╲    ╲    ●       ╲",
-  "       ╱       ●╲    ●    ╲       ╲",
-  "       ╲       ╱ ╲        ╱       ╱",
-  "       ╲     ╱   ●      ╱       ╱",
-  "        ╲   ╱    ╱     ╱       ╱",
-  "         ╲ ●    ╱      ╲      ╱",
-  "          ╲    ╱        ╲    ╱",
-  "           ╲  ●          ●  ╱",
-  "            ╰──────────────╯",
+  "              /\              ",
+  "             /  \             ",
+  "            /    \            ",
+  "           /      \           ",
+  "          /        \          ",
+  "     |   /          \   |     ",
+  "     |        ●         |     ",
+  "     |      /   \       |     ",
+  "     |     /      \     |     ",
+  "     |   ●----------●   |     ",
+  "     |   \          /   |     ",
+  "          \        /          ",
+  "           \      /           ",
+  "            \    /            ",
+  "             \  /             ",
+  "              \/              ",
 ];
 
 /** Compact boot-mark variant (ren's note): same triangle motif, sharp, 8 lines. */
