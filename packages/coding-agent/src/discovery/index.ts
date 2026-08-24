@@ -26,6 +26,7 @@ import "./agents-md";
 // through the capability registry on import.
 import "../openkai/fusion-tool.js";
 import "../openkai/cortex-memory.js";
+import "../openkai/shift-extension.js";
 import "./builtin";
 import "./builtin-defaults";
 import "./claude";
