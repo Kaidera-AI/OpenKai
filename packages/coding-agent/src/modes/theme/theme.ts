@@ -119,8 +119,10 @@ function configureTheme(
 	lightTheme?: string,
 ): string {
 	autoDetectedTheme = true;
-	autoDarkTheme = darkTheme ?? "dark";
-	autoLightTheme = lightTheme ?? "light";
+	// OpenKai fork default: Kaidera theme unless the operator picks another
+	// (settings-driven overrides land above this line upstream).
+	autoDarkTheme = darkTheme ?? "kaidera-dark";
+	autoLightTheme = lightTheme ?? "kaidera-light";
 	currentSymbolPresetOverride = symbolPreset;
 	currentColorBlindMode = colorBlindMode ?? false;
 	const name = getDefaultTheme();
