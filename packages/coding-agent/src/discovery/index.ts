@@ -27,6 +27,8 @@ import "./agents-md";
 import "../openkai/fusion-tool.js";
 import "../openkai/cortex-memory.js";
 import "../openkai/shift-extension.js";
+import "../openkai/floor-extension.js";
+import "../openkai/keywords-extension.js";
 import "./builtin";
 import "./builtin-defaults";
 import "./claude";
