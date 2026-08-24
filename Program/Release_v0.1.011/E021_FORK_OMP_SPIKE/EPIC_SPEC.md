@@ -98,6 +98,13 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 
 ## 6b. Spike log
 
+- **F4 (2026-08-22): LANDED.** RLM recursion in fusion: RlmRegistry
+  (admission handles that never block, attribution log, generation counter),
+  rlm_spawn/rlm_collect tools, and the fusion divergence hook — a divergent
+  verdict admits a verification child attributed to the run. 16/16 gate tests
+  green across the layer; fork builds. Next: F5 (dogfood the fork, your
+  cutover decision).
+
 - **F3 (2026-08-22): LANDED.** The trust surface: deny floor as a tool_call
   block handler (floor + containment, named absolute reasons); keywords
   extension (ultrathink → fusion tool routing — the multi-model upgrade over
