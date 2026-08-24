@@ -98,6 +98,14 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 
 ## 6b. Spike log
 
+- **F3 (2026-08-22): LANDED.** The trust surface: deny floor as a tool_call
+  block handler (floor + containment, named absolute reasons); keywords
+  extension (ultrathink → fusion tool routing — the multi-model upgrade over
+  omp's max-effort reading — + ultrareview adversarial diff review); served
+  TUI disposition recorded (the fork's collab host covers ro/rw attach — no
+  hub port; our WS frame protocol stays the browser-native path if needed).
+  13/13 gate tests green; fork builds. Next: F4 (RLM recursion in fusion).
+
 - **F2 (2026-08-22): LANDED.** Switchyard routing runs on the fork:
   openkai/shift + orchestrate ported clean; openkai/shift-extension.ts feeds
   tool signals to the Orchestrator and drives setModel + the ui.setStatus
