@@ -96,12 +96,28 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 5. bun-runtime for npm channel — matches omp's own shipping model; README
    states bun requirement plainly (kai).
 
+## 6a. The seam correction (2026-08-22, learned the hard way)
+
+The capability providers (registerProvider on tool/extension-module) feed the
+DISCOVERY lists, not the live session — the session assembles tools via
+loadCustomTools paths into inlineExtensions. The layer rewired onto sdk.ts's
+inlineExtensions seam (autoresearch's idiom): factories attach inline, tools
+ride createCustomToolsExtension via openkaiBuiltinTools(). Proof: /fuse ran a
+real two-model panel over OpenRouter in the fork's TUI (verdict card with
+consensus + divergences live in the frame).
+
 ## 6b. Spike log
 
 - **F5 (2026-08-22): READY FOR THE CTO.** The fork is installed as
   `openkai-next-fork`; the dogfood drive + the parity checklist are
   docs/DOGFOOD_FORK.md. Drive it next to the 0.1.9 line; the cutover decision
   is yours on that evidence.
+
+- **F5 evidence (2026-08-22):** fork boots with Kaidera mint live; `/fuse`
+  executed a real panel over OpenRouter (nvidia/llama-3.1-8b-instruct) with
+  the verdict card in-frame; dogfood drive is yours to run
+  (docs/DOGFOOD_FORK.md). Note: provider-side free lanes flap (the first
+  model 404'd upstream) — pick a live one when you drive.
 
 - **F4 (2026-08-22): LANDED.** RLM recursion in fusion: RlmRegistry
   (admission handles that never block, attribution log, generation counter),
