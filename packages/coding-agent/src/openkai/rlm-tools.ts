@@ -10,9 +10,6 @@ import type { Api } from "@oh-my-pi/pi-ai";
 import { streamSimple, type StreamFunction } from "@oh-my-pi/pi-ai";
 import { Text } from "@oh-my-pi/pi-tui";
 
-import { registerProvider } from "../capability/index.js";
-import { toolCapability } from "../capability/tool.js";
-import { createSourceMeta } from "../discovery/helpers.js";
 import type { CustomTool } from "../extensibility/custom-tools/types.js";
 
 import { RlmRegistry } from "./rlm.js";
@@ -114,21 +111,7 @@ const rlmCollectBase: CustomTool<typeof CollectParams> = {
   },
 };
 
-const rlmSpawn = Object.assign(rlmSpawnBase, {
-  path: "builtin:openkai/rlm-spawn",
-  _source: createSourceMeta("openkai-rlm", "builtin:openkai/rlm-spawn", "project"),
-});
-const rlmCollect = Object.assign(rlmCollectBase, {
-  path: "builtin:openkai/rlm-collect",
-  _source: createSourceMeta("openkai-rlm", "builtin:openkai/rlm-collect", "project"),
-});
-
-registerProvider(toolCapability.id, {
-  id: "openkai-rlm",
-  displayName: "OpenKai",
-  description: "OpenKai RLM recursion tools (openkai/rlm layer)",
-  priority: 90,
-  load: () => Promise.resolve({ items: [rlmSpawn, rlmCollect], warnings: [] }),
-});
+const rlmSpawn = Object.assign(rlmSpawnBase, { path: "builtin:openkai/rlm-spawn" });
+const rlmCollect = Object.assign(rlmCollectBase, { path: "builtin:openkai/rlm-collect" });
 
 export { rlmSpawn, rlmCollect };

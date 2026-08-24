@@ -22,13 +22,6 @@ import "../capability/tool";
 // Import providers (each registers itself on import)
 import "./agent-plugins";
 import "./agents-md";
-// OpenKai layer (E021 F1): the fusion tool + cortex memory self-register
-// through the capability registry on import.
-import "../openkai/fusion-tool.js";
-import "../openkai/cortex-memory.js";
-import "../openkai/shift-extension.js";
-import "../openkai/floor-extension.js";
-import "../openkai/keywords-extension.js";
 import "../openkai/rlm-tools.js";
 import "./builtin";
 import "./builtin-defaults";

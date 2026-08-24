@@ -40,6 +40,7 @@ import {
 import { AsyncJobManager } from "./async";
 import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/controller";
 import { createAutoresearchExtension } from "./autoresearch";
+import { openkaiBuiltinTools, openkaiFloor, openkaiKeywords, openkaiShift } from "./openkai/index.js";
 import { loadCapability } from "./capability";
 import { type Rule, ruleCapability, setActiveRules } from "./capability/rule";
 import { bucketRules } from "./capability/rule-buckets";
@@ -1984,6 +1985,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 
 			inlineExtensions.push(...(options.extensions ?? []));
 			inlineExtensions.push(createAutoresearchExtension);
+			// OpenKai layer (E021): the fork's built-in extensions + built-in
+			// tools attach here — the same seam autoresearch uses.
+			inlineExtensions.push(openkaiShift, openkaiFloor, openkaiKeywords);
+			inlineExtensions.push(createCustomToolsExtension(openkaiBuiltinTools()));
 			if (customTools.length > 0) {
 				inlineExtensions.push(createCustomToolsExtension(customTools));
 			}

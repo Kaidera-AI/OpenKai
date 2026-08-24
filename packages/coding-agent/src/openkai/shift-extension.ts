@@ -8,12 +8,6 @@
  * discovery/index.ts — the sanctioned touch-list entry).
  */
 
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { registerProvider } from "../capability/index.js";
-import { extensionModuleCapability } from "../capability/extension-module.js";
-import { createSourceMeta } from "../discovery/helpers.js";
 import type { ExtensionAPI } from "../extensibility/extensions/types.js";
 
 import { Orchestrator, type ShiftPosture } from "./orchestrate.js";
@@ -97,25 +91,3 @@ export default function openkaiShift(pi: ExtensionAPI): void {
     void flushTier(decision, ctx);
   });
 }
-
-// Self-register as an extension module (the capability loader imports the
-// path and calls the default export with the ExtensionAPI).
-const modulePath = fileURLToPath(import.meta.url);
-registerProvider(extensionModuleCapability.id, {
-  id: "openkai-shift",
-  displayName: "OpenKai",
-  description: "OpenKai shift tier routing (openkai/shift layer)",
-  priority: 90,
-  load: () =>
-    Promise.resolve({
-      items: [
-        {
-          name: "openkai-shift",
-          path: path.resolve(modulePath),
-          level: "project" as const,
-          _source: createSourceMeta("openkai-shift", path.resolve(modulePath), "project"),
-        },
-      ],
-      warnings: [],
-    }),
-});

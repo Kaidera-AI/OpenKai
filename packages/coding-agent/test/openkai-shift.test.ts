@@ -5,9 +5,6 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { loadCapability } from "../src/capability/index.js";
-import { extensionModuleCapability } from "../src/capability/extension-module.js";
-import type { ExtensionModule } from "../src/capability/extension-module.js";
 import type { ExtensionAPI } from "../src/extensibility/extensions/types.js";
 
 // Pull the registration side effect in the same module graph as the test.
@@ -15,13 +12,19 @@ await import("../src/discovery/index.js");
 const { default: openkaiShift } = await import("../src/openkai/shift-extension.js");
 
 describe("E021 F2: shift extension on the fork", () => {
-  test("self-registers as an extension module", async () => {
-    const result = await loadCapability<ExtensionModule>(extensionModuleCapability.id, {
-      cwd: process.cwd(),
-      includeInvalid: true,
-    } as never);
-    const names = result.items.map((e: ExtensionModule) => e.name);
-    expect(names).toContain("openkai-shift");
+  test("the factory wires its handlers when attached", async () => {
+    const handlers = new Map<string, Array<(event: never, ctx: never) => unknown>>();
+    const pi = {
+      logger: { info: () => undefined },
+      registerCommand: () => undefined,
+      on: (event: string, handler: (event: never, ctx: never) => unknown) => {
+        const list = handlers.get(event) ?? [];
+        list.push(handler);
+        handlers.set(event, list);
+      },
+    } as unknown as ExtensionAPI;
+    openkaiShift(pi);
+    expect(handlers.size).toBeGreaterThan(0);
   });
 
   test("tool signals drive the orchestrator; a flip sets the status chip + the model", async () => {

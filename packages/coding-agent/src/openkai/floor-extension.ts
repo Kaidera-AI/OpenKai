@@ -6,12 +6,6 @@
  * reason names the pattern and the rule.
  */
 
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { registerProvider } from "../capability/index.js";
-import { extensionModuleCapability } from "../capability/extension-module.js";
-import { createSourceMeta } from "../discovery/helpers.js";
 import type { ExtensionAPI } from "../extensibility/extensions/types.js";
 
 import { floorMatchFor, outsideCwd } from "./gate-floor.js";
@@ -53,24 +47,3 @@ export default function openkaiFloor(pi: ExtensionAPI): void {
     return undefined;
   });
 }
-
-// Self-register as an extension module (the sanctioned seam).
-const modulePath = fileURLToPath(import.meta.url);
-registerProvider(extensionModuleCapability.id, {
-  id: "openkai-floor",
-  displayName: "OpenKai",
-  description: "OpenKai deny floor (openkai/gate-floor layer)",
-  priority: 95,
-  load: () =>
-    Promise.resolve({
-      items: [
-        {
-          name: "openkai-floor",
-          path: path.resolve(modulePath),
-          level: "project" as const,
-          _source: createSourceMeta("openkai-floor", path.resolve(modulePath), "project"),
-        },
-      ],
-      warnings: [],
-    }),
-});

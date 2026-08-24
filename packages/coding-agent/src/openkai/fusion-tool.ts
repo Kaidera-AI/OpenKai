@@ -17,7 +17,6 @@ import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { registerProvider } from "../capability/index.js";
 import { slashCommandCapability } from "../capability/slash-command.js";
 import { toolCapability } from "../capability/tool.js";
-import { createSourceMeta } from "../discovery/helpers.js";
 import type { CustomTool } from "../extensibility/custom-tools/types.js";
 
 import { fuse, type FuseResult } from "./fusion/index.js";
@@ -179,49 +178,6 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
   },
 };
 
-// The capability validator reads `path` (loader-provided for user tools) — a
-// built-in declares its own provenance instead. Not part of the CustomTool
-// interface; attached structurally, with the `_source` metadata the loader
-// requires to admit an item.
-const fusionTool = Object.assign(fusionToolBase, {
-  path: "builtin:openkai/fusion",
-  _source: createSourceMeta("openkai-fusion", "builtin:openkai/fusion", "native" as never),
-});
-
-// Self-register on the tool capability (the fork's built-in seam).
-registerProvider(toolCapability.id, {
-  id: "openkai-fusion",
-  displayName: "OpenKai",
-  description: "OpenKai fusion panel (openkai/fusion layer)",
-  priority: 90,
-  load: () => Promise.resolve({ items: [fusionTool], warnings: [] }),
-});
-
-export { fusionTool };
-
-// The operator-facing /fuse command (markdown-template slash command): the
-// prompt instructs the model to run the fusion tool on the given task.
-registerProvider(slashCommandCapability.id, {
-  id: "openkai-fuse",
-  displayName: "OpenKai",
-  description: "OpenKai /fuse — run the fusion panel on a task",
-  priority: 90,
-  load: () =>
-    Promise.resolve({
-      items: [
-        {
-          name: "fuse",
-          path: "builtin:openkai/fuse",
-          content: [
-            "Run the fusion panel on the task below using the fusion tool.",
-            "If the operator gave no task, ask what to fuse.",
-            "",
-            "Task: {{args}}",
-          ].join("\n"),
-          level: "native" as const,
-          _source: createSourceMeta("openkai-fuse", "builtin:openkai/fuse", "native" as never),
-        },
-      ],
-      warnings: [],
-    }),
-});
+// The tool loader carries `path` for provenance — a built-in declares its
+// own. Not part of the CustomTool interface; attached structurally.
+export const fusionTool = Object.assign(fusionToolBase, { path: "builtin:openkai/fusion" });

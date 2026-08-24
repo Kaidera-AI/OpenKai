@@ -1,34 +1,32 @@
 /**
- * E021 F1 registration gate — importing the fork's discovery index must
- * self-register the OpenKai layer on the tool capability: the fusion tool
- * always, the Cortex memory tools when CORTEX_PROJECT is set.
+ * E021 registration gate (rewired): the OpenKai layer attaches through
+ * sdk.ts's inlineExtensions seam — the live session's tool/extension set,
+ * not the file-discovery surface. Assert the layer's live shape directly.
  */
 
 import { describe, expect, test } from "bun:test";
 
-import { loadCapability } from "../src/capability/index.js";
-import { toolCapability } from "../src/capability/tool.js";
-import type { CustomTool } from "../src/extensibility/custom-tools/types.js";
+import { openkaiBuiltinTools, openkaiFloor, openkaiKeywords, openkaiShift } from "../src/openkai/index.js";
 
-describe("E021 F1: OpenKai layer registration", () => {
-  test("the fusion tool self-registers via the tool capability", async () => {
-    await import("../src/discovery/index.js");
-    const result = await loadCapability<CustomTool>(toolCapability.id, { cwd: process.cwd(), includeInvalid: true } as never);
-    const names = result.items.map((t: CustomTool) => t.name);
+describe("E021: the OpenKai layer's live surface", () => {
+  test("the built-in tool set: fusion + RLM always; cortex iff managed", () => {
+    const tools = openkaiBuiltinTools();
+    const names = tools.map((t) => t.name);
     expect(names).toContain("fusion");
+    expect(names).toContain("rlm_spawn");
+    expect(names).toContain("rlm_collect");
+    const managed = process.env.CORTEX_PROJECT !== undefined;
+    expect(names.includes("cortex_search")).toBe(managed);
+    expect(names.includes("cortex_record")).toBe(managed);
+    // Every tool carries the loader's provenance field.
+    for (const tool of tools) {
+      expect(typeof (tool as { path?: string }).path).toBe("string");
+    }
   });
 
-  test("the cortex tools register in managed mode and stay out in local mode", async () => {
-    const managed = process.env.CORTEX_PROJECT !== undefined;
-    await import("../src/discovery/index.js");
-    const result = await loadCapability<CustomTool>(toolCapability.id, { cwd: process.cwd(), includeInvalid: true } as never);
-    const names = result.items.map((t: CustomTool) => t.name);
-    if (managed) {
-      expect(names).toContain("cortex_search");
-      expect(names).toContain("cortex_record");
-    } else {
-      expect(names).not.toContain("cortex_search");
-      expect(names).not.toContain("cortex_record");
-    }
+  test("the three extension factories are functions (attach via inlineExtensions)", () => {
+    expect(typeof openkaiShift).toBe("function");
+    expect(typeof openkaiFloor).toBe("function");
+    expect(typeof openkaiKeywords).toBe("function");
   });
 });

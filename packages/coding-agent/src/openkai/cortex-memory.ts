@@ -10,7 +10,6 @@ import { Text } from "@oh-my-pi/pi-tui";
 
 import { registerProvider } from "../capability/index.js";
 import { toolCapability } from "../capability/tool.js";
-import { createSourceMeta } from "../discovery/helpers.js";
 import type { CustomTool } from "../extensibility/custom-tools/types.js";
 
 import { CortexClient } from "./cortex/client.js";
@@ -112,25 +111,6 @@ const cortexRecordBase: CustomTool<typeof RecordParams> = {
     new Text(theme.fg("success", "◆ cortex recorded"), 1, 0),
 };
 
-// Provenance paths the capability validator reads (loader-provided for user
-// tools; built-ins declare their own).
-const cortexSearch = Object.assign(cortexSearchBase, {
-  path: "builtin:openkai/cortex-search",
-  _source: createSourceMeta("openkai-cortex-memory", "builtin:openkai/cortex-search", "native" as never),
-});
-const cortexRecord = Object.assign(cortexRecordBase, {
-  path: "builtin:openkai/cortex-record",
-  _source: createSourceMeta("openkai-cortex-memory", "builtin:openkai/cortex-record", "native" as never),
-});
-
-// Self-register only when the session is Cortex-managed — in local mode the
-// tools would exist purely to say no, so they stay out of the tool set.
-if (cortexManaged()) {
-  registerProvider(toolCapability.id, {
-    id: "openkai-cortex-memory",
-    displayName: "OpenKai",
-    description: "OpenKai Cortex memory tools (openkai/cortex-memory layer)",
-    priority: 90,
-    load: () => Promise.resolve({ items: [cortexSearch, cortexRecord], warnings: [] }),
-  });
-}
+// Provenance paths the tool loader carries (built-ins declare their own).
+export const cortexSearchTool = Object.assign(cortexSearchBase, { path: "builtin:openkai/cortex-search" });
+export const cortexRecordTool = Object.assign(cortexRecordBase, { path: "builtin:openkai/cortex-record" });

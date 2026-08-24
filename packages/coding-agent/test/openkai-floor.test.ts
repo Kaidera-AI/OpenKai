@@ -17,13 +17,15 @@ const { default: openkaiFloor } = await import("../src/openkai/floor-extension.j
 import { floorMatchFor, outsideCwd } from "../src/openkai/gate-floor.js";
 
 describe("E021 F3: the deny floor on the fork", () => {
-  test("registers as an extension module", async () => {
-    const result = await loadCapability(extensionModuleCapability.id, {
-      cwd: process.cwd(),
-      includeInvalid: true,
-    } as never);
-    const names = (result.items as Array<{ name: string }>).map((e) => e.name);
-    expect(names).toContain("openkai-floor");
+  test("the factory wires its handlers when attached", async () => {
+    const handlers: Array<(event: never, ctx: never) => unknown> = [];
+    const pi = {
+      logger: { info: () => undefined },
+      registerCommand: () => undefined,
+      on: (_event: string, handler: (event: never, ctx: never) => unknown) => handlers.push(handler),
+    } as unknown as ExtensionAPI;
+    openkaiFloor(pi);
+    expect(handlers.length).toBeGreaterThan(0);
   });
 
   test("floor matcher: protected node + its contents + clean paths", () => {

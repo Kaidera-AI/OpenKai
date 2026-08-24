@@ -11,12 +11,6 @@
  * Self-registers on the extension-module capability (sanctioned touch-list).
  */
 
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { registerProvider } from "../capability/index.js";
-import { extensionModuleCapability } from "../capability/extension-module.js";
-import { createSourceMeta } from "../discovery/helpers.js";
 import type { ExtensionAPI } from "../extensibility/extensions/types.js";
 
 /** Standalone-prose keyword match (the fork's own boundary discipline). */
@@ -26,6 +20,43 @@ const KEYWORD_RE = {
 } as const;
 
 export default function openkaiKeywords(pi: ExtensionAPI): void {
+  // /fuse — operator-driven fusion: executes the panel DIRECTLY (no model
+  // discretion), the verdict lands in the transcript as a custom message.
+  pi.registerCommand("fuse", {
+    description: "Run the fusion panel on a task (architect + builder + judge verdict)",
+    handler: async (args, ctx) => {
+      const task = args.trim();
+      if (task.length === 0) {
+        ctx.ui.notify("/fuse <task> — the fusion panel needs a task", "warning");
+        return;
+      }
+      ctx.ui.notify(`fusing: ${task.slice(0, 80)}…`, "info");
+      ctx.ui.setStatus("openkai-fuse", "fusing…");
+      try {
+        const { fusionTool } = await import("./fusion-tool.js");
+        const result = await fusionTool.execute(
+          `fuse-${Date.now()}`,
+          { task } as never,
+          undefined,
+          ctx as never,
+        );
+        const text = result.content
+          .filter((p): p is { type: "text"; text: string } => p.type === "text")
+          .map((p) => p.text)
+          .join("\n");
+        pi.sendMessage(
+          { customType: "openkai-fuse", content: `◆ fusion verdict — ${task.slice(0, 80)}\n\n${text}`, display: true },
+          { deliverAs: "nextTurn" },
+        );
+        ctx.ui.notify("fusion: verdict delivered", "info");
+      } catch (error) {
+        ctx.ui.notify(`fusion failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      } finally {
+        ctx.ui.setStatus("openkai-fuse", undefined);
+      }
+    },
+  });
+
   pi.on("before_agent_start", (event) => {
     const prompt = event.prompt;
     const think = KEYWORD_RE.ultrathink.test(prompt);
@@ -62,24 +93,3 @@ export default function openkaiKeywords(pi: ExtensionAPI): void {
     };
   });
 }
-
-// Self-register as an extension module.
-const modulePath = fileURLToPath(import.meta.url);
-registerProvider(extensionModuleCapability.id, {
-  id: "openkai-keywords",
-  displayName: "OpenKai",
-  description: "OpenKai magic keywords → fusion routing (openkai/keywords layer)",
-  priority: 92,
-  load: () =>
-    Promise.resolve({
-      items: [
-        {
-          name: "openkai-keywords",
-          path: path.resolve(modulePath),
-          level: "project" as const,
-          _source: createSourceMeta("openkai-keywords", path.resolve(modulePath), "project"),
-        },
-      ],
-      warnings: [],
-    }),
-});
