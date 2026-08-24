@@ -96,6 +96,17 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 5. bun-runtime for npm channel — matches omp's own shipping model; README
    states bun requirement plainly (kai).
 
+## 6b. Spike log
+
+- **F0 (2026-08-22): LANDED.** Fork mirrored with full history
+  (kaidera-ai/openkai-fork, private), pinned at v18.0.0 on `spike/f0-foundation`.
+  `bun install && bun run build` green on macOS (cmake required for the Rust
+  natives — installed). Binary runs (`omp/18.0.0`). Brand pass: kaidera-dark/
+  kaidera-light themes in their schema, set as the fork's default; the
+  `openkai/` layer scaffold + FORK.md discipline (upstream pristine, sanctioned
+  touch-list = theme files only). Next: F1 (fusion as a CustomTool +
+  cortex-memory capability provider).
+
 ## 7. Exit criteria for the spike (F0-F1)
 
 1. F0 and F1 gates green on the spike branch.
