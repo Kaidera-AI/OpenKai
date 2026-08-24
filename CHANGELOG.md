@@ -2,6 +2,29 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.10] — v0.1.010 (E020: maintenance on the 0.84 line — the fork spike runs in E021)
+
+The last full release on the pi-0.84 dependency line. Thin by design — the
+harness's future is the omp fork (research/2026-08-22-fork-omp-evaluation.md,
+Program/Release_v0.1.011/E021).
+
+### Changes
+
+- **`/shake thinking`** — strips reasoning blocks from context alongside tool
+  results (OMP v18 parity).
+- **Docs**: `docs/DOGFOOD.md` (the testing campaign protocol) +
+  `docs/DOGFOOD_FORK.md` (the fork drive + parity checklist); TEST_GUIDE and
+  CAPABILITIES refreshed; `docs/uat-plan.md` marked superseded.
+- **Dependency verdict recorded**: pi-18 is bun-runtime-only (eager
+  `bun:sqlite` chain) — the namespace migration is parked pending the fork
+  cutover; the spike carries the capabilities instead.
+- **Dogfood-campaign fixes** (whatever the campaign surfaced at cut time).
+
+### Governance
+
+CTO consent for v0.1.010 recorded per docs/RELEASE_SOP.md (per-version,
+per-session). The 0.84 line enters maintenance after this cut.
+
 ## [0.1.9] — v0.1.009 (E019: consolidation & trust — the fixes 0.1.8 missed)
 
 **If you are on 0.1.8, you carry two live bugs that 0.1.9 fixes. Upgrade now.**
