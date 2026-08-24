@@ -98,6 +98,11 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 
 ## 6b. Spike log
 
+- **F5 (2026-08-22): READY FOR THE CTO.** The fork is installed as
+  `openkai-next-fork`; the dogfood drive + the parity checklist are
+  docs/DOGFOOD_FORK.md. Drive it next to the 0.1.9 line; the cutover decision
+  is yours on that evidence.
+
 - **F4 (2026-08-22): LANDED.** RLM recursion in fusion: RlmRegistry
   (admission handles that never block, attribution log, generation counter),
   rlm_spawn/rlm_collect tools, and the fusion divergence hook — a divergent
