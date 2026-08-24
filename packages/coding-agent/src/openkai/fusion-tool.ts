@@ -21,6 +21,7 @@ import { createSourceMeta } from "../discovery/helpers.js";
 import type { CustomTool } from "../extensibility/custom-tools/types.js";
 
 import { fuse, type FuseResult } from "./fusion/index.js";
+import { RlmRegistry } from "./rlm.js";
 
 /** The fusion tool's parameter schema. */
 const FusionParams = Type.Object({
@@ -42,6 +43,9 @@ interface FusionDetails {
   roles: Array<{ role: string; modelId: string; latencyMs: number; error?: string }>;
   consensusCount: number;
   divergenceCount: number;
+  /** RLM recursion (F4): the verification child admitted on divergence. */
+  verificationChildId?: string;
+  childUsageTokens?: number;
 }
 
 function resultText(result: FuseResult): string {
@@ -127,6 +131,25 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
         consensusCount: result.synthesis.consensus.length,
         divergenceCount: result.synthesis.divergences.length,
       };
+
+      // RLM recursion (E021 F4): a divergent verdict admits a verification
+      // child — the divergence topic gets its own run, attributed back to
+      // this fusion run's usage.
+      if (result.synthesis.divergences.length > 0 && result.synthesis.synthesisError === undefined) {
+        const topics = result.synthesis.divergences.map((d) => d.topic).join("; ");
+        const handle = RlmRegistry.current().spawnChild(streamFn, architect, {
+          system:
+            "You are the verification child of a divergent fusion verdict. " +
+            "Judge the divergence with fresh evidence; be compact and decisive.",
+          prompt:
+            `Task under fusion: ${params.task}\n\nThe panel diverged on: ${topics}\n\n` +
+            `Architect said: ${result.synthesis.divergences.map((d) => d.architect).join(" | ")}\n` +
+            `Builder said: ${result.synthesis.divergences.map((d) => d.builder).join(" | ")}\n\n` +
+            "Which side holds, and why?",
+        });
+        details.verificationChildId = handle.childId;
+        details.childUsageTokens = RlmRegistry.current().childUsageAttribution().totalTokens;
+      }
       return { content: [{ type: "text", text: resultText(result) }], details };
     } catch (error) {
       return {
