@@ -98,6 +98,15 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 
 ## 6b. Spike log
 
+- **F1 (2026-08-22): LANDED.** The openkai/ layer runs on the fork: fusion
+  core ported (pi-18 type map), the fusion CustomTool + /fuse command +
+  cortex_search/cortex_record (managed-mode only) self-register through omp's
+  capability registry, and the e2e gates pass (openkai-fusion.test.ts +
+  openkai-registration.test.ts, 4/4). Fork builds with the layer; the one
+  upstream suite failure observed (StatusLineComponent VCS watcher) reproduces
+  on pristine upstream — pre-existing, not ours. Next: F2 (switchyard routing
+  via model-resolver).
+
 - **F0 (2026-08-22): LANDED.** Fork mirrored with full history
   (kaidera-ai/openkai-fork, private), pinned at v18.0.0 on `spike/f0-foundation`.
   `bun install && bun run build` green on macOS (cmake required for the Rust
