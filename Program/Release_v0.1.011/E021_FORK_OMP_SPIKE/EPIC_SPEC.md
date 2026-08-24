@@ -98,6 +98,13 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 
 ## 6b. Spike log
 
+- **F2 (2026-08-22): LANDED.** Switchyard routing runs on the fork:
+  openkai/shift + orchestrate ported clean; openkai/shift-extension.ts feeds
+  tool signals to the Orchestrator and drives setModel + the ui.setStatus
+  tier chip on flips (posture/pins from the config shift slice). Gate tests
+  2/2 (registration + flip-drives-model). Fork builds green. Next: F3 (trust
+  surface: deny floor + served TUI + keywords).
+
 - **F1 (2026-08-22): LANDED.** The openkai/ layer runs on the fork: fusion
   core ported (pi-18 type map), the fusion CustomTool + /fuse command +
   cortex_search/cortex_record (managed-mode only) self-register through omp's
