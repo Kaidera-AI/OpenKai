@@ -96,6 +96,18 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 5. bun-runtime for npm channel — matches omp's own shipping model; README
    states bun requirement plainly (kai).
 
+## 6z. CUTOVER EXECUTED (2026-08-22, CTO: "go ahead with the cutover")
+
+**main on Kaidera-AI/OpenKai now points at the fork line** (`6451e3a89`, the
+spike tip). Backtrack path preserved: `maintenance/0.84-line` branch + tag
+`backup/pre-cutover-0.84-line` hold the old pi-0.84 line (0.1.9 + the 0.1.10
+prep). The old line's full history stays on that branch — nothing was lost.
+The fork repo (kaidera-ai/openkai-fork, private) remains the upstream mirror
+for monthly omp merges; product work continues on Kaidera-AI/OpenKai main.
+
+Next: the 0.1.11 release line — build/channels wired onto the fork's build
+(its release.yml + our signing/4-channel machinery) on explicit CTO consent.
+
 ## 6a. The seam correction (2026-08-22, learned the hard way)
 
 The capability providers (registerProvider on tool/extension-module) feed the
