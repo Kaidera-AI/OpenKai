@@ -24,7 +24,7 @@ mod platform {
 	use napi::{Error, Result, Status};
 	use objc2::rc::Retained;
 	use objc2_app_kit::NSSpellChecker;
-	use objc2_foundation::{NSArray, NSRange, NSString};
+	use objc2_foundation::{NSArray, NSRange, NSString, NSTextCheckingType};
 
 	use super::SpellingRange;
 
@@ -91,15 +91,34 @@ mod platform {
 	pub fn check(text: &str) -> Result<Vec<SpellingRange>> {
 		let checker = checker()?;
 		let text = NSString::from_str(text);
-		let text_len = text.length();
+		let full = NSRange { location: 0, length: text.length() };
+		// `checkString:...` honors `automaticallyIdentifiesLanguages`, selecting
+		// the dictionary per detected run; the legacy `checkSpellingOfString:`
+		// used only the shared checker's single current language (issue #9334).
+		// SAFETY: `options`/`orthography` are nil and `word_count` is null, all
+		// documented as valid; the returned array is retained by objc2.
+		let results = unsafe {
+			checker.checkString_range_types_options_inSpellDocumentWithTag_orthography_wordCount(
+				&text,
+				full,
+				NSTextCheckingType::Spelling.bits(),
+				None,
+				0,
+				None,
+				std::ptr::null_mut(),
+			)
+		};
 		let mut ranges = Vec::new();
-		let mut offset = 0usize;
-		while offset < text_len {
-			let starting_at = isize::try_from(offset)
-				.map_err(|_| Error::new(Status::InvalidArg, "spelling text is too large"))?;
-			let range = checker.checkSpellingOfString_startingAt(&text, starting_at);
-			if range.location >= NS_NOT_FOUND || range.length == 0 || range.location < offset {
-				break;
+		for result in &results {
+			let range = result.range();
+			// With `automaticallyIdentifiesLanguages`, `checkString:` also returns an
+			// orthography result spanning the entire string; only spelling results
+			// mark misspellings (rendering them as typo ranges doubled editor text).
+			if result.resultType() != NSTextCheckingType::Spelling {
+				continue;
+			}
+			if range.length == 0 || range.location >= NS_NOT_FOUND {
+				continue;
 			}
 			ranges.push(SpellingRange {
 				start:  u32::try_from(range.location)
@@ -107,7 +126,6 @@ mod platform {
 				length: u32::try_from(range.length)
 					.map_err(|_| Error::new(Status::InvalidArg, "spelling range length is too large"))?,
 			});
-			offset = range.location.saturating_add(range.length);
 		}
 		Ok(ranges)
 	}
@@ -118,12 +136,29 @@ mod platform {
 			.unwrap_or_default()
 	}
 
+	/// Language macOS identifies for a word range, honoring automatic language
+	/// identification. Falls back to the shared checker's current language when
+	/// detection is inconclusive (issue #9334).
+	fn word_language(
+		checker: &NSSpellChecker,
+		text: &NSString,
+		range: NSRange,
+	) -> Retained<NSString> {
+		checker
+			.languageForWordRange_inString_orthography(range, text, None)
+			.unwrap_or_else(|| checker.language())
+	}
+
 	pub fn completions(text: &str, start: u32, length: u32) -> Result<Vec<String>> {
 		let checker = checker()?;
 		let text = NSString::from_str(text);
 		let range = ns_range(start, length)?;
+		let language = word_language(&checker, &text, range);
 		let values = checker.completionsForPartialWordRange_inString_language_inSpellDocumentWithTag(
-			range, &text, None, 0,
+			range,
+			&text,
+			Some(&*language),
+			0,
 		);
 		Ok(strings(values))
 	}
@@ -132,8 +167,13 @@ mod platform {
 		let checker = checker()?;
 		let text = NSString::from_str(text);
 		let range = ns_range(start, length)?;
-		let values = checker
-			.guessesForWordRange_inString_language_inSpellDocumentWithTag(range, &text, None, 0);
+		let language = word_language(&checker, &text, range);
+		let values = checker.guessesForWordRange_inString_language_inSpellDocumentWithTag(
+			range,
+			&text,
+			Some(&*language),
+			0,
+		);
 		Ok(strings(values))
 	}
 
@@ -141,11 +181,9 @@ mod platform {
 		let checker = checker()?;
 		let text = NSString::from_str(text);
 		let range = ns_range(start, length)?;
+		let language = word_language(&checker, &text, range);
 		let value = checker.correctionForWordRange_inString_language_inSpellDocumentWithTag(
-			range,
-			&text,
-			&checker.language(),
-			0,
+			range, &text, &language, 0,
 		);
 		Ok(value.map(|value| value.to_string()))
 	}

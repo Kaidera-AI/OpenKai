@@ -130,6 +130,7 @@ type ReadUsageRow = {
 	durationMs?: number;
 	ttftMs?: number;
 	timestamp?: number;
+	turnElapsedMs?: number;
 };
 
 /** Number of code lines to show in collapsed preview mode */
@@ -335,12 +336,10 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 	#toolActivityVisible = true;
 	#showContentPreview: boolean;
 	// A read group accretes entries across multiple assistant completions for as
-	// long as the run of reads is uninterrupted. While it is the active group it
-	// must stay in the transcript's repaintable live region — its header line
-	// re-layouts from `Read <path>` to `Read (N)` + tree as entries arrive, so a
-	// frozen snapshot taken on a risk terminal would strand the single-entry form
-	// (see TranscriptContainer / NativeScrollbackLiveRegion). The controller calls
-	// `finalize()` once the run breaks so the block can commit to native scrollback.
+	// long as the run of reads is uninterrupted. It remains active while its
+	// header can change from `Read <path>` to `Read (N)` plus a tree. The
+	// controller calls `finalize()` once the run breaks; TranscriptContainer
+	// retires the finalized block as an immutable history batch.
 	#finalized = false;
 	// Forced terminal even with a still-pending entry: the turn ended (abort or
 	// completion) so no late result is coming. Set via `seal()`.
@@ -368,9 +367,8 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		if (!this.#finalized) return false;
 		// Closed to new entries, but a still-pending entry means its result is in
 		// flight — parallel reads can finalize the group (a sibling tool starts and
-		// breaks the run) before a read's `tool_execution_end` lands. Stay live so
-		// the late result repaints instead of freezing the pending preview into
-		// native scrollback on ED3-risk terminals (#issue: stuck "Read <path>").
+		// breaks the run) before a read's `tool_execution_end` lands. Keep the block
+		// active so the late result updates the pending preview.
 		return !this.#hasPendingEntries();
 	}
 
@@ -387,13 +385,15 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 
 	/**
 	 * Force the group terminal even if an entry never received its result (the
-	 * turn aborted or ended). Lets it freeze and stop pinning the transcript live
-	 * region instead of lingering on a pending preview until the next thaw.
+	 * turn aborted or ended), allowing the container to retire it as history.
 	 */
 	seal(): void {
 		if (!this.#sealed) this.#blockVersion++;
 		this.#sealed = true;
 	}
+
+	/** Reads never park as background tasks; the handle method is a no-op. */
+	parkAsBackground(): void {}
 
 	getTranscriptBlockVersion(): number {
 		return this.#blockVersion;
@@ -486,6 +486,7 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		durationMs?: number,
 		ttftMs?: number,
 		timestamp?: number,
+		turnElapsedMs?: number,
 	): boolean {
 		const attachedToolCallIds: string[] = [];
 		let anchorId: string | undefined;
@@ -498,12 +499,23 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		for (const toolCallId of attachedToolCallIds) {
 			this.#usageBatchByToolCallId.set(toolCallId, anchorId);
 		}
-		this.#usageRows.set(anchorId, { toolCallIds: attachedToolCallIds, usage, durationMs, ttftMs, timestamp });
+		this.#usageRows.set(anchorId, {
+			toolCallIds: attachedToolCallIds,
+			usage,
+			durationMs,
+			ttftMs,
+			timestamp,
+			turnElapsedMs,
+		});
 		this.#updateDisplay();
 		return true;
 	}
 
 	setArgsComplete(_toolCallId?: string): void {
+		this.#updateDisplay();
+	}
+
+	setExecutionStarted(_toolCallId?: string): void {
 		this.#updateDisplay();
 	}
 
@@ -696,7 +708,7 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 			lines.push(
 				theme.fg(
 					"dim",
-					`${prefix}${formatUsageRow(usageRow.usage, usageRow.durationMs, usageRow.ttftMs, usageRow.timestamp)}`,
+					`${prefix}${formatUsageRow(usageRow.usage, usageRow.durationMs, usageRow.ttftMs, usageRow.timestamp, usageRow.turnElapsedMs)}`,
 				),
 			);
 		}
@@ -842,7 +854,16 @@ export class ReadToolGroupComponent extends Container implements ToolExecutionHa
 		if (!usageRow) return;
 		this.addChild(
 			new Text(
-				theme.fg("dim", formatUsageRow(usageRow.usage, usageRow.durationMs, usageRow.ttftMs, usageRow.timestamp)),
+				theme.fg(
+					"dim",
+					formatUsageRow(
+						usageRow.usage,
+						usageRow.durationMs,
+						usageRow.ttftMs,
+						usageRow.timestamp,
+						usageRow.turnElapsedMs,
+					),
+				),
 				3,
 				0,
 			),

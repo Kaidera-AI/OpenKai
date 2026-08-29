@@ -2,6 +2,130 @@
 
 ## [Unreleased]
 
+## [18.0.10] - 2026-08-28
+
+### Added
+
+- Press the Right Arrow at the end of a line to accept autocomplete suggestions, inline ghost-text completions, and spelling corrections, just like Tab.
+- Added a smooth brand-color transition and an elapsed turn timer to the status line while the agent is working.
+- Added a full-width “band” composer style for flush status lines.
+
+## [18.0.9] - 2026-08-28
+
+### Added
+
+- Exported TuiDebugServer for programmatic headless control
+- Added debug demonstration script to examples
+- Added an `OMP_TUI_DEBUG` Unix socket for headless TUI driving and structured inspection.
+
+### Changed
+
+- Inline hex colors now render with VS Code-style colored backgrounds and automatically selected black or white text for readability, alongside the color swatch.
+- LaTeX text formatting commands such as \textbf, \textit, \textsl, and \emph now render as terminal bold or italic text.
+
+### Fixed
+
+- Fixed inline color swatches rendering incorrectly inside highlighted lines.
+- Fixed terminal resizing in tmux panes and Windows consoles duplicating the current in-progress turn in scrollback.
+
+## [18.0.8] - 2026-08-27
+
+### Added
+
+- `ProcessTerminal` accepts a `conpty` option to force ConPTY-hosted behavior on or off, keeping terminal tests hermetic on WSL where live env detection would otherwise flip kitty-keyboard flags and write chunking ([#9887](https://github.com/can1357/oh-my-pi/issues/9887)).
+
+### Fixed
+
+- Fixed pending-work animations repeatedly composing expensive frames without applying their full render cost to CPU backpressure.
+- Fixed unfinished live viewport rows entering tmux pane history and duplicating streamed output ([#9780](https://github.com/can1357/oh-my-pi/issues/9780)).
+
+## [18.0.7] - 2026-08-26
+
+### Breaking Changes
+
+- Removed the `inlineMathSpanEnd` and `mathStartIndex` exports; the math delimiter grammar now lives in `@oh-my-pi/pi-utils/math-delimiters`.
+
+### Fixed
+
+- Math spans now end at the first unescaped delimiter, so a TeX row break no longer closes a span early: `\(a \\) b\)` renders as one equation, and an escaped `\$` no longer ends `$$…$$`.
+- Fixed image previews displaying as garbled characters in Paseo terminals.
+- Fixed terminal resizing from duplicating committed history in native scrollback.
+- Fixed autocomplete suggestions for bare-name skills such as `/batch` when no command matches the prefix more strongly.
+
+## [18.0.6] - 2026-08-26
+
+### Added
+
+- Added `Markdown.getLastRenderStableText()` to expose the stable prefix of streamed Markdown text for append-only transcript publication.
+
+## [18.0.5] - 2026-08-25
+
+### Breaking Changes
+
+- Renamed the public `TerminalFrameProvider.resetHistory` method to `beginHistoryReplay`.
+
+### Added
+
+- Loader messages can now be provided as a function, allowing dynamic labels such as live countdowns to update on each spinner tick while preserving the existing behavior for static strings.
+
+### Changed
+
+- Improved history replay and terminal output handling so replayed content is rendered efficiently and complete replay results are written together.
+
+### Fixed
+
+- Fixed graceful shutdown so finalized output is correctly retired before handing control back to the shell.
+- Fixed terminal scrollback corruption during shutdown, tmux pane zoom and resize, and destructive screen resets, preventing duplicated frames, lost history, and stale transcript re-streaming.
+- Fixed streaming Markdown rendering at chunk boundaries to preserve CommonMark emphasis behavior for Unicode text and correctly recognize GFM tables as they are completed.
+
+## [18.0.4] - 2026-08-24
+
+### Changed
+
+- Significantly improved streaming Markdown rendering performance by caching unchanged rows, resuming boundary walks, and inspecting only text deltas for guard scans and OSC 8 normalization.
+
+### Fixed
+
+- Fixed TUI aborting when syntax highlighting fails during Markdown rendering by falling back to unhighlighted text.
+- Fixed Korean IME cursor drift in Orca by properly matching two-cell Hangul Compatibility Jamo rendering.
+
+## [18.0.3] - 2026-08-23
+
+### Fixed
+
+- Fixed inline images vanishing from the transcript and scrollback when the session exits: stop no longer deletes transmitted Kitty images from the terminal's graphics store.
+
+## [18.0.2] - 2026-08-23
+
+### Fixed
+
+- Fixed visible history being erased when enlarging the terminal.
+
+## [18.0.1] - 2026-08-23
+
+### Added
+
+- Collapsed individual skill commands into a `/skill:` namespace entry to declutter suggestions
+- Added `TUI.renderNow()` for terminal-safe synchronous priority frames that retain resize debounce, output-backlog, and image deferral safeguards.
+
+### Changed
+
+- Improved slash command autocompletion to chain suggestions after selecting a namespace
+- Replaced the native-scrollback inference API (`NativeScrollback*` interfaces and the scrollback rebuild/resize settings hooks) with explicit `TerminalFramePlan` history batches.
+- Post-resize repaints now recover the reflowed viewport anchor with a cursor-position report (DSR) instead of trusting stale grid coordinates, so a settled resize no longer duplicates the editor/status rows on screen.
+- History appends that overflow the screen erase the old live viewport first, so a scroll can only push committed rows and blanks into scrollback, never an unfinished frame.
+
+### Fixed
+
+- Fixed consecutive prompt submissions being skipped by persistent history, allowing the latest project metadata to replace the previous entry without duplicating editor navigation history.
+- Fixed the history drain stalling on idle screens: accepting a batch now pumps the next frame, so a large resumed transcript retires to terminal history instead of pinning the live viewport in its emergency aggregate.
+- Fixed fuzzy matching so a qualifying whole-word hit is not hidden by an earlier mid-word occurrence ([#8465](https://github.com/can1357/oh-my-pi/pull/8465) by [@Mustaqeem66](https://github.com/Mustaqeem66)).
+- Fixed stray characters appearing in the terminal viewport during title updates
+- Fixed editor input lag when autocomplete providers are slow by keeping only the latest pending lookup.
+- Fixed pasting an image in kitty occasionally spraying base64 text into the composer alongside the image attachment: a kitty OSC 5522 clipboard packet torn by the incomplete-escape flush is now discarded up to its terminator instead of being replayed as keystrokes.
+- Fixed Kitty OSC 66 headings activating before the host explicitly enables text sizing.
+- Markdown streaming renderer now scans only the mutable tail (not the full document) for reference-link definitions and CR on every frame, eliminating the O(n²) `RegExp.test` cost that accounted for ~26% CPU during active streaming ([#9048](https://github.com/can1357/oh-my-pi/issues/9048)).
+
 ## [18.0.0] - 2026-08-22
 
 ### Breaking Changes

@@ -67,7 +67,6 @@ describe("Composer prepaint", () => {
 			composerShape: settings.get("composer.shape") ?? "box",
 			showHardwareCursor: settings.get("showHardwareCursor"),
 			maxInlineImages: settings.get("tui.maxInlineImages"),
-			scrollbackRebuild: settings.get("tui.scrollbackRebuild"),
 			resizeScrollback: settings.get("tui.resizeScrollback"),
 			imeSafeCursor: settings.get("tui.imeSafeCursor"),
 			autocompleteMaxVisible: settings.get("autocompleteMaxVisible"),
@@ -129,6 +128,7 @@ describe("Composer prepaint", () => {
 
 		try {
 			await initTheme(false, "ascii");
+			settings.set("composer.shape", "box");
 			vi.spyOn(KeybindingsManager, "create").mockReturnValue(KeybindingsManager.inMemory({ "app.clear": "ctrl+x" }));
 			mode = new InteractiveMode(
 				testSession.session,
@@ -354,7 +354,6 @@ describe("Composer prepaint", () => {
 			composerShape: getDefault("composer.shape") ?? "box",
 			showHardwareCursor: getDefault("showHardwareCursor"),
 			maxInlineImages: getDefault("tui.maxInlineImages"),
-			scrollbackRebuild: getDefault("tui.scrollbackRebuild"),
 			resizeScrollback: getDefault("tui.resizeScrollback"),
 			imeSafeCursor: getDefault("tui.imeSafeCursor"),
 			autocompleteMaxVisible: getDefault("autocompleteMaxVisible"),
@@ -507,7 +506,6 @@ describe("Composer prepaint", () => {
 			composerShape: "box",
 			showHardwareCursor: config.showHardwareCursor,
 			maxInlineImages: config.maxInlineImages,
-			scrollbackRebuild: config.scrollbackRebuild,
 			resizeScrollback: config.resizeScrollback,
 			imeSafeCursor: config.imeSafeCursor,
 			autocompleteMaxVisible: config.autocompleteMaxVisible,
@@ -556,6 +554,24 @@ describe("Composer prepaint", () => {
 			.map(r => Bun.stripANSI(r))
 			.join("\n");
 		expect(output).toContain("rust-analyzer");
+	});
+	it("transfers the in-flight recent-session load across composer ownership", async () => {
+		const terminal = new CountingTerminal(80, 32);
+		const load = Promise.withResolvers<Array<{ name: string; timeAgo: string }>>();
+		beginStartupComposer({
+			preferences: config,
+			terminal,
+			version: "9.9.9",
+			cache: false,
+			recentSessions: () => load.promise,
+		});
+
+		const lease = takeStartupComposerLease();
+		expect(lease).toBeDefined();
+		const rows = [{ name: "already loading", timeAgo: "just now" }];
+		load.resolve(rows);
+		expect(await lease?.recentSessions).toEqual(rows);
+		lease?.dispose();
 	});
 	it("defers raw input until resolved settings arrive, adoption as fallback", async () => {
 		// Regression contract: losing the deferral re-blinds typing during the

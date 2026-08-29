@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir } from "@oh-my-pi/pi-utils/dirs";
+import "@oh-my-pi/pi-utils/env";
+import { getComposerCacheDir } from "@oh-my-pi/pi-utils/dirs";
 import type { LspServerInfo, RecentSession } from "./components/welcome";
 import type { ComposerPreferences } from "./composer";
 import type { SymbolPreset } from "./theme/theme";
@@ -31,7 +32,7 @@ export interface ComposerStartupCache {
 
 function projectCacheDir(cwd: string): string {
 	const key = Bun.hash.wyhash(path.resolve(cwd)).toString(16).padStart(16, "0");
-	return path.join(getAgentDir(), "cache", "composer", key);
+	return path.join(getComposerCacheDir(), key);
 }
 
 function readFile(file: string): string | undefined {
@@ -142,7 +143,6 @@ function readUiState(file: string): { preferences: ComposerPreferences; theme: C
 	const composerShape = field(rawPreferences, "composerShape");
 	const showHardwareCursor = field(rawPreferences, "showHardwareCursor");
 	const maxInlineImages = field(rawPreferences, "maxInlineImages");
-	const scrollbackRebuild = field(rawPreferences, "scrollbackRebuild");
 	const resizeScrollback = field(rawPreferences, "resizeScrollback");
 	const imeSafeCursor = field(rawPreferences, "imeSafeCursor");
 	const autocompleteMaxVisible = field(rawPreferences, "autocompleteMaxVisible");
@@ -154,8 +154,10 @@ function readUiState(file: string): { preferences: ComposerPreferences; theme: C
 		typeof composerShape !== "string" ||
 		typeof showHardwareCursor !== "boolean" ||
 		typeof maxInlineImages !== "number" ||
-		typeof scrollbackRebuild !== "boolean" ||
-		(resizeScrollback !== "append" && resizeScrollback !== "preserve" && resizeScrollback !== "rebuild") ||
+		(resizeScrollback !== undefined &&
+			resizeScrollback !== "append" &&
+			resizeScrollback !== "rebuild" &&
+			resizeScrollback !== "preserve") ||
 		typeof imeSafeCursor !== "boolean" ||
 		typeof autocompleteMaxVisible !== "number" ||
 		typeof spellingTypoDetection !== "boolean" ||
@@ -185,8 +187,10 @@ function readUiState(file: string): { preferences: ComposerPreferences; theme: C
 			composerShape,
 			showHardwareCursor,
 			maxInlineImages,
-			scrollbackRebuild,
-			resizeScrollback,
+			resizeScrollback:
+				resizeScrollback === "append" || resizeScrollback === "rebuild" || resizeScrollback === "preserve"
+					? resizeScrollback
+					: "rebuild",
 			imeSafeCursor,
 			autocompleteMaxVisible,
 			spellingTypoDetection,

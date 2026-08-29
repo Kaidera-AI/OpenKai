@@ -11,8 +11,8 @@ import type { FileDiagnosticsResult, WritethroughCallback, WritethroughDeferredH
 import type { ToolSession } from "../../tools";
 import { routeWriteThroughBridge } from "../../tools/acp-bridge";
 import { invalidateFsScanAfterWrite } from "../../tools/fs-cache-invalidation";
-import { outputMeta } from "../../tools/output-meta";
 import { enforcePlanModeWrite, resolvePlanPath } from "../../tools/plan-mode-guard";
+import type { AppliedEditObserver } from "../blackbox";
 import { generateDiffString, replaceText } from "../diff";
 import {
 	countLeadingWhitespace,
@@ -25,7 +25,7 @@ import {
 } from "../normalize";
 import { readEditFileText, serializeEditFileText } from "../read-file";
 import type { EditToolDetails, LspBatchRequest } from "../renderer";
-import { pruneOversizedEditSnapshots } from "../snapshot-details";
+import { createEditResult, toEditToolResult } from "../result";
 
 export interface FuzzyMatch {
 	actualText: string;
@@ -1115,6 +1115,8 @@ export interface ExecuteReplaceOptions {
 	fuzzyThreshold: number;
 	writethrough: WritethroughCallback;
 	beginDeferredDiagnosticsForPath: (path: string) => WritethroughDeferredHandle;
+	/** Observes a committed content transition before result snapshots are pruned. */
+	onApplied?: AppliedEditObserver;
 }
 
 export async function executeReplace(
@@ -1130,6 +1132,7 @@ export async function executeReplace(
 		fuzzyThreshold,
 		writethrough,
 		beginDeferredDiagnosticsForPath,
+		onApplied,
 	} = options;
 	const { old_string, new_string, replace_all } = params;
 
@@ -1192,25 +1195,15 @@ export async function executeReplace(
 	}
 
 	const diffResult = generateDiffString(normalizedContent, result.content, undefined, { path });
-	const resultText =
-		result.count > 1
-			? `Successfully replaced ${result.count} occurrences in ${path}.`
-			: `Successfully replaced text in ${path}.`;
-
-	const meta = outputMeta()
-		.diagnostics(diagnostics?.summary ?? "", diagnostics?.messages ?? [])
-		.get();
-
-	return {
-		content: [{ type: "text", text: resultText }],
-		details: pruneOversizedEditSnapshots({
-			diff: diffResult.diff,
-			path: absolutePath,
-			firstChangedLine: diffResult.firstChangedLine,
-			diagnostics,
-			meta,
-			oldText: rawContent,
-			newText: finalContent,
-		}),
-	};
+	await onApplied?.({ path: absolutePath, prev: rawContent, next: finalContent });
+	const editResult = createEditResult({
+		displayPath: path,
+		resultPath: absolutePath,
+		diff: diffResult.diff,
+		firstChangedLine: diffResult.firstChangedLine,
+		diagnostics,
+		oldText: rawContent,
+		newText: finalContent,
+	});
+	return toEditToolResult(editResult);
 }

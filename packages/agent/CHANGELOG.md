@@ -1,5 +1,41 @@
 # Changelog
 
+## [Unreleased]
+
+## [18.0.10] - 2026-08-28
+
+### Added
+
+- Added support for continuing interrupted agent runs with pending tool calls, allowing those calls to be retried before requesting the next model response.
+
+## [18.0.9] - 2026-08-28
+
+### Fixed
+
+- Fixed `/shake elide` handling of mixed tool results so images are preserved and token savings are reported accurately.
+
+## [18.0.7] - 2026-08-26
+
+### Fixed
+
+- Fixed Codex remote compaction to preserve images returned by image-reading tools, preventing them from being replayed as incorrect synthetic user messages.
+
+## [18.0.5] - 2026-08-25
+
+### Fixed
+
+- Corrected remote compaction summaries so they accurately report the number of input tokens processed.
+
+## [18.0.4] - 2026-08-24
+
+### Changed
+
+- Improved performance in append-only context mode by memoizing message serialization, keeping per-call sync overhead flat as conversations grow.
+
+### Fixed
+
+- Fixed an issue where `onTurnEnd` was skipped for turns ended by a terminal tool result (such as a subagent's final `yield`).
+
 ## [18.0.0] - 2026-08-22
 
 ### Fixed

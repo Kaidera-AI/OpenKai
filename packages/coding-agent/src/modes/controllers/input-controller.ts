@@ -5,6 +5,7 @@ import { type AutocompleteProvider, matchesKey, type SlashCommand } from "@oh-my
 import { isEnoent, logger, sanitizeText } from "@oh-my-pi/pi-utils";
 import { isSettingsInitialized, settings } from "../../config/settings";
 import { resolveLocalRoot } from "../../internal-urls";
+import { AskDialogComponent } from "../../modes/components/ask-dialog";
 import { AssistantMessageComponent } from "../../modes/components/assistant-message";
 import { extractImagePathFromText } from "../../modes/components/custom-editor";
 import { ReadToolGroupComponent } from "../../modes/components/read-tool-group";
@@ -311,6 +312,13 @@ export class InputController {
 				if (this.ctx.ui.hasOverlay()) return undefined;
 				if (this.ctx.ui.getFocused() instanceof TreeSelectorComponent && matchesKey(data, "ctrl+o"))
 					return undefined;
+				const focused = this.ctx.ui.getFocused();
+				// A truncated ask question lives in the editor slot, not chat
+				// transcript, so expand it in-place instead of (or before)
+				// toggling tool-output previews.
+				if (focused instanceof AskDialogComponent && focused.toggleQuestionExpansion()) {
+					return { consume: true };
+				}
 				this.toggleToolOutputExpansion();
 				return { consume: true };
 			});
@@ -319,7 +327,12 @@ export class InputController {
 			// `/mcp test` advertises Esc until each owner's post-settlement grace expires.
 			// Cancel every overlapping test before any main-turn or side-channel action.
 			if (this.ctx.mcpTestEscapeHandlers.size > 0) {
-				for (const handler of this.ctx.mcpTestEscapeHandlers) handler();
+				// One Esc cancels every advertised /mcp test and consumes the ownership;
+				// the next Esc must reach the actions below instead of being swallowed
+				// by a stale registration or grace timer.
+				const handlers = [...this.ctx.mcpTestEscapeHandlers];
+				this.ctx.mcpTestEscapeHandlers.clear();
+				for (const handler of handlers) handler();
 				return;
 			}
 
@@ -439,7 +452,12 @@ export class InputController {
 						} else {
 							this.ctx.showUserMessageSelector();
 						}
-						this.ctx.ui.resetDisplay();
+						// Forced viewport repaint only: `resetDisplay()` replays the whole
+						// committed transcript (and clears native scrollback on direct
+						// terminals), which blocks on PTY backpressure for tens of seconds
+						// on long sessions — the selector opens invisibly and double-Esc
+						// reads as dead. O(viewport) is enough to settle the editor-slot swap.
+						this.ctx.ui.requestRender(true);
 						this.ctx.lastEscapeTime = 0;
 					} else {
 						this.ctx.lastEscapeTime = now;
@@ -2033,6 +2051,7 @@ export class InputController {
 			return;
 		}
 		this.setToolsExpanded(!this.ctx.toolOutputExpanded);
+		this.ctx.showStatus(`Tool output expansion: ${this.ctx.toolOutputExpanded ? "enabled" : "disabled"}`);
 	}
 
 	toggleToolActivityVisibility(): void {
@@ -2056,7 +2075,7 @@ export class InputController {
 		this.ctx.chatContainer.setToolActivityVisible(!this.ctx.hideToolActivity);
 
 		if (this.ctx.hideToolActivity) this.ctx.ui.clearInlineImages();
-		this.ctx.ui.resetDisplay();
+		this.ctx.ui.requestRender(true);
 		this.ctx.showStatus(`Tool activity: ${this.ctx.hideToolActivity ? "hidden" : "visible"}`);
 	}
 
@@ -2067,15 +2086,9 @@ export class InputController {
 				child.setExpanded(expanded);
 			}
 		}
-		// Toggling expansion mutates every block, but on ED3-risk terminals the
-		// transcript freezes a snapshot of each block once it scrolls past the live
-		// region (committed native scrollback is immutable there). A plain repaint
-		// replays those stale snapshots, so the toggle appears to do nothing above
-		// the live block. resetDisplay() invalidates the snapshots and forces a
-		// full clear + replay — the keyboard-accessible resize-reset equivalent —
-		// which is the only path that re-emits the whole transcript at its new
-		// heights.
-		this.ctx.ui.resetDisplay();
+		// Toggling expansion mutates every live block; blocks already committed to
+		// terminal history stay at their committed presentation.
+		this.ctx.ui.requestRender(true);
 	}
 
 	toggleThinkingBlockVisibility(): void {
@@ -2104,12 +2117,8 @@ export class InputController {
 			this.ctx.streamingComponent.updateContent(this.ctx.streamingMessage);
 		}
 
-		// Every block now carries the new flag, but on ED3-risk terminals the
-		// blocks that scrolled past the live region are frozen snapshots in
-		// committed scrollback — a plain repaint replays them stale, so scrolling
-		// up still shows the old thinking expanded. resetDisplay() retires those
-		// snapshots (it invalidates every block) and forces a full clear + replay
-		// of the whole transcript, matching setToolsExpanded()'s redraw.
+		// This is an explicit user display gesture: rebuild native history so the
+		// visibility change also applies to rows already retired from the viewport.
 		this.ctx.ui.resetDisplay();
 
 		this.ctx.showStatus(`Thinking blocks: ${this.ctx.hideThinkingBlock ? "hidden" : "visible"}`);

@@ -3,6 +3,7 @@ import type { CompactionOutcome } from "@oh-my-pi/pi-agent-core/compaction";
 import { PASTE_CODE_LOGIN_PROVIDERS } from "@oh-my-pi/pi-ai";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import type { OAuthProvider } from "@oh-my-pi/pi-ai/oauth/types";
+import * as vcs from "@oh-my-pi/pi-natives/vcs";
 import type { Component, OverlayHandle, ResizeScrollbackMode } from "@oh-my-pi/pi-tui";
 import { Loader, Spacer, setTuiTight, Text } from "@oh-my-pi/pi-tui";
 import { getAgentDbPath, getAgentDir, getProjectDir, normalizePathForComparison } from "@oh-my-pi/pi-utils";
@@ -14,6 +15,7 @@ import {
 	saveWatchdogConfigFile,
 } from "../../advisor";
 import { reset as resetCapabilities } from "../../capability";
+import { showGitOverlay } from "../../cli/git-tui";
 import {
 	formatModelSelectorValue,
 	resolveAdvisorRoleSelection,
@@ -53,6 +55,7 @@ import type { ForeignSessionInfo, ForeignSessionSource } from "../../session/for
 import type { SessionEntry } from "../../session/session-entries";
 import type { SessionInfo } from "../../session/session-listing";
 import { SessionManager } from "../../session/session-manager";
+import { loadPinnedSessionIds } from "../../session/session-pins";
 import { FileSessionStorage } from "../../session/session-storage";
 import { type LogoutAccount, toLogoutAccounts } from "../../slash-commands/helpers/logout";
 import {
@@ -78,7 +81,6 @@ import { AskTool, type AskToolDetails, type AskToolInput } from "../../tools/ask
 import { shortenPath } from "../../tools/render-utils";
 import { ToolAbortError } from "../../tools/tool-errors";
 import { copyToClipboard } from "../../utils/clipboard";
-import { repo } from "../../utils/git";
 import { setSessionTerminalTitle } from "../../utils/title-generator";
 import { type AdvisorConfigDeps, AdvisorConfigOverlayComponent } from "../components/advisor-config";
 import { AgentHubOverlayComponent } from "../components/agent-hub";
@@ -86,6 +88,7 @@ import { AgentsHubComponent } from "../components/agents-hub";
 import { AssistantMessageComponent } from "../components/assistant-message";
 import { CopySelectorComponent } from "../components/copy-selector";
 import { ExtensionDashboard } from "../components/extensions";
+import { listLiveToolRecords, liveToolRecordFromSession } from "../components/extensions/live-tool-session";
 import { HistorySearchComponent } from "../components/history-search";
 import { LoginDialogComponent } from "../components/login-dialog";
 import { LogoutAccountSelectorComponent } from "../components/logout-account-selector";
@@ -276,7 +279,7 @@ export class SelectorController {
 			// discovery walks), not the launch subdir — `getProjectDir()` is only cwd.
 			let projectDir = cwd;
 			try {
-				projectDir = (await repo.root(cwd)) ?? cwd;
+				projectDir = vcs.repo(cwd)?.root() ?? cwd;
 			} catch {
 				projectDir = cwd;
 			}
@@ -371,7 +374,18 @@ export class SelectorController {
 	 * Replaces /status with a unified view of all providers and extensions.
 	 */
 	async showExtensionsDashboard(): Promise<void> {
-		const dashboard = await ExtensionDashboard.create(getProjectDir(), this.ctx.settings, this.ctx.ui.terminal.rows);
+		const dashboard = await ExtensionDashboard.create({
+			cwd: getProjectDir(),
+			settings: this.ctx.settings,
+			terminalHeight: this.ctx.ui.terminal.rows,
+			mcpManager: this.ctx.mcpManager,
+			eventBus: this.ctx.eventBus,
+			toolSource: {
+				getLiveTool: name => liveToolRecordFromSession(this.ctx.session, name),
+				listLiveTools: () => listLiveToolRecords(this.ctx.session),
+			},
+			onMcpToolsChanged: tools => this.ctx.session.refreshMCPTools(tools),
+		});
 		// Fullscreen dashboard on the alternate screen (the /settings idiom): the
 		// overlay borrows the terminal's alt buffer and enables mouse tracking for
 		// its lifetime, leaving the transcript untouched underneath.
@@ -383,6 +397,7 @@ export class SelectorController {
 			fullscreen: true,
 		});
 		dashboard.onClose = () => {
+			dashboard.dispose();
 			overlay.hide();
 			this.focusActiveEditorArea();
 			this.ctx.ui.requestRender();
@@ -390,6 +405,21 @@ export class SelectorController {
 		dashboard.onRequestRender = () => {
 			this.ctx.ui.requestRender();
 		};
+	}
+
+	/**
+	 * Fullscreen git UI on the alternate screen (the /models idiom): split
+	 * diff viewer, staging sidebar, and commit composer. Resolves focus back
+	 * to the editor when the user closes it.
+	 */
+	async showGitTui(revision?: string): Promise<void> {
+		try {
+			await showGitOverlay(this.ctx.ui, { cwd: getProjectDir(), revision });
+		} catch (error) {
+			this.ctx.showStatus(error instanceof Error ? error.message : String(error));
+		}
+		this.focusActiveEditorArea();
+		this.ctx.ui.requestRender();
 	}
 
 	/**
@@ -419,6 +449,7 @@ export class SelectorController {
 				modelRegistry: this.ctx.session.modelRegistry,
 				activeModelPattern,
 				defaultModelPattern,
+				extensionRoots: () => this.ctx.session.effectiveExtensionRoots,
 			},
 			{ onCancel: () => done() },
 		);
@@ -521,7 +552,7 @@ export class SelectorController {
 				}
 				this.ctx.chatContainer.setToolActivityVisible(!hidden);
 				if (hidden) this.ctx.ui.clearInlineImages();
-				this.ctx.ui.resetDisplay();
+				this.ctx.ui.requestRender(true);
 				break;
 			}
 			case "terminal.showImages":
@@ -535,7 +566,7 @@ export class SelectorController {
 					}
 				}
 				if (!visible) this.ctx.ui.clearInlineImages();
-				this.ctx.ui.resetDisplay();
+				this.ctx.ui.requestRender(true);
 				break;
 			}
 			case "hideThinkingBlock":
@@ -545,10 +576,7 @@ export class SelectorController {
 						child.setHideThinkingBlock(this.ctx.effectiveHideThinkingBlock);
 					}
 				}
-				// Full clear + replay so blocks frozen in committed scrollback on
-				// ED3-risk terminals retire their stale snapshots too (see
-				// InputController.toggleThinkingBlockVisibility).
-				this.ctx.ui.resetDisplay();
+				this.ctx.ui.requestRender(true);
 				break;
 			case "proseOnlyThinking":
 				this.ctx.proseOnlyThinking = value as boolean;
@@ -557,7 +585,7 @@ export class SelectorController {
 						child.setProseOnlyThinking(value as boolean);
 					}
 				}
-				this.ctx.ui.resetDisplay();
+				this.ctx.ui.requestRender(true);
 				break;
 			case "omitThinking":
 				this.ctx.session.agent.hideThinkingSummary = value as boolean;
@@ -582,16 +610,17 @@ export class SelectorController {
 				this.ctx.rebuildChatFromMessages();
 				this.ctx.ui.resetDisplay();
 				break;
+			case "display.showTurnTime":
+				// Same as showTokenUsage: the prompt→yield delta lives in the same
+				// usage row, so toggling it must rebuild and retire committed rows.
+				this.ctx.rebuildChatFromMessages();
+				this.ctx.ui.resetDisplay();
+				break;
 			case "tui.tight":
 				setTuiTight(value as boolean);
 				this.ctx.ui.invalidate();
 				this.ctx.ui.requestRender();
 				break;
-
-			case "tui.scrollbackRebuild":
-				this.ctx.ui.setScrollbackRebuild(value as boolean);
-				break;
-
 			case "tui.resizeScrollback":
 				this.ctx.ui.setResizeScrollback(value as ResizeScrollbackMode);
 				break;
@@ -742,6 +771,11 @@ export class SelectorController {
 		const current = this.ctx.session.model;
 		const quickRoleOrder = this.ctx.settings.get("cycleOrder");
 		const quickRoleCycle = this.ctx.session.getRoleModelCycle(quickRoleOrder);
+		const currentSelector = current ? `${current.provider}/${current.id}` : undefined;
+		// Preselect the effective Task model in task mode: the configured override,
+		// else the session model (the bundled task agent inherits it by default).
+		const taskOverride = this.ctx.settings.get("task.agentModelOverrides").task;
+		const taskSelector = (Array.isArray(taskOverride) ? taskOverride[0] : taskOverride) ?? currentSelector;
 		let overlayHandle: OverlayHandle | undefined;
 		let closed = false;
 		const done = () => {
@@ -810,11 +844,24 @@ export class SelectorController {
 						this.ctx.showError(error instanceof Error ? error.message : String(error));
 					}
 				},
+				onPickTask: (_model, selector) => {
+					// Session-only: layer the Task override onto the runtime settings
+					// layer so it is never persisted, mirroring the session-model pick.
+					this.ctx.settings.override("task.agentModelOverrides", {
+						...this.ctx.settings.get("task.agentModelOverrides"),
+						task: selector,
+					});
+					this.ctx.showStatus(`Task subagent model (session-only): ${selector}. Use /agents to persist.`);
+					done();
+				},
 				onCancel: done,
 			},
 			{
 				currentContextTokens,
-				currentSelector: current ? `${current.provider}/${current.id}` : undefined,
+				currentSelector,
+				taskModeKeys: this.ctx.keybindings.getKeys("app.model.selectTemporary"),
+				taskModeKeyLabel: this.ctx.keybindings.getDisplayString("app.model.selectTemporary") || "alt+p",
+				taskSelector,
 				quickRoles: quickRoleCycle?.models,
 				quickRoleOrder,
 				currentQuickRole: quickRoleCycle?.models[quickRoleCycle.currentIndex]?.role,
@@ -1559,10 +1606,11 @@ export class SelectorController {
 				showCwd: true,
 			};
 		} else {
-			sessions = await SessionManager.list(
-				this.ctx.sessionManager.getCwd(),
-				this.ctx.sessionManager.getSessionDir(),
-			);
+			const [loadedSessions, pinnedIds] = await Promise.all([
+				SessionManager.list(this.ctx.sessionManager.getCwd(), this.ctx.sessionManager.getSessionDir()),
+				loadPinnedSessionIds(),
+			]);
+			sessions = loadedSessions;
 			const historyStorage = this.ctx.historyStorage;
 			const historyMatcher = historyStorage
 				? (query: string) => historyStorage.matchingSessionIds(query)
@@ -1586,6 +1634,7 @@ export class SelectorController {
 				},
 				historyMatcher,
 				loadAllSessions: () => SessionManager.listAll(),
+				pinnedIds,
 			};
 		}
 
@@ -1676,7 +1725,7 @@ export class SelectorController {
 		const previousCwd = this.ctx.sessionManager.getCwd();
 		// Flush pending settings writes before switching sessions so a save
 		// failure leaves the session, process project dir, and Settings in the
-		// source scope — the switch below mutates the SessionManager cwd.
+		// source scope.
 		if (!options?.settingsFlushed) {
 			try {
 				await this.ctx.settings.flush();
@@ -1685,17 +1734,21 @@ export class SelectorController {
 				return false;
 			}
 		}
-		// Switch session via AgentSession (emits hook and tool session events). The
-		// SessionManager adopts the resumed session's own cwd when it differs.
-		await this.ctx.session.switchSession(sessionPath);
+		// AgentSession owns the transaction. It restores the complete source state
+		// if applying the target project's cwd fails, including in-memory sessions.
+		if (
+			(await this.ctx.session.switchSession(sessionPath, {
+				onCwdChange: async (newCwd, sourceCwd) => {
+					if (normalizePathForComparison(newCwd) === normalizePathForComparison(sourceCwd)) return true;
+					return this.ctx.applyCwdChange(newCwd);
+				},
+			})) === false
+		) {
+			return false;
+		}
 		this.ctx.clearTransientSessionUi();
 		const newCwd = this.ctx.sessionManager.getCwd();
 		const movedProject = normalizePathForComparison(newCwd) !== normalizePathForComparison(previousCwd);
-		if (movedProject) {
-			// Resumed a session from another project: re-point the process and every
-			// cwd-derived cache at it before rendering.
-			await this.ctx.applyCwdChange(newCwd);
-		}
 		this.#refreshSessionTerminalTitle();
 		this.ctx.updateEditorBorderColor();
 
