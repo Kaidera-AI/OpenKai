@@ -96,6 +96,18 @@ OpenKai's memory semantics ride Cortex via their capability seam:
 5. bun-runtime for npm channel — matches omp's own shipping model; README
    states bun requirement plainly (kai).
 
+## 6y. Upstream v18.0.10 merged + 0.1.11 source started (2026-08-29)
+
+- Upstream v18.0.10 merged with ZERO conflicts (the touch-list discipline
+  held): retry affordance, Sharpshooter memory backend, turn-time rows,
+  tool-set seeding fix, resize perf, durability, extendedContext-off.
+- Sharpshooter disposition: coexistence — their extraction engine, our shared
+  store; the bridge (consolidation → cortex_record) noted for a later epic.
+- 0.1.11 source: calibrate ported (the fusion loop's last deferral), the RLM
+  display half (the verification child's verdict renders in the fusion card),
+  retry-compose verified. 18/18 gates green; fork builds on the pinned
+  nightly toolchain (Homebrew rustc shadowed rustup — directory override set).
+
 ## 6z. CUTOVER EXECUTED (2026-08-22, CTO: "go ahead with the cutover")
 
 **main on Kaidera-AI/OpenKai now points at the fork line** (`6451e3a89`, the
