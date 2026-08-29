@@ -8,6 +8,32 @@
  * calibrate.ts lands with shift in F2 (it needs the shift tier types).
  */
 
+export {
+  CALIBRATION_THRESHOLDS,
+  callCostUsd,
+  DEFAULT_CALL_TOKENS,
+  DEFAULT_JUDGE_TOKENS,
+  isCalibrationRun,
+  judgeBreakEven,
+  judgeBreakEvenEvent,
+  judgeBreakEvenLine,
+  readCalibrationRuns,
+  readCalibrationRunsDetailed,
+  renderCalibrationReport,
+  runCalibration,
+  splitCalibrationArms,
+} from "./calibrate.js";
+export type {
+  CalibrationQuadrant,
+  CalibrationReport,
+  CalibrationRow,
+  CalibrationRun,
+  CallTokenEstimate,
+  JudgeBreakEven,
+  JudgeBreakEvenInput,
+  ModelRates,
+  PricedModel,
+} from "./calibrate.js";
 export { complete } from "./complete.js";
 export type { CompletionRequest, CompletionResult } from "./complete.js";
 export { fuse } from "./fuse.js";

@@ -174,6 +174,19 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
       ),
       theme.fg("muted", `  consensus ${details.consensusCount} · divergences ${details.divergenceCount} · gate ${details.gateOutcome}`),
     ];
+    // RLM display (F4→0.1.11): the verification child's verdict joins the
+    // card once settled — the recursion is visible in the parent turn.
+    if (details.verificationChildId !== undefined) {
+      const child = RlmRegistry.current().result(details.verificationChildId);
+      if (child !== undefined) {
+        lines.push(
+          theme.fg("accent", `  ✦ verification (${child.model}, gen ${child.generation}):`),
+          theme.fg("muted", `    ${child.text.slice(0, 240).replace(/\n/g, " ")}`),
+        );
+      } else {
+        lines.push(theme.fg("muted", `  ✦ verification child ${details.verificationChildId} — running (rlm_collect to gather)`));
+      }
+    }
     return new Text(lines.join("\n"), 1, 0);
   },
 };
