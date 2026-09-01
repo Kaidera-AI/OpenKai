@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import type { BrowserHandle } from "@oh-my-pi/pi-coding-agent/tools/browser/registry";
 import { ensureChromiumExecutable } from "@oh-my-pi/pi-coding-agent/tools/browser/launch";
 
 /**
@@ -50,29 +51,41 @@ export function chromiumAvailable(): Promise<boolean> {
 }
 
 /**
- * Whether a HEADFUL Chromium can actually launch on this host (E022 Inc 06,
- * the recorded disposition for the upstream-inherited visible-tab failure):
- * the visible suite needs a real windowing surface. On Linux that means a
- * display AND a chrome that can init headful under it — stock CI runners
- * export DISPLAY via Xvfb yet headful init still fails upstream
- * (`[object ErrorEvent]`), so the only honest gate is a short launch probe.
- * macOS/Windows carry a real display; there we reuse the file probe rather
- * than spawning a GUI chrome (the #8445 hazard).
+ * Whether a HEADFUL Chromium can actually serve the visible-tab suite on
+ * this host (E022 Inc 06, the recorded disposition for the upstream-
+ * inherited CI gap). On Linux the suite needs a real windowing surface: a
+ * display AND working window management (it resizes its window via CDP).
+ * Stock runners export DISPLAY via Xvfb yet headful init still fails
+ * upstream (`[object ErrorEvent]`), so the only honest gate is to exercise
+ * the contract itself: launch headful, open a page, resize the window, and
+ * confirm the viewport grew. macOS/Windows carry a real display and reuse
+ * the file probe rather than spawning a GUI chrome (the #8445 hazard).
  */
 async function headfulCanLaunch(): Promise<boolean> {
 	if (!(await chromiumCanLaunch())) return false;
 	if (process.platform !== "linux") return true;
 	if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
+	const { acquireBrowser, releaseBrowser } = await import(
+		"@oh-my-pi/pi-coding-agent/tools/browser/registry"
+	);
+	let browser: BrowserHandle | undefined;
 	try {
-		const executable = await ensureChromiumExecutable();
-		if (!executable) return false;
-		const probe = Bun.spawnSync(
-			[executable, "--headless=false", "--no-sandbox", "--disable-gpu", "--dump-dom", "about:blank"],
-			{ stdout: "ignore", stderr: "ignore", timeout: 20_000 },
-		);
-		return probe.exitCode === 0;
+		browser = await acquireBrowser({ kind: "headless", headless: false }, { cwd: process.cwd() });
+		if (!("browser" in browser)) return false;
+		const page = await browser.browser.newPage();
+		await page.goto("about:blank");
+		const before = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+		const client = await page.createCDPSession();
+		const { windowId } = await client.send("Browser.getWindowForTarget");
+		await client.send("Browser.setWindowBounds", { windowId, bounds: { width: 1400, height: 900 } } as never);
+		const after = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+		return after.width > before.width + 50 && after.height > before.height + 50;
 	} catch {
 		return false;
+	} finally {
+		if (browser && "browser" in browser && browser.browser.connected) {
+			await releaseBrowser(browser, { kill: true });
+		}
 	}
 }
 

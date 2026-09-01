@@ -57,3 +57,20 @@ runs:
            sleep 2
            echo "DISPLAY=:99" >> "$GITHUB_ENV"
            echo "Started Xvfb on :99"
+           # Bare Xvfb has no window manager: headful Chromium launches but
+           # window management (the visible-tab suite resizes its window via
+           # CDP) degrades without one. Start a minimal WM on the virtual
+           # display when the host lacks one (E022 Inc 06).
+           if ! pgrep -x -u "$(id -u)" openbox >/dev/null 2>&1 \
+              && ! pgrep -x -u "$(id -u)" fluxbox >/dev/null 2>&1 \
+              && ! pgrep -x -u "$(id -u)" metacity >/dev/null 2>&1 \
+              && ! pgrep -x -u "$(id -u)" mutter >/dev/null 2>&1; then
+             if command -v apt-get >/dev/null 2>&1 && ! command -v openbox >/dev/null 2>&1; then
+               sudo apt-get install -y openbox || echo "::warning::openbox install failed; visible browser tests may skip"
+             fi
+             if command -v openbox >/dev/null 2>&1; then
+               DISPLAY=:99 openbox >/dev/null 2>&1 &
+               sleep 1
+               echo "Started openbox on :99"
+             fi
+           fi
