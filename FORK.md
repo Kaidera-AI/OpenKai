@@ -28,6 +28,10 @@ Kaidera, same licence.
     (OpenKai wordmark)
   * `packages/coding-agent/src/modes/composer-cache.ts` (CACHE_VERSION 2 —
     invalidate pre-Kaidera prepaint caches)
+  * `packages/coding-agent/src/commands/upgrade.ts` + `cli/command-help.ts`
+    + `cli-commands.ts` (`openkai upgrade` — the witnessed trust root:
+    Ed25519 manifest + SHA-256 witness + rollback, E022 Inc 04; `upgrade`
+    leaves the reserved-word table — plugin upgrades stay `omp plugin upgrade`)
 - Build: `bun install && bun run build` (cmake required for the Rust natives;
   rustup nightly-2026-08-08 directory override — Homebrew rustc shadows rustup,
   so build with `PATH="$HOME/.cargo/bin:$PATH"` to honour the override).

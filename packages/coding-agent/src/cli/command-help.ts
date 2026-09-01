@@ -121,6 +121,10 @@ export const ttsrHelp = {
 
 export const updateHelp = { description: "Check for and install updates" } satisfies CommandMetadata;
 
+export const upgradeHelp = {
+	description: "Channel-aware OpenKai upgrade: check, witnessed swap, and rollback (standalone channel)",
+} satisfies CommandMetadata;
+
 export const usageHelp = {
 	description: "Show provider usage limits for every authenticated account",
 } satisfies CommandMetadata;
