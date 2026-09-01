@@ -20,8 +20,13 @@ inventory + the omp-session goals extraction (Program/PROGRESS.md §2026-09-01)
 
 Ship the fork as OpenKai 0.1.10: omp v18 functionality intact underneath, the Kaidera
 identity on top, fusion/switchyard/RLM as the differentiators, every 0.1.9 promise either
-carried forward or consciously retired — plus one new differentiator: fully-local
-push-to-talk voice input in the TUI.
+carried forward or consciously retired.
+
+> **Scope change (CTO 2026-09-01, same day):** the voice/push-to-talk increment was
+> REMOVED from OpenKai entirely and transferred to kaidera-os as a future feature —
+> handoff `f5dc2930-47bc-42ec-98a4-373635460bab` to kai@kaidera-os (lead), which also
+> asks them to move the LocalFlow reference files into their tree. No voice surface
+> ships in the openkai TUI.
 
 **The formula (standing, user's words):** *functionality from omp — look and feel from
 Droid/Kaidera — that is our formula.* Never fight upstream flows; skin them. Upstream
@@ -60,8 +65,9 @@ stays pristine outside the sanctioned touch-list (FORK.md).
   the monthly-merge review discipline; then PIN for the rest of the epic — no further
   upstream merges mid-epic.
 - Program docs: renumber recorded (this spec), E020 cut cancelled, PROGRESS.md goals
-  updated, self-handoff placed. LocalFlow clone moved out of the OpenKai repo (licence
-  hygiene — see Inc 04).
+  updated, self-handoff placed. LocalFlow clone moved out of the OpenKai repo to
+  `~/DevVault/LocalFlow` (licence hygiene; now awaiting kaidera-os pickup per the
+  transfer handoff — see §4).
 - **Gate:** fork builds + 18/18 E021 gates still green after the v18.0.11 merge.
 
 ### Inc 01 — Theme & brand completeness (the "fix the themes" ask)
@@ -101,27 +107,7 @@ stays pristine outside the sanctioned touch-list (FORK.md).
 - **Gate:** fusion e2e (panel + judge + gate) green on the fork; a test asserts the
   recommendation source is the scorer.
 
-### Inc 04 — Voice: push-to-talk in the TUI (clean-room, fully local)
-- **Licence boundary (binding):** LocalFlow (Vlad Mysla) is source-available
-  NON-commercial — it must never be vendored, bundled, or copied. This increment is a
-  clean-room implementation of the generic concept; LocalFlow stays a reference only and
-  lives outside the repo.
-- Feature: hold-to-talk (kitty keyboard protocol key-release where the terminal reports
-  it) with a **toggle fallback** (single keybinding starts/stops capture); mic capture
-  via ffmpeg avfoundation (feature-detect, macOS first); transcription via
-  **whisper.cpp** (MIT) with model auto-fetch on first use (`base.en` default,
-  configurable); transcript inserts at the composer cursor — no clipboard, no
-  Accessibility permission, nothing leaves the machine. Min-duration guard (~0.3 s)
-  against accidental presses.
-- Backend seam kept pluggable (one interface, one impl): future backends = provider STT
-  via switchyard modality routing, or KaiVoice (the separate SwiftUI app) — noted, not
-  built.
-- Degraded environments (no ffmpeg, no mic, plain terminal) refuse with a plain
-  actionable message.
-- **Gate:** live macOS drive (speak → text in composer); runnable check for the
-  capture→transcribe→insert pipeline with a fixture wav; degraded-env refusal test.
-
-### Inc 05 — Release machinery on the fork (the "updates and upgrades" ask)
+### Inc 04 — Release machinery on the fork (the "updates and upgrades" ask)
 - Four channels wired onto omp's build (`build-binary.ts`): npm (bun-compiled artifact —
   the E020 verdict's accepted reality; README runtime statement updated plainly), brew
   (properly signed — users never run `brew trust`), standalone signed (port the Ed25519
@@ -133,20 +119,21 @@ stays pristine outside the sanctioned touch-list (FORK.md).
 - **Gate:** fresh install on all four channels passes the 10-drive smoke;
   upgrade→rollback round-trip; CI green on fork main.
 
-### Inc 06 — Trust surface + KOS integration closure
+### Inc 05 — Trust surface + KOS integration closure
 - Deny floor: the 0.1.9 security-repro suite green on the fork (re-verify the F3 claim
   post-v18.0.11); permission denials name tool/target/reason/remediation (goal 6).
 - **Reply to the KOS terminal-lane handoff** (docs/HANDOFF_FROM_KAIDERA_OS_TUI_TERMINAL_LANE.md):
   re-answer the six asks for the fork line (theme ask closes via Inc 01; session
   pinning/dir per omp's native machinery; PTY submit + alt-screen replay re-verified on
-  omp v18), name the minimum version = 0.1.10, send as a handoff back to kai@kaidera-os.
+  omp v18), name the minimum version = 0.1.10, send as a handoff back to kai@kaidera-os
+  (separate from the PTT transfer handoff `f5dc2930`, which is already sent).
 - Cortex: `openkai` project registration restored in the shared API (operator action —
   currently missing, boot 404s and ingest queues); managed-mode ingest verified green;
   the canonical provider/model config shared with KOS (goal 10) re-confirmed on the fork.
 - **Gate:** security-audit equivalent green; KOS reply sent; managed-mode ingest test
   passes against live Cortex.
 
-### Inc 07 — Adversarial rounds + ship
+### Inc 06 — Adversarial rounds + ship
 - ren deep review → K3 (kimi-k3) → qwen3.8 pro security/UAT passes, each with a written
   handoff and dispositioned findings (goal 9); dogfood campaign (DOGFOOD_FORK.md) drives
   closed out.
@@ -160,8 +147,11 @@ stays pristine outside the sanctioned touch-list (FORK.md).
 - Plugin marketplace / PluginLoader → E023/E024.
 - ruvector/SONA/federation ledger rows → parked as recorded in the 0.1.9 fold ledger.
 - KOS-side work (terminal-lane builder entry, LTM flush wiring) → kai@kaidera-os after
-  the Inc 06 reply.
-- KaiVoice integration as a PTT backend → noted in Inc 04's seam, not built.
+  the Inc 05 reply.
+- **Voice / push-to-talk → kaidera-os future feature** (CTO 2026-09-01): transferred via
+  handoff `f5dc2930-47bc-42ec-98a4-373635460bab`; LocalFlow reference files await KOS
+  pickup at `~/DevVault/LocalFlow` (non-commercial licence — reference only, never
+  vendored anywhere); KaiVoice noted there as a candidate engine.
 
 ## 5. Risks
 
@@ -169,18 +159,14 @@ stays pristine outside the sanctioned touch-list (FORK.md).
    post-release (monthly cadence).
 2. **bun-runtime npm channel** — messaging must be plain in README/install docs; the
    "pure node ≥ 22.19" promise ends with this release (accepted in the E020 verdict).
-3. **kitty key-release availability varies** — hold-to-talk degrades to toggle; never
-   gate the feature on protocol support.
-4. **Whisper model size/download UX** — first-use fetch with visible progress + config;
-   never block boot on it.
-5. **Cortex registration is an environment blocker** for managed-mode gates (Inc 06) —
+3. **Cortex registration is an environment blocker** for managed-mode gates (Inc 05) —
    operator action, tracked, not code.
-6. **Fork CI unknowns** (bazel/nix inheritance) — Inc 05 owns making CI trustworthy
+4. **Fork CI unknowns** (bazel/nix inheritance) — Inc 04 owns making CI trustworthy
    before the ship gate depends on it.
 
 ## 6. Exit criteria
 
-1. All Inc 01–06 gates green on the fork tree; CI green on main.
+1. All Inc 01–05 gates green on the fork tree; CI green on main.
 2. Parity census 100% dispositioned; FEATURE_REGISTRY updated to the 0.1.10 surface.
 3. The three adversarial passes recorded with findings dispositioned.
 4. KOS reply handoff sent; Cortex managed mode verified.

@@ -9,7 +9,7 @@
 
 ## Release plan
 
-**Last shipped: E019 — v0.1.9 (2026-08-23)** on all four channels (npm, brew, install.sh, bun); the published core carries the SSRF guard (tarball-verified 2026-09-01). **The product line forked (E021):** `Kaidera-AI/OpenKai` main is the omp-fork line since the 2026-08-22 CTO cutover (upstream `can1357/oh-my-pi` v18, openkai layer behind extension seams, 18/18 spike gates green, upstream v18.0.10 merged clean); the pi-0.84 line lives on `maintenance/0.84-line` (maintenance-only, unreleased — its thin 0.1.10 cut is CANCELLED). **Current epic: E022 — Fork Release (v0.1.10, renumbered from 0.1.11 by CTO 2026-09-01).** Spec: `Program/Release_v0.1.010/E022_FORK_RELEASE/EPIC_SPEC.md`. Contents: upstream v18.0.11 sync → theme/brand completeness (+ `--theme`/`OPENKAI_THEME`, KOS priority) → 0.1.9 parity census → fusion-first defaults + switchyard recommendations → clean-room TUI-native push-to-talk (whisper.cpp; LocalFlow is licence-barred from bundling) → four-channel release machinery + fork CI → trust surface + KOS reply → adversarial rounds → ship on CTO consent. Dev handoff: `docs/HANDOFF_KAI_E022_OMP_K3.md`.
+**Last shipped: E019 — v0.1.9 (2026-08-23)** on all four channels (npm, brew, install.sh, bun); the published core carries the SSRF guard (tarball-verified 2026-09-01). **The product line forked (E021):** `Kaidera-AI/OpenKai` main is the omp-fork line since the 2026-08-22 CTO cutover (upstream `can1357/oh-my-pi` v18, openkai layer behind extension seams, 18/18 spike gates green, upstream v18.0.10 merged clean); the pi-0.84 line lives on `maintenance/0.84-line` (maintenance-only, unreleased — its thin 0.1.10 cut is CANCELLED). **Current epic: E022 — Fork Release (v0.1.10, renumbered from 0.1.11 by CTO 2026-09-01).** Spec: `Program/Release_v0.1.010/E022_FORK_RELEASE/EPIC_SPEC.md`. Contents: upstream v18.0.11 sync → theme/brand completeness (+ `--theme`/`OPENKAI_THEME`, KOS priority) → 0.1.9 parity census → fusion-first defaults + switchyard recommendations → four-channel release machinery + fork CI → trust surface + KOS reply → adversarial rounds → ship on CTO consent. (Voice/PTT was removed from scope same-day and transferred to kaidera-os — see goal 9.) Dev handoff: `docs/HANDOFF_KAI_E022_OMP_K3.md`.
 
 ### Standing goals (refreshed 2026-09-01 from the omp+K3 session record)
 
@@ -21,7 +21,7 @@
 6. Release control is the CTO's: explicit consent, pre-publish feature checklist (nothing demoed ever drops again), channel-aware upgrade, signed brew.
 7. Adversarial gates every release (ren → K3 → qwen3.8) with recorded handoffs.
 8. OpenKai independent; KOS bundles it over one canonical provider/model config; Cortex is the shared memory (registration currently MISSING in the shared API — operator restore pending).
-9. NEW (2026-09-01): fully-local push-to-talk voice input in the TUI, clean-room (whisper.cpp), KaiVoice/provider STT as future pluggable backends.
+9. Voice/push-to-talk: **not an OpenKai feature** (CTO 2026-09-01) — transferred to kaidera-os as a future feature via handoff `f5dc2930-47bc-42ec-98a4-373635460bab`; LocalFlow reference files await KOS pickup at `~/DevVault/LocalFlow` (non-commercial licence, reference only).
 
 | Sprint | Window | Contents | Exit | Status |
 |---|---|---|---|---|

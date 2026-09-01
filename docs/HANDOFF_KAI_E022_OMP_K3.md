@@ -8,9 +8,11 @@ then the spec, then start Inc 00.
 
 1. **Renumber:** the fork line's first public release ships as **v0.1.10**. The 0.84
    thin maintenance cut is cancelled; that line is maintenance-only and unreleased.
-2. **Push-to-talk:** clean-room, TUI-native (whisper.cpp, MIT). **LocalFlow is
-   licence-barred** (source-available non-commercial, explicitly no bundling) — never
-   vendor or copy it; the clone was moved out of the repo to `~/DevVault/LocalFlow`.
+2. **Push-to-talk: REMOVED from OpenKai entirely** (superseding directive, same day) —
+   transferred to kaidera-os as a future feature via handoff
+   `f5dc2930-47bc-42ec-98a4-373635460bab` (kai@kaidera-os moves the LocalFlow reference
+   files from `~/DevVault/LocalFlow` into their tree). Build NO voice surface in the
+   openkai TUI; LocalFlow stays licence-barred from vendoring anywhere.
 3. **The formula:** functionality from omp (adopt upstream flows, don't fight them);
    look and feel from Droid/Kaidera (sharp hexagon, brand colours, splash every launch).
 4. Fold the operator's standing goals — refreshed in `Program/PROGRESS.md`
@@ -20,7 +22,7 @@ then the spec, then start Inc 00.
 
 - **Code:** `~/DevVault/openkai-fork` — the fork line (= `Kaidera-AI/OpenKai` main).
   Branch off main per increment (`e022/inc-XX-<slug>`); do NOT push to origin/main:
-  CI is not yet green there (Inc 05 owns fixing it) and release-SOP consent gates apply.
+  CI is not yet green there (Inc 04 owns fixing it) and release-SOP consent gates apply.
 - **Build:** `bun install && bun run build` (cmake required for the Rust natives; the
   pinned nightly toolchain note is in the E021 spec §6y — Homebrew rustc shadowed rustup,
   directory override set).
@@ -52,13 +54,14 @@ then the spec, then start Inc 00.
   an operator action (`cortex-init-project`); ask, don't assume. Until then the
   managed-mode ingest test red is environmental, not a code defect.
 - **Adversarial cadence:** ren deep review → K3 → qwen3.8 pro before ship, findings
-  dispositioned in writing (Inc 07).
+  dispositioned in writing (Inc 06).
 - **KOS reply:** the inbound six-ask handoff is
-  `docs/HANDOFF_FROM_KAIDERA_OS_TUI_TERMINAL_LANE.md`; Inc 06 sends the reply for the
-  fork line and names minimum version 0.1.10.
+  `docs/HANDOFF_FROM_KAIDERA_OS_TUI_TERMINAL_LANE.md`; Inc 05 sends the reply for the
+  fork line and names minimum version 0.1.10 (the PTT transfer handoff `f5dc2930` is
+  separate and already sent — do not fold the reply into it).
 
 ## Reporting
 
 Per increment: gate evidence (command + output reference) into the epic folder, one-line
 status row appended to `Program/PROGRESS.md`, and anomalies via the DOGFOOD_FORK
-template. On epic exit: the Inc 07 ship package awaits CTO consent — stop there.
+template. On epic exit: the Inc 06 ship package awaits CTO consent — stop there.
