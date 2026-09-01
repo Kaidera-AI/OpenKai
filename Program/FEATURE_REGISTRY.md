@@ -4,6 +4,13 @@
 
 **Rule (release gate, E017 inc 10):** before any release — walk this registry, verify each ✅/🔁 row against the build (command exists, keybind fires, chip renders, test passes), and record the audit in the release notes. Rows marked ❌ carry the reason + the decision-maker; 📋 rows are promised-but-unshipped with their target.
 
+**Fork-line cutover (E022, 2026-09-01):** this registry's rows describe the retired
+0.84/pi line. For the fork release the pre-publish checklist is the parity census:
+`Program/Release_v0.1.010/E022_FORK_RELEASE/PARITY_CENSUS.md` — every row here has a
+match / adopt-omp / port / retire disposition against the fork surface, and the five
+port-or-retire calls in its §5 are CTO decisions. This file remains the historical
+record; the census carries the 0.1.10 gate.
+
 **Legend:** ✅ present · 🔁 regressed-and-restored · ❌ dropped (reason attached) · 📋 promised, not yet shipped
 
 ---
