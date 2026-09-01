@@ -56,6 +56,24 @@ at v18.0.11 for the epic.
   (`generate_image`/`web_search` precedent) — fusion stays default-on for
   normal launches; explicit tool sets stay honest.
 
+### Inc 06 adversarial hardening (ren deep review, dispositioned)
+
+- **The witnessed upgrader now ships:** compiled binaries stamp the standalone
+  channel, so `openkai upgrade` reaches the Ed25519/SHA-256 trust root on real
+  installs (previously every shipped binary deferred to npm). The swap refuses
+  to run on non-compiled launches (no clobbering a package-manager runtime),
+  musl installs resolve the musl artifact, and a prerelease in the manifest can
+  no longer read as newer than the installed stable.
+- **Deny floor:** a broad `TMPDIR` (home or a non-platform temp root) no longer
+  disables deny-by-containment; the SDK sandbox-under-temp contract is
+  preserved.
+- **Theme contract:** `--theme Dark` / `OPENKAI_THEME=AUTO` parse as the
+  reserved words, not as failing name pins.
+- **Product versioning:** `openkai --version` reports `openkai/0.1.10`
+  (engine 18.0.11 underneath); the welcome box and splash name the product;
+  `openkai upgrade` compares in the 0.1.x namespace so 0.1.9 installs
+  self-update to 0.1.10.
+
 ### Governance
 
 - Renumbered by CTO 2026-09-01 (the fork's first release takes 0.1.10; the 0.84
