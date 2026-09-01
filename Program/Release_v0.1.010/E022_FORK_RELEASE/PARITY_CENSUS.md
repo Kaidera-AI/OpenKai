@@ -103,9 +103,15 @@ Automated (test-verified this census):
 - `--theme`/`OPENKAI_THEME` contract: pinned theme survives appearance flips (test).
 - Golden splash frames per Kaidera theme (fixtures committed).
 - Session pinning seams: `--session`/`--session-dir` present in flag tables (grep evidence).
+- **Live PTY keyless-boot drive (2026-09-01, operator-side):** `bun src/cli.ts` in a
+  fresh `OPENKAI_HOME` with ZERO credentials → composer reached ("Welcome back!",
+  tips panel, no auth error/401/block in the frame); the Kaidera hexagon mark renders
+  in the welcome box first paint; splash frame rides the alt-screen (covered by the
+  golden fixtures, not the capture). This is the permanent keyless-boot gate re-proven
+  on the fork surface — registry row "Keyless boot" = match, drive DONE.
 
 Operator drives (TEST_GUIDE checklist — each blocks the pre-publish walk):
-1. Keyless boot: launch with zero credentials → composer, no block (permanent gate).
+1. ~~Keyless boot~~ — DONE (automated PTY drive above).
 2. Claude subscription sign-in in-TUI; OpenAI + Kimi Code key entry.
 3. `/model` hub navigation crash-free on a 24-row terminal (the 0.84 picker-crash regression drive).
 4. `/autonomy` equivalent: approval-mode picker UX + persisted per-tool approvals.
