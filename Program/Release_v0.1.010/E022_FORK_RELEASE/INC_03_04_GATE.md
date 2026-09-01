@@ -51,5 +51,19 @@ PR #3 run 1: surfaced 3 fixable integration defects (all fixed in `6dd1f30b6e`):
    failures closed, fusion stays default-on for normal launches (`toolNames`
    undefined).
 5. headful Chromium suite needs a display the stock PR runner lacks → Xvfb step
-   added to `setup-system-deps` (self-heals stock runners; omp-kata image
-   already ships a display). CI-infra fix, no test gutted.
+   added to `setup-system-deps` (daemon survives steps via GITHUB_ENV, proven on
+   run 33496382569) + Chromium runtime libs (puppeteer's Ubuntu set). The
+   "Missing X server" failure is closed.
+
+**Remaining native/unit failure is upstream-inherited, not an E022 regression.**
+`browser-tab-worker-startup.test.ts > visible OMP-owned browser tabs > creates
+independent pages` fails identically on upstream `can1357/oh-my-pi`'s OWN hosted
+PR CI (runs 33492541432, 33490882549) — the test launches headful Chrome
+(`headless: false`) and the tab worker reports a swallowed `[object ErrorEvent]`
+init failure. Evidence: this branch touches no browser code
+(`git diff v18.0.11 HEAD` on `src/tools/browser/` is empty); upstream main CI is
+red on unrelated suites too. Disposition: carry-forward of the upstream v18.0.11
+defect; the fork's omp-kata runner (the release path) ships a display and the
+full browser stack, so the PR-hosted gap does not gate the release. Tracked for
+the next monthly upstream merge (fix lands upstream, or the visible suite gains
+a launchability probe like the existing `chromiumAvailable()` headless gate).
