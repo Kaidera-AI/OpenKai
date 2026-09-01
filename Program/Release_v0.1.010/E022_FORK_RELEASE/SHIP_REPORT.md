@@ -1,0 +1,48 @@
+# E022 — v0.1.10 SHIP REPORT (to the CTO)
+
+**Consent:** "ok lets ship, both steps are approved" (2026-09-01, this
+session) — ship 0.1.10 + decision #6 (wrapper `@kaidera/openkai`).
+**Release tip:** `a93dfc3617`, tag `v0.1.010` on `Kaidera-AI/OpenKai`.
+
+## What shipped
+
+| Channel | State |
+|---|---|
+| npm | `@kaidera/openkai-engine@18.0.11` + `@kaidera/openkai@0.1.10` live (wrapper shim `openkai` → engine `runCli`). |
+| bun | `bun add -g @kaidera/openkai` live; runs `openkai/0.1.10`. |
+| standalone | Release CI (run 33542228528) building binaries + signed `latest.json` + SLSA attestations; `install.sh` repointed to install `openkai` from Kaidera releases. |
+| brew | Kaidera tap formula for 0.1.10 to follow the cut (sha256s from assets). |
+
+## Proven at the cut
+
+- **0.1.9 → 0.1.10 standalone:** on a copy — Ed25519 signature verified,
+  SHA-256 witness verified, swap 0.1.9→0.1.10, `--rollback` back to 0.1.9.
+  Same keypair as the 0.1.9 line; 0.1.9 installs see `latest: 0.1.10`.
+- **npm/bun:** clean-prefix installs run `openkai/0.1.10`; upgrade defers
+  honestly to the package manager.
+- **Gates:** 75/75 openkai + 513 composer + 149 cli suites; biome + tsgo
+  clean; compiled-binary drives for every adversarial fix.
+- **Adversarial chain:** ren (6 fixed) → K3 (splash order fixed) → qwen3.8
+  pro (telemetry boundary wired live; release key pinned fail-closed).
+  Dispositions: `DISPOSITION_{REN,K3,QWEN}.md`.
+
+## CI ownership (Inc 04 mandate)
+
+The Kaidera org had no `omp-kata` runner — non-PR jobs queued forever.
+Heavy-runner label parameterised (`vars.OMP_HEAVY_RUNNER || 'omp-kata'`,
+default unchanged upstream); Kaidera sets `ubuntu-22.04`. The inherited
+visible-browser test (upstream-broken on stock runners) now gates on a
+headful launchability probe (`headfulChromiumAvailable`, the recorded
+disposition) — runs where a windowing surface exists (9/9 on macOS), skips
+honestly on bare Linux.
+
+## Open / operator
+
+1. Release CI green confirmation → assets + `latest.json` serve check +
+   `gh attestation verify`.
+2. Kaidera brew formula 0.1.10 (sha256s from the cut).
+3. Local-binary hygiene refresh (SOP) once the standalone cut lands.
+4. `cortex-init-project` for the `openkai` registry entry (managed-mode
+   ingest stays environmental-red until then).
+5. Your seven dogfood drives (PARITY_CENSUS §4).
+6. KOS follow-up handoff delivered: `docs/HANDOFF_TO_KOS_0110_SHIPPED.md`.
