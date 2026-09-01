@@ -72,8 +72,9 @@ describe("E022 Inc 03: pending-child display states", () => {
 		RlmRegistry.reset();
 		const registry = RlmRegistry.current();
 		// A streamFn that never settles keeps the child pending synchronously —
-		// the display state is the contract, no timers needed.
-		const streamFn: StreamFunction<Api> = () => new Promise<never>(() => {});
+		// the display state is the contract, no timers needed. The never-promise
+		// stands in for a live event stream (spawnChild only stores it).
+		const streamFn: StreamFunction<Api> = (() => new Promise<never>(() => {})) as unknown as StreamFunction<Api>;
 		const model = { id: "mock-slow" } as never;
 		const handle = registry.spawnChild(streamFn, model, { system: "s", prompt: "p" });
 
