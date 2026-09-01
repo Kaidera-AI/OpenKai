@@ -104,6 +104,27 @@ export class RlmRegistry {
     return this.attributed.find((r) => r.childId === childId);
   }
 
+  /**
+   * A pending child's admission handle (model, generation, startedAt) — the
+   * display state for in-flight children. Undefined once settled.
+   */
+  pendingInfo(childId: string): RlmSpawnHandle | undefined {
+    return this.pending.get(childId)?.handle;
+  }
+
+  /**
+   * A promise that resolves with the child's result when it settles — the
+   * deterministic await for a spawn's admission (tests and reconnect paths
+   * use it instead of polling). Already-settled children resolve immediately;
+   * an unknown child yields undefined.
+   */
+  whenSettled(childId: string): Promise<RlmChildResult> | undefined {
+    const pending = this.pending.get(childId);
+    if (pending !== undefined) return pending.promise;
+    const settled = this.result(childId);
+    return settled === undefined ? undefined : Promise.resolve(settled);
+  }
+
   /** All settled results so far (collection is non-destructive). */
   settledResults(): readonly RlmChildResult[] {
     return this.attributed;

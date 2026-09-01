@@ -19,7 +19,10 @@ import { slashCommandCapability } from "../capability/slash-command.js";
 import { toolCapability } from "../capability/tool.js";
 import type { CustomTool } from "../extensibility/custom-tools/types.js";
 
-import { fuse, type FuseResult } from "./fusion/index.js";
+import { fuse, FusionBandit, defaultFusionLogPath, readFusionRuns, type FuseResult } from "./fusion/index.js";
+import { readOpenkaiConfig } from "./config-io.js";
+import { candidateKey, postureBucket, suggestPair, type PairCandidate } from "./pairing.js";
+import type { ShiftPosture } from "./orchestrate.js";
 import { RlmRegistry } from "./rlm.js";
 
 /** The fusion tool's parameter schema. */
@@ -45,6 +48,9 @@ interface FusionDetails {
   /** RLM recursion (F4): the verification child admitted on divergence. */
   verificationChildId?: string;
   childUsageTokens?: number;
+  /** E022 Inc 03: how the default pair was chosen (the scorer-source contract). */
+  pairSource?: string;
+  pairAdvisory?: string;
 }
 
 function resultText(result: FuseResult): string {
@@ -95,14 +101,66 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
       }
       return undefined;
     };
-    const architect = pick(params.architectModel);
+    let architect = pick(params.architectModel);
     if (architect === undefined) {
       return {
-        content: [{ type: "text", text: `fusion: unknown architect model "${params.architectModel}"` }],
+        content: [{ type: "text", text: params.architectModel !== undefined
+          ? `fusion: unknown architect model "${params.architectModel}"`
+          : "fusion: no architect model — select a model first" }],
         isError: true,
       };
     }
-    const builder = pick(params.builderModel) ?? architect;
+    let builder = pick(params.builderModel);
+    let pairSource: string | undefined;
+    let pairAdvisory: string | undefined;
+    if (builder === undefined && params.builderModel === undefined) {
+      // E022 Inc 03 — the default pair is scorer-driven, never hardcoded:
+      // bandit posterior on the operator-priority bucket → cross-provider
+      // diversity → self-pair advisory. Explicit args always beat it.
+      const cfg = await readOpenkaiConfig();
+      const bucket = postureBucket(cfg.shift?.posture as ShiftPosture | undefined);
+      const candidates: PairCandidate[] = registry
+        .getAvailable()
+        .map((m) => ({ provider: m.provider, id: m.id }));
+      const bandit = new FusionBandit();
+      bandit.update(await readFusionRuns(defaultFusionLogPath(process.cwd())), () => bucket);
+      // Telemetry arms are keyed by bare model id; map back to provider/id.
+      const bareToKey = new Map<string, string>();
+      for (const c of candidates) if (!bareToKey.has(c.id)) bareToKey.set(c.id, candidateKey(c));
+      const suggestion = suggestPair(
+        candidates,
+        current !== undefined ? { provider: current.provider, id: current.id } : undefined,
+        {
+          bucket,
+          recommend: (keys) => {
+            const bareIds: string[] = [];
+            for (const key of keys) {
+              const bare = [...bareToKey.entries()].find(([, v]) => v === key)?.[0];
+              if (bare !== undefined) bareIds.push(bare);
+            }
+            const rec = bandit.recommend(bucket, bareIds);
+            if (rec === undefined || rec.pulls === 0) return undefined;
+            const key = bareToKey.get(rec.modelId);
+            return key === undefined ? undefined : { modelId: key, reason: rec.reason };
+          },
+        },
+        {
+          architect: params.architectModel !== undefined
+            ? candidateKey({ provider: architect.provider, id: architect.id })
+            : cfg.fusion?.pair?.architect,
+          builder: cfg.fusion?.pair?.builder,
+        },
+      );
+      if (suggestion !== undefined) {
+        pairSource = suggestion.source;
+        pairAdvisory = suggestion.advisory;
+        if (params.architectModel === undefined) {
+          architect = pick(candidateKey(suggestion.architect)) ?? architect;
+        }
+        builder = pick(candidateKey(suggestion.builder));
+      }
+    }
+    builder = builder ?? architect;
 
     // Stream with the registry's auth (rotating/resolving keys ride the
     // resolver — never a static key here).
@@ -129,8 +187,9 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
         })),
         consensusCount: result.synthesis.consensus.length,
         divergenceCount: result.synthesis.divergences.length,
+        ...(pairSource !== undefined ? { pairSource } : {}),
+        ...(pairAdvisory !== undefined ? { pairAdvisory } : {}),
       };
-
       // RLM recursion (E021 F4): a divergent verdict admits a verification
       // child — the divergence topic gets its own run, attributed back to
       // this fusion run's usage.
@@ -173,18 +232,38 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
           `  ${r.role} · ${r.modelId} · ${r.latencyMs}ms${r.error !== undefined ? ` — ${r.error}` : ""}`),
       ),
       theme.fg("muted", `  consensus ${details.consensusCount} · divergences ${details.divergenceCount} · gate ${details.gateOutcome}`),
+      ...(details.pairSource !== undefined
+        ? [theme.fg("dim", `  pair: ${details.pairSource}${details.pairAdvisory !== undefined ? ` — ${details.pairAdvisory}` : ""}`)]
+        : []),
     ];
     // RLM display (F4→0.1.11): the verification child's verdict joins the
     // card once settled — the recursion is visible in the parent turn.
     if (details.verificationChildId !== undefined) {
-      const child = RlmRegistry.current().result(details.verificationChildId);
+      const registry = RlmRegistry.current();
+      const child = registry.result(details.verificationChildId);
       if (child !== undefined) {
-        lines.push(
-          theme.fg("accent", `  ✦ verification (${child.model}, gen ${child.generation}):`),
-          theme.fg("muted", `    ${child.text.slice(0, 240).replace(/\n/g, " ")}`),
-        );
+        if (child.error !== undefined) {
+          lines.push(
+            theme.fg("error", `  ✦ verification (${child.model}, gen ${child.generation}) failed:`),
+            theme.fg("muted", `    ${child.error.slice(0, 240).replace(/\n/g, " ")}`),
+          );
+        } else {
+          lines.push(
+            theme.fg("accent", `  ✦ verification (${child.model}, gen ${child.generation}):`),
+            theme.fg("muted", `    ${child.text.slice(0, 240).replace(/\n/g, " ")}`),
+          );
+        }
       } else {
-        lines.push(theme.fg("muted", `  ✦ verification child ${details.verificationChildId} — running (rlm_collect to gather)`));
+        // Pending state (E022 Inc 03): name the model, generation, and elapsed
+        // time — the operator sees WHICH child is in flight, not just that one is.
+        const pending = registry.pendingInfo(details.verificationChildId);
+        const elapsed = pending !== undefined ? ` — ${Math.max(0, Math.round((Date.now() - pending.startedAt) / 1000))}s` : "";
+        lines.push(
+          theme.fg("muted",
+            pending !== undefined
+              ? `  ✦ verification (${pending.model}, gen ${pending.generation}) running${elapsed} (rlm_collect to gather)`
+              : `  ✦ verification child ${details.verificationChildId} — running (rlm_collect to gather)`),
+        );
       }
     }
     return new Text(lines.join("\n"), 1, 0);

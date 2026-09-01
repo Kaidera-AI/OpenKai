@@ -11,7 +11,9 @@
  * Self-registers on the extension-module capability (sanctioned touch-list).
  */
 
-import type { ExtensionAPI } from "../extensibility/extensions/types.js";
+import type { ExtensionAPI, ExtensionModelQuery, ExtensionUIContext } from "../extensibility/extensions/types.js";
+import { readOpenkaiConfig, writeOpenkaiConfig } from "./config-io.js";
+import { fusionTool } from "./fusion-tool.js";
 
 /** Standalone-prose keyword match (the fork's own boundary discipline). */
 const KEYWORD_RE = {
@@ -20,6 +22,35 @@ const KEYWORD_RE = {
 } as const;
 
 export default function openkaiKeywords(pi: ExtensionAPI): void {
+  /**
+   * E022 Inc 03 — the bare `/fuse` menu: run fusion or configure the pair.
+   * The picker is provider→model for BOTH slots (architect first, builder
+   * second); the selection persists to ~/.openkai/config.json ("fusion.pair")
+   * — the same config slice the fusion tool's default resolution reads.
+   */
+  const pickSlot = async (
+    ctx: { ui: ExtensionUIContext; models: ExtensionModelQuery },
+    slot: "architect" | "builder",
+    current?: string,
+  ): Promise<string | undefined> => {
+    const models = ctx.models.list();
+    if (models.length === 0) {
+      ctx.ui.notify("fusion: no authenticated models — sign in first (/login)", "warning");
+      return undefined;
+    }
+    const providers = [...new Set(models.map((m) => m.provider))];
+    const provider = providers.length === 1
+      ? providers[0]!
+      : await ctx.ui.select(`fusion pair — ${slot}: provider`, providers);
+    if (provider === undefined) return undefined;
+    const inProvider = models.filter((m) => m.provider === provider);
+    const chosen = inProvider.length === 1
+      ? inProvider[0]!.id
+      : await ctx.ui.select(`fusion pair — ${slot}: model on ${provider}`, inProvider.map((m) => m.id));
+    if (chosen === undefined) return undefined;
+    return `${provider}/${chosen}`;
+  };
+
   // /fuse — operator-driven fusion: executes the panel DIRECTLY (no model
   // discretion), the verdict lands in the transcript as a custom message.
   pi.registerCommand("fuse", {
@@ -27,13 +58,38 @@ export default function openkaiKeywords(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const task = args.trim();
       if (task.length === 0) {
-        ctx.ui.notify("/fuse <task> — the fusion panel needs a task", "warning");
+        // Bare /fuse: the menu (E022 Inc 03).
+        if (!ctx.hasUI) {
+          ctx.ui.notify("/fuse <task> — the fusion panel needs a task", "warning");
+          return;
+        }
+        const cfg = await readOpenkaiConfig();
+        const pairNow = [cfg.fusion?.pair?.architect, cfg.fusion?.pair?.builder]
+          .filter((x): x is string => typeof x === "string" && x.length > 0)
+          .join(" + ");
+        const choice = await ctx.ui.select("fusion", [
+          "Run fusion on a task…",
+          pairNow !== "" ? `Configure fusion pair (current: ${pairNow})` : "Configure fusion pair",
+        ]);
+        if (choice === undefined) return;
+        if (choice.startsWith("Run")) {
+          ctx.ui.setEditorText("/fuse ");
+          return;
+        }
+        const architect = await pickSlot(ctx, "architect", cfg.fusion?.pair?.architect);
+        if (architect === undefined) return;
+        const builder = await pickSlot(ctx, "builder", cfg.fusion?.pair?.builder);
+        if (builder === undefined) return;
+        await writeOpenkaiConfig({
+          ...cfg,
+          fusion: { ...cfg.fusion, pair: { architect, builder } },
+        });
+        ctx.ui.notify(`fusion pair saved: ${architect} + ${builder}`, "info");
         return;
       }
       ctx.ui.notify(`fusing: ${task.slice(0, 80)}…`, "info");
       ctx.ui.setStatus("openkai-fuse", "fusing…");
       try {
-        const { fusionTool } = await import("./fusion-tool.js");
         const result = await fusionTool.execute(
           `fuse-${Date.now()}`,
           { task } as never,
