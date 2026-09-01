@@ -38,3 +38,13 @@ wired live, QW-03 key pinned, rest closed). Docs: `DISPOSITION_REN.md`,
 - Local-binary hygiene refresh (SOP) after the standalone cut.
 - Operator dogfood drives (PARITY_CENSUS §4); Cortex `openkai` project
   registration (managed-mode ingest).
+
+## CI ownership (Inc 04 mandate, executed at the cut)
+
+The Kaidera org has no `omp-kata` runner — non-PR release jobs queued
+forever. Per the epic's Inc 04 mandate ("fork owns making CI trustworthy"),
+the heavy-runner label is parameterised: `vars.OMP_HEAVY_RUNNER || 'omp-kata'`
+(default unchanged upstream); Kaidera-AI/OpenKai sets it to `macos-14`
+(hosted, real display, bazel-capable). The tag was moved to the true release
+tip `b65f1ff271` (the CI workflow triggers on main pushes; the release run is
+dispatched with the tag at HEAD).
