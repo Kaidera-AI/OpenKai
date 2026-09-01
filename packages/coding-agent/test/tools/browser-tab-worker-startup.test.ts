@@ -15,9 +15,13 @@ import {
 	initializeTabWorkerForTest,
 	releaseTab,
 } from "@oh-my-pi/pi-coding-agent/tools/browser/tab-supervisor";
-import { chromiumAvailable } from "./chromium-probe";
+import { chromiumAvailable, headfulChromiumAvailable } from "./chromium-probe";
 
 const CHROMIUM_AVAILABLE = await chromiumAvailable();
+// E022 Inc 06: the visible-tab suite launches headful chrome, which needs a
+// real windowing surface; the headless probe alone passes on hosts where
+// headful init fails (the upstream-inherited CI gap). Skip honestly there.
+const HEADFUL_CHROMIUM_AVAILABLE = await headfulChromiumAvailable();
 
 class FakeStartupWorker {
 	#errorHandlers = new Set<(error: Error) => void>();
@@ -217,7 +221,7 @@ describe("browser init deadline carry-over", () => {
 	);
 });
 describe("visible OMP-owned browser tabs", () => {
-	it.skipIf(!CHROMIUM_AVAILABLE)(
+	it.skipIf(!HEADFUL_CHROMIUM_AVAILABLE)(
 		"creates independent pages without pinning the resizable window viewport",
 		async () => {
 			let browser: BrowserHandle | undefined;

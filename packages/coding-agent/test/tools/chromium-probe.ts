@@ -48,3 +48,38 @@ export function chromiumAvailable(): Promise<boolean> {
 	probe ??= chromiumCanLaunch();
 	return probe;
 }
+
+/**
+ * Whether a HEADFUL Chromium can actually launch on this host (E022 Inc 06,
+ * the recorded disposition for the upstream-inherited visible-tab failure):
+ * the visible suite needs a real windowing surface. On Linux that means a
+ * display AND a chrome that can init headful under it — stock CI runners
+ * export DISPLAY via Xvfb yet headful init still fails upstream
+ * (`[object ErrorEvent]`), so the only honest gate is a short launch probe.
+ * macOS/Windows carry a real display; there we reuse the file probe rather
+ * than spawning a GUI chrome (the #8445 hazard).
+ */
+async function headfulCanLaunch(): Promise<boolean> {
+	if (!(await chromiumCanLaunch())) return false;
+	if (process.platform !== "linux") return true;
+	if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
+	try {
+		const executable = await ensureChromiumExecutable();
+		if (!executable) return false;
+		const probe = Bun.spawnSync(
+			[executable, "--headless=false", "--no-sandbox", "--disable-gpu", "--dump-dom", "about:blank"],
+			{ stdout: "ignore", stderr: "ignore", timeout: 20_000 },
+		);
+		return probe.exitCode === 0;
+	} catch {
+		return false;
+	}
+}
+
+let headfulProbe: Promise<boolean> | undefined;
+
+/** Gate for tests that launch a visible (headful) Chromium window. */
+export function headfulChromiumAvailable(): Promise<boolean> {
+	headfulProbe ??= headfulCanLaunch();
+	return headfulProbe;
+}
