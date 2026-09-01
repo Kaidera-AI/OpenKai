@@ -2082,9 +2082,15 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			inlineExtensions.push(...(options.extensions ?? []));
 			inlineExtensions.push(createAutoresearchExtension);
 			// OpenKai layer (E021): the fork's built-in extensions + built-in
-			// tools attach here — the same seam autoresearch uses.
+			// tools attach here — the same seam autoresearch uses. The tools
+			// honour the same scoping convention as generate_image/web_search
+			// (E022 Inc 04, CI): an explicitly scoped tool set that omits
+			// "fusion" gets no openkai tools, so exact tool-set assertions stay
+			// honest (the upstream SDK contract tests pin that invariant).
 			inlineExtensions.push(openkaiShift, openkaiFloor, openkaiKeywords);
-			inlineExtensions.push(createCustomToolsExtension(openkaiBuiltinTools()));
+			if (!options.toolNames || options.toolNames.includes("fusion")) {
+				inlineExtensions.push(createCustomToolsExtension(openkaiBuiltinTools()));
+			}
 			if (customTools.length > 0) {
 				inlineExtensions.push(createCustomToolsExtension(customTools, customToolSourcePaths));
 			}
