@@ -2,37 +2,6 @@
 
 ## [Unreleased]
 
-## [0.1.10] - 2026-09-01
-
-OpenKai v0.1.010 — the fork line's first public release (E022). The omp engine
-(v18.0.11, pinned) underneath; the OpenKai layer on top. Full product notes:
-the OpenKai programme CHANGELOG [0.1.10].
-
-### Added
-
-- Explicit theme contract: `--theme <name|dark|light|auto>` + `OPENKAI_THEME`;
-  theme fixed at spawn; `auto` honours OSC 11 with COLORFGBG fallback.
-- Kaidera first paint (kaidera-dark/kaidera-light schema defaults), splash on
-  every launch, sharp-hexagon mark, ⬣ status-line glyph, theme picker with
-  live preview.
-- `openkai upgrade`: channel-aware (brew/bun/npm defer; standalone uses the
-  witnessed trust root — Ed25519 manifest fail-closed when pinned, SHA-256
-  artifact witness, `.previous` rollback, `--check`, `--rollback`).
-- Fusion-first defaults: scorer-driven 2-model pair suggestion (bandit →
-  cross-provider diversity → self-pair advisory), provider→model pickers for
-  both slots via bare `/fuse`, pair provenance in the verdict card, RLM
-  pending/failed child display states; fusion telemetry rides the redaction
-  boundary (runs.jsonl + managed-mode Cortex artifact).
-
-### Fixed
-
-- Deny floor: system temp is exempt scratch for the upstream SDK suite; a
-  broad TMPDIR no longer disables deny-by-containment; DENY_FLOOR patterns
-  apply inside temp unconditionally.
-- Product versioning: `openkai --version` reports `openkai/0.1.10`
-  (engine 18.0.11); the witnessed upgrader compares in the 0.1.x namespace.
-- Startup splash plays before the composer goes live (no blind typing).
-
 ## [18.0.11] - 2026-08-29
 
 ### Added
