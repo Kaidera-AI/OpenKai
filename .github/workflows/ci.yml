@@ -791,6 +791,15 @@ jobs:
          # is needed on this runner.
          - name: Build browser relay artifacts
            run: bun run --cwd packages/browser-relay build
+         # E022 Inc 06: the witnessed-upgrade manifest for the standalone
+         # channel (ported from the 0.84 line's build-binaries + sign-manifest
+         # pipeline). Version is the layer's PRODUCT_VERSION, cross-checked
+         # against the release tag; signed when the release private key secret
+         # exists, unsigned (with a warning) until the keypair is cut.
+         - name: Generate witnessed-upgrade manifest (latest.json)
+           env:
+              OPENKAI_RELEASE_PRIVATE_KEY: ${{ secrets.OPENKAI_RELEASE_PRIVATE_KEY }}
+           run: bun packages/coding-agent/scripts/ci-release-manifest.ts ${{ needs.release_metadata.outputs.release-tag }} latest.json
          # Generated after every other release asset is in place and before
          # the release is created, so SHA256SUMS.txt itself ships as an asset
          # and covers every other file uploaded alongside it.
@@ -799,6 +808,7 @@ jobs:
               bun run ci:release:checksums SHA256SUMS.txt \
                 packages/coding-agent/binaries/omp-* \
                 packages/browser-relay/dist/omp-browser-relay-extension.zip \
+                latest.json \
                 LICENSE \
                 THIRD-PARTY-NOTICES.txt
          - name: Create GitHub Release
@@ -809,6 +819,7 @@ jobs:
               files: |
                  packages/coding-agent/binaries/omp-*
                  packages/browser-relay/dist/omp-browser-relay-extension.zip
+                 latest.json
                  LICENSE
                  THIRD-PARTY-NOTICES.txt
                  SHA256SUMS.txt
