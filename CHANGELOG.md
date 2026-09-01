@@ -2,28 +2,67 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
-## [0.1.10] — v0.1.010 (E020: maintenance on the 0.84 line — the fork spike runs in E021)
+## [0.1.10] — v0.1.010 (E022: the fork's first public release — DRAFT, ships on CTO consent)
 
-The last full release on the pi-0.84 dependency line. Thin by design — the
-harness's future is the omp fork (research/2026-08-22-fork-omp-evaluation.md,
-Program/Release_v0.1.011/E021).
+The omp-fork line's first release (the 0.84 thin cut that previously held this
+number is CANCELLED). Functionality from omp v18.0.11 underneath; Kaidera
+identity on top; fusion/switchyard/RLM as the differentiators. Upstream pinned
+at v18.0.11 for the epic.
 
-### Changes
+### Theme & brand
 
-- **`/shake thinking`** — strips reasoning blocks from context alongside tool
-  results (OMP v18 parity).
-- **Docs**: `docs/DOGFOOD.md` (the testing campaign protocol) +
-  `docs/DOGFOOD_FORK.md` (the fork drive + parity checklist); TEST_GUIDE and
-  CAPABILITIES refreshed; `docs/uat-plan.md` marked superseded.
-- **Dependency verdict recorded**: pi-18 is bun-runtime-only (eager
-  `bun:sqlite` chain) — the namespace migration is parked pending the fork
-  cutover; the spike carries the capabilities instead.
-- **Dogfood-campaign fixes** (whatever the campaign surfaced at cut time).
+- **Explicit theme contract (KOS session-theme contract):** `--theme <name|auto|dark|light>`
+  flag + `OPENKAI_THEME` env. Theme fixed at spawn — a pinned theme survives
+  terminal appearance flips (OSC 11/macOS). `auto` keeps OSC 11 + COLORFGBG
+  detection with the macOS fallback for Zellij.
+- **Kaidera first paint:** schema defaults are now `kaidera-dark`/`kaidera-light`
+  (fixes the titanium flash — the old defaults made the fork default unreachable).
+- **Splash every launch:** `startup.showSplash` defaults on; the splash mark is the
+  Kaidera sharp hexagon (no curves) and the wordmark reads OpenKai; `⬣` is the
+  status-line glyph on both Kaidera themes.
+- **Theme picker in settings** with live preview (adopted from upstream's
+  `previewTheme` machinery; restore on cancel).
+
+### Fusion-first defaults
+
+- Default pair suggestion is **scorer-driven, never hardcoded**: bandit posterior
+  on the operator-priority bucket → cross-provider diversity → self-pair advisory
+  (single-provider setups see the named compromise).
+- Provider→model pickers for BOTH slots via the bare `/fuse` menu; the selection
+  persists to `~/.openkai/config.json` (`fusion.pair`).
+- Pair provenance renders in the fusion verdict card; RLM verification children
+  show pending state (model + generation + elapsed) and failed children render
+  their error.
+
+### Trust & release machinery
+
+- **`openkai upgrade`** — channel-aware (brew/bun/npm defer to their package
+  manager; standalone uses the witnessed trust root): Ed25519 manifest
+  verification (fail-closed when a release key is pinned), SHA-256 artifact
+  witness, `.previous` sidecar, `--check` read-only, `--rollback` recovery
+  (reversible). Ported from the security-audited 0.84 line.
+- Security equivalence: the 0.84 certified classes (E002-F1 redaction coverage,
+  F4/F10 deny-floor containment, F7 sink redaction, procenv scrub) re-proven
+  against the fork's seams.
+
+### Fixes
+
+- Deny floor: system temp is exempt scratch (upstream's SDK suite sandboxes
+  sessions there and relocates them mid-test); the DENY_FLOOR secret patterns
+  still apply inside temp unconditionally.
+- Golden splash frames pin structure (ANSI-stripped) — styled bytes are
+  capability-dependent (truecolor vs 256-ramp) and broke CI determinism.
+- OpenKai builtin tools honour the `toolNames` scoping convention
+  (`generate_image`/`web_search` precedent) — fusion stays default-on for
+  normal launches; explicit tool sets stay honest.
 
 ### Governance
 
-CTO consent for v0.1.010 recorded per docs/RELEASE_SOP.md (per-version,
-per-session). The 0.84 line enters maintenance after this cut.
+- Renumbered by CTO 2026-09-01 (the fork's first release takes 0.1.10; the 0.84
+  thin cut is cancelled). Voice/PTT removed from OpenKai entirely (transferred
+  to kaidera-os, handoff `f5dc2930`). Ships ONLY on explicit CTO consent per
+  docs/RELEASE_SOP.md; adversarial passes (ren → K3 → qwen3.8) dispositioned
+  before publish.
 
 ## [0.1.9] — v0.1.009 (E019: consolidation & trust — the fixes 0.1.8 missed)
 
