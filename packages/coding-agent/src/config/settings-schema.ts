@@ -680,7 +680,7 @@ export const SETTINGS_SCHEMA = {
 	// Theme
 	"theme.dark": {
 		type: "string",
-		default: "titanium",
+		default: "kaidera-dark",
 		ui: {
 			tab: "appearance",
 			group: "Theme",
@@ -692,7 +692,7 @@ export const SETTINGS_SCHEMA = {
 
 	"theme.light": {
 		type: "string",
-		default: "light",
+		default: "kaidera-light",
 		ui: {
 			tab: "appearance",
 			group: "Theme",
@@ -2111,7 +2111,7 @@ export const SETTINGS_SCHEMA = {
 
 	"startup.showSplash": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
 			tab: "interaction",
 			group: "Startup & Updates",

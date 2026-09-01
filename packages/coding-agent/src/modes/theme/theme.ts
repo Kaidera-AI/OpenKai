@@ -46,6 +46,8 @@ function shouldUseMacOSAppearanceFallback(): boolean {
 }
 
 function detectTerminalBackground(): "dark" | "light" {
+	ensureExplicitTheme();
+	if (explicitTheme?.lock) return explicitTheme.lock;
 	// Tier 1: terminal-reported appearance from OSC 11 luminance.
 	if (!shouldUseMacOSAppearanceFallback() && terminalReportedAppearance) {
 		return terminalReportedAppearance;
@@ -70,8 +72,63 @@ function detectTerminalBackground(): "dark" | "light" {
 	return "dark";
 }
 
+/**
+ * OpenKai explicit theme contract (E022 Inc 01, KOS ask 6): a theme fixed at
+ * spawn by `--theme <value>` (flag wins) or `OPENKAI_THEME` (env fallback).
+ * Values: a concrete theme name (pinned — appearance changes never flip it),
+ * `dark`/`light` (lock that appearance mapping, skipping OSC 11/COLORFGBG
+ * detection), or `auto`/empty (standard detection). Session-scoped only —
+ * settings are never written.
+ */
+type ExplicitTheme = { pin?: string; lock?: "dark" | "light" };
+var explicitTheme: ExplicitTheme | undefined;
+var explicitThemeSource: "flag" | "env" | undefined;
+
+/** Parse one contract value; unknown names pin and validate at load time. */
+export function parseExplicitThemeValue(value: string): ExplicitTheme | undefined {
+	const trimmed = value.trim();
+	if (trimmed === "" || trimmed === "auto") return undefined;
+	if (trimmed === "dark" || trimmed === "light") return { lock: trimmed };
+	return { pin: trimmed };
+}
+
+/** Apply the contract from a parsed `--theme` flag value (highest precedence). */
+export function applyFlagThemeOverride(value: string | undefined): void {
+	if (value === undefined) return;
+	explicitTheme = parseExplicitThemeValue(value);
+	explicitThemeSource = "flag";
+}
+
+var envThemeResolved = false;
+function ensureExplicitTheme(): void {
+	if (envThemeResolved) return;
+	envThemeResolved = true;
+	if (explicitThemeSource !== "flag") {
+		const raw = Bun.env.OPENKAI_THEME;
+		explicitTheme = raw === undefined ? undefined : parseExplicitThemeValue(raw);
+		if (explicitTheme) explicitThemeSource = "env";
+	}
+}
+
+/** The active contract, if any (tests + diagnostics). */
+export function getExplicitThemeContract(): { pin?: string; lock?: "dark" | "light"; source?: string } | undefined {
+	ensureExplicitTheme();
+	return explicitTheme ? { ...explicitTheme, source: explicitThemeSource } : undefined;
+}
+
+/** Test seam: forget the contract, env resolution, and any reported appearance. */
+export function resetExplicitThemeForTest(): void {
+	explicitTheme = undefined;
+	explicitThemeSource = undefined;
+	envThemeResolved = false;
+	terminalReportedAppearance = undefined;
+	macOSReportedAppearance = undefined;
+}
+
 function getDefaultTheme(): string {
-	const bg = detectTerminalBackground();
+	ensureExplicitTheme();
+	if (explicitTheme?.pin) return explicitTheme.pin;
+	const bg = explicitTheme?.lock ?? detectTerminalBackground();
 	return bg === "light" ? autoLightTheme : autoDarkTheme;
 }
 
@@ -456,8 +513,12 @@ function applyResolvedAutoTheme(resolved: string, debugLabel: string, event: The
  */
 function reevaluateAutoTheme(debugLabel: string, event: ThemeChangeEvent = {}, appearance?: "dark" | "light"): void {
 	if (!autoDetectedTheme) return;
-	const resolved =
-		appearance === undefined ? getDefaultTheme() : appearance === "dark" ? autoDarkTheme : autoLightTheme;
+	// An explicitly pinned theme (--theme/OPENKAI_THEME) is fixed at spawn:
+	// appearance flips (OSC 11, macOS observer) never re-resolve it.
+	ensureExplicitTheme();
+	if (explicitTheme?.pin) return;
+	const bg = explicitTheme?.lock ?? appearance ?? detectTerminalBackground();
+	const resolved = bg === "light" ? autoLightTheme : autoDarkTheme;
 	applyResolvedAutoTheme(resolved, debugLabel, event);
 }
 

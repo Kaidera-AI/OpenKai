@@ -75,7 +75,7 @@ import {
 	stopPendingStartupComposer,
 	takeStartupComposerLease,
 } from "./modes/startup-composer";
-import { ensureTheme, initTheme, stopThemeWatcher } from "./modes/theme/theme";
+import { applyFlagThemeOverride, ensureTheme, initTheme, stopThemeWatcher } from "./modes/theme/theme";
 import type { SubmittedUserInput } from "./modes/types";
 import { createWarpEventBridgeExtension } from "./modes/warp-events";
 import { AgentLifecycleManager } from "./registry/agent-lifecycle";
@@ -1393,6 +1393,9 @@ export async function runRootCommand(
 	try {
 		// Non-prepaint commands still need a default theme; an existing Composer
 		// already initialized its cached theme synchronously for the first frame.
+		// OpenKai: the explicit theme contract (--theme > OPENKAI_THEME) must land
+		// before this first resolution so no wrong theme ever paints (E022 Inc 01).
+		applyFlagThemeOverride(parsed.theme);
 		await logger.time("initTheme:initial", ensureTheme);
 
 		const parsedArgs = parsed;

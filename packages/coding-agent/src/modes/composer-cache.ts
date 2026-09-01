@@ -6,7 +6,10 @@ import type { LspServerInfo, RecentSession } from "./components/welcome";
 import type { ComposerPreferences } from "./composer";
 import type { SymbolPreset } from "./theme/theme";
 
-const CACHE_VERSION = 1;
+// OpenKai fork (E022 Inc 01): v2 — invalidates caches written before the
+// Kaidera first-paint defaults, so no prepaint ever resurrects a pre-upgrade
+// theme name (the titanium flash) after the cutover.
+const CACHE_VERSION = 2;
 /** Theme inputs cached from the last resolved settings load for stable prepaint colors. */
 export interface ComposerThemePreferences {
 	readonly symbolPreset?: SymbolPreset;

@@ -1,6 +1,11 @@
 {
 	"$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/theme-schema.json",
 	"name": "kaidera-light",
+	"symbols": {
+		"overrides": {
+			"icon.omp": "⬣"
+		}
+	},
 	"vars": {
 		"teal": "#5a8080",
 		"blue": "#547da7",

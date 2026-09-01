@@ -58,6 +58,8 @@ export interface Args {
 	mode?: Mode;
 	noSession?: boolean;
 	sessionDir?: string;
+	/** OpenKai explicit theme contract: theme name, `dark`/`light`, or `auto` (E022 Inc 01). */
+	theme?: string;
 	providerSessionId?: string;
 	providerPromptCacheKey?: string;
 	fork?: string;

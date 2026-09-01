@@ -1,6 +1,11 @@
 {
 	"$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/theme-schema.json",
 	"name": "kaidera-dark",
+	"symbols": {
+		"overrides": {
+			"icon.omp": "⬣"
+		}
+	},
 	"vars": {
 		"cyan": "#0088fa",
 		"blue": "#178fb9",
