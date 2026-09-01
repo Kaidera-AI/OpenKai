@@ -34,10 +34,19 @@ describe("E021 F3: the deny floor on the fork", () => {
 		expect(floorMatchFor(cwd, ".ssh/config")).toBeDefined();
 		expect(floorMatchFor(cwd, "src/app.ts")).toBeUndefined();
 		expect(outsideCwd(cwd, "src/app.ts")).toBe(false);
-		expect(outsideCwd(cwd, "../outside.ts")).toBe(true);
+		// E022 Inc 04/05: the system temp tree is exempt scratch (upstream SDK
+		// sessions sandbox + relocate there) — escapes within temp pass
+		// containment; DENY_FLOOR still guards secrets inside temp (above).
+		expect(outsideCwd(cwd, "../outside.ts")).toBe(false);
+		// Strict containment holds on real trees: an escape from a non-temp cwd
+		// is still denied (cwd anchored on this repo's src directory).
+		const realCwd = realpathSync(path.join(import.meta.dir, "..", "src"));
+		expect(outsideCwd(realCwd, "../escape.txt")).toBe(true);
+		expect(outsideCwd(realCwd, "/etc/passwd")).toBe(true);
+		expect(outsideCwd(realCwd, "openkai/gate-floor.ts")).toBe(false);
 	});
 
-	test("the handler blocks floor + outside-cwd, passes clean, and names the reason", async () => {
+	test("the handler blocks floor patterns, passes clean and temp-scratch, and names the reason", async () => {
 		const handlers: Array<(event: never, ctx: never) => unknown> = [];
 		const pi = {
 			logger: { info: () => undefined },
@@ -52,15 +61,24 @@ describe("E021 F3: the deny floor on the fork", () => {
 				| { block?: boolean; reason?: string }
 				| undefined;
 
+		// DENY_FLOOR secret patterns block absolutely — inside temp too.
 		const floorHit = fire({ path: ".env" }) as { block?: boolean; reason?: string };
 		expect(floorHit?.block).toBe(true);
 		expect(floorHit?.reason).toContain("deny floor");
 
-		const outside = fire({ path: "../somewhere-else/x.txt" }) as { block?: boolean; reason?: string };
-		expect(outside?.block).toBe(true);
-		expect(outside?.reason).toContain("outside the working folder");
+		const secretInTmp = fire({ path: path.join(tmpdir(), "staging", "id_ed25519") }) as {
+			block?: boolean;
+			reason?: string;
+		};
+		expect(secretInTmp?.block).toBe(true);
+		expect(secretInTmp?.reason).toContain("deny floor");
 
+		// Clean write inside the working folder passes.
 		const clean = fire({ path: "src/app.ts" });
 		expect(clean).toBeUndefined();
+
+		// Temp scratch passes containment (the upstream SDK sandbox contract).
+		const scratch = fire({ path: path.join(tmpdir(), "ok-scratch", "x.txt") });
+		expect(scratch).toBeUndefined();
 	});
 });

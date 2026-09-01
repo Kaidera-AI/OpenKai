@@ -24,3 +24,26 @@ runs:
            sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep imagemagick
            sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
            sudo ln -sf /usr/bin/convert /usr/local/bin/magick
+      - name: Provide a virtual display (visible browser tests)
+        shell: bash
+        run: |
+           # Headful Chromium tests (browser-tab-worker-startup's visible-tab
+           # suite) need an X display. The preloaded omp-kata image ships one
+           # (DISPLAY set); stock GitHub runners do not — give them Xvfb so
+           # the suite runs for real instead of dying at launch.
+           if [ -n "${DISPLAY:-}" ]; then
+             echo "DISPLAY already set ($DISPLAY); skipping Xvfb."
+             exit 0
+           fi
+           if ! command -v Xvfb >/dev/null 2>&1; then
+             if ! command -v apt-get >/dev/null 2>&1; then
+               echo "::warning::No Xvfb and no apt-get — visible browser tests will be skipped."
+               exit 0
+             fi
+             sudo apt-get update
+             sudo apt-get install -y xvfb
+           fi
+           sudo Xvfb :99 -screen 0 1920x1080x24 -ac >/dev/null 2>&1 &
+           sleep 2
+           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+           echo "Started Xvfb on :99"

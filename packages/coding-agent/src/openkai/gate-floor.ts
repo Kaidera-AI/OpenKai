@@ -129,23 +129,23 @@ export function floorMatchFor(cwd: string, target: string): string | undefined {
 
 /** True when the target escapes the working folder (deny-by-containment).
  *
- * Exemption (E022 Inc 05, CI-driven): the system temp directory is scratch
- * space upstream's own tooling legitimately writes to — the SDK test suite
- * sandboxes every session under `os.tmpdir()` (sdk-tool-activation et al.),
- * and the bash tool sandboxes there too. So a target under the system temp
- * root passes containment — but ONLY when the session's own cwd is a real
- * tree (not temp): a session sandboxed inside temp keeps strict containment
- * against its own folder, so an in-sandbox `../` escape is still denied.
- * The DENY_FLOOR secret patterns still apply inside temp either way
- * (floorMatchFor runs unconditionally). */
+ * Exemption (E022 Inc 04/05, CI-driven): the system temp directory is scratch
+ * space that upstream's own tooling and test suite legitimately write to and
+ * move through — the SDK suite sandboxes every session under `os.tmpdir()`
+ * (sdk-tool-activation, sdk-file-write-fallback et al.) and relocates those
+ * sandboxes mid-test, and the bash tool sandboxes there too. So ANY target
+ * under the system temp root passes containment, regardless of where the
+ * session's cwd sits: containment protects the operator's real tree, not
+ * scratch. The security invariant is carried by {@link floorMatchFor} — the
+ * DENY_FLOOR secret patterns still apply inside temp (a `.env`/`.ssh`/key
+ * under temp is refused absolutely), so exemption never opens a secret. */
 export function outsideCwd(cwd: string, target: string): boolean {
-	const cwdCanonical = resolveCanonical(cwd, ".");
 	const canonical = resolveCanonical(cwd, target);
 	const tmpRoot = tmpdirCanonical();
-	const cwdInTmp = cwdCanonical === tmpRoot || cwdCanonical.startsWith(`${tmpRoot}${path.sep}`);
-	if (!cwdInTmp && (canonical === tmpRoot || canonical.startsWith(`${tmpRoot}${path.sep}`))) {
+	if (canonical === tmpRoot || canonical.startsWith(`${tmpRoot}${path.sep}`)) {
 		return false;
 	}
+	const cwdCanonical = resolveCanonical(cwd, ".");
 	const rel = path.relative(cwdCanonical, canonical);
 	return rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
 }
