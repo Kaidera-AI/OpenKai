@@ -73,6 +73,17 @@ at v18.0.11 for the epic.
   (engine 18.0.11 underneath); the welcome box and splash name the product;
   `openkai upgrade` compares in the 0.1.x namespace so 0.1.9 installs
   self-update to 0.1.10.
+- **Release key pinned:** compiled binaries carry the OpenKai release public
+  key (same keypair as the 0.1.9 line), so manifest signatures verify
+  fail-closed on real installs; the release job now generates and uploads
+  `latest.json` (version cross-checked against the tag, SHA-256 per artifact,
+  signed when the release key secret is present).
+- **Fusion telemetry live:** the redaction boundary is the only writer for
+  `.openkai/fusion/runs.jsonl` and the managed-mode Cortex artifact — the
+  pair-suggestion bandit now learns from real runs, and nothing leaves the
+  process unredacted.
+- **Startup splash order:** the splash plays before the composer goes live, so
+  nothing is typed blind beneath it; the skip key still works.
 
 ### Governance
 

@@ -12,7 +12,7 @@ retire is permanent and visible in the registry)
 | 2 | `fuse` CLI (headless) | port / retire | **retire** — the TUI `/fuse` covers interactive use; headless fusion rides the fusion tool via print mode |
 | 3 | `tail -f` activity feed | port / retire | **retire** — telemetry rides Cortex managed mode on the fork |
 | 4 | Ctrl+S prompt stash | port / retire | **port** — registry ✅ row; upstream's editor grammar has no stash |
-| 5 | `openkai provider` write path | port (required for KOS shared-config) | **port** — the KOS canonical-config contract depends on it (Inc 05 reply named it) |
+| 6 | npm/bun channel namespace | (a) wrapper `@kaidera/openkai` package published from the fork CI (0.84-line layout: bin shim + optional native deps) / (b) retire npm+bun for the fork line, standalone+install.sh primary, brew rebranded | **(a)** — 0.1.9 users' `npm i -g @kaidera/openkai` upgrade path must not die; the fork's inherited `release_npm` job publishes omp-named packages into the upstream namespace, which the Kaidera account cannot publish (403) — run the fork release with `skip_npm` until the wrapper exists. `openkai upgrade`'s npm/bun deferral messages already name `@kaidera/openkai`. |
 
 ## Operator action (blocked item)
 
