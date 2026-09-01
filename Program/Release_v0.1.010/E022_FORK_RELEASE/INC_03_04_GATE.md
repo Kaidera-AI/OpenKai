@@ -40,6 +40,16 @@
 PR #3 run 1: surfaced 3 fixable integration defects (all fixed in `6dd1f30b6e`):
 1. deny floor blocked upstream SDK sandbox tests → system-temp exemption
    (strict containment preserved for sessions sandboxed inside temp; DENY_FLOOR
-   secret patterns still apply in temp — equivalence suite pins both).
+   secret patterns still apply in temp — equivalence suite pins both). Later
+   refined: the temp tree is exempt scratch UNCONDITIONALLY — the upstream SDK
+   suite relocates sandboxes mid-test (sdk-file-write-fallback writes to a temp
+   sibling after moving cwd inside temp); floor gate realigned.
 2. golden frames capability-dependent → ANSI-stripped structure gate.
 3. biome debt in the layer → repo-wide `check:tools` green.
+4. openkai builtin tools polluted exact tool-set contract tests → scoped to the
+   `toolNames` convention (generate_image/web_search precedent); 3 upstream SDK
+   failures closed, fusion stays default-on for normal launches (`toolNames`
+   undefined).
+5. headful Chromium suite needs a display the stock PR runner lacks → Xvfb step
+   added to `setup-system-deps` (self-heals stock runners; omp-kata image
+   already ships a display). CI-infra fix, no test gutted.
