@@ -21,29 +21,33 @@ runs:
              exit 0
            fi
            sudo apt-get update
-           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep imagemagick
+           # The canvas/native stack the workspace tests need, plus headful
+           # Chromium's runtime deps (puppeteer's Ubuntu set): the headless
+           # suites run without the latter, but the visible-tab suite
+           # (browser-tab-worker-startup) needs the full X11/GTK stack on a
+           # stock runner — the preloaded omp-kata image ships it all.
+           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep imagemagick \
+              libasound2 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 \
+              libgtk-3-0 libnspr4 libnss3 libxcomposite1 libxdamage1 libxfixes3 \
+              libxkbcommon0 libxrandr2 libxshmfence1
            sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
            sudo ln -sf /usr/bin/convert /usr/local/bin/magick
-      - name: Provide a virtual display (visible browser tests)
+      - name: Ensure a virtual display is available (visible browser tests)
         shell: bash
         run: |
            # Headful Chromium tests (browser-tab-worker-startup's visible-tab
            # suite) need an X display. The preloaded omp-kata image ships one
-           # (DISPLAY set); stock GitHub runners do not — give them Xvfb so
-           # the suite runs for real instead of dying at launch.
-           if [ -n "${DISPLAY:-}" ]; then
-             echo "DISPLAY already set ($DISPLAY); skipping Xvfb."
+           # (DISPLAY set); stock GitHub runners do not — give them Xvfb so the
+           # test step can wrap its command in xvfb-run. Install only: a daemon
+           # backgrounded here dies with this step's shell, so the consuming
+           # step owns the lifetime via xvfb-run.
+           if [ -n "${DISPLAY:-}" ] || command -v Xvfb >/dev/null 2>&1; then
+             echo "Virtual display available (DISPLAY=${DISPLAY:-unset}, Xvfb=$(command -v Xvfb || echo absent))."
              exit 0
            fi
-           if ! command -v Xvfb >/dev/null 2>&1; then
-             if ! command -v apt-get >/dev/null 2>&1; then
-               echo "::warning::No Xvfb and no apt-get — visible browser tests will be skipped."
-               exit 0
-             fi
-             sudo apt-get update
-             sudo apt-get install -y xvfb
+           if ! command -v apt-get >/dev/null 2>&1; then
+             echo "::warning::No Xvfb and no apt-get — visible browser tests will fail on this host."
+             exit 0
            fi
-           sudo Xvfb :99 -screen 0 1920x1080x24 -ac >/dev/null 2>&1 &
-           sleep 2
-           echo "DISPLAY=:99" >> "$GITHUB_ENV"
-           echo "Started Xvfb on :99"
+           sudo apt-get update
+           sudo apt-get install -y xvfb
