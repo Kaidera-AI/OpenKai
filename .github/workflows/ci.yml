@@ -173,7 +173,11 @@ jobs:
    rust_validate:
       name: Validate Rust workspace (bazel)
       if: github.event_name != 'pull_request'
-      runs-on: ${{ vars.OMP_HEAVY_RUNNER || 'omp-kata' }}
+      # E022 ship: the pi-shell kill-jobspec test (upstream, unmodified by the
+      # fork diff) times out on stock ubuntu runners (upstream's own stock CI
+      # is red on it) but passes on macOS. Kaidera pins this job to macos-14;
+      # upstream keeps omp-kata.
+      runs-on: ${{ vars.OMP_RUST_RUNNER || (vars.OMP_HEAVY_RUNNER || 'omp-kata') }}
       steps:
          - uses: actions/checkout@v4
          - uses: ./.github/actions/bun-install
