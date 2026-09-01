@@ -78,6 +78,7 @@ import {
 import { applyFlagThemeOverride, ensureTheme, initTheme, stopThemeWatcher } from "./modes/theme/theme";
 import type { SubmittedUserInput } from "./modes/types";
 import { createWarpEventBridgeExtension } from "./modes/warp-events";
+import { PRODUCT_VERSION } from "./openkai/brand";
 import { AgentLifecycleManager } from "./registry/agent-lifecycle";
 import {
 	type CreateAgentSessionOptions,
@@ -1410,7 +1411,9 @@ export async function runRootCommand(
 		const notifs: (InteractiveModeNotify | null)[] = [];
 
 		if (parsedArgs.version) {
-			writeStartupNotice(parsedArgs, `${VERSION}\n`);
+			// E022 Inc 06: name the product and the engine underneath — the
+			// 0.1.x line is the OpenKai product; omp's VERSION is the engine.
+			writeStartupNotice(parsedArgs, `openkai ${PRODUCT_VERSION} (engine omp/${VERSION})\n`);
 			process.exit(0);
 		}
 

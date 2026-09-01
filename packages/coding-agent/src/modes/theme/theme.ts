@@ -84,9 +84,13 @@ type ExplicitTheme = { pin?: string; lock?: "dark" | "light" };
 var explicitTheme: ExplicitTheme | undefined;
 var explicitThemeSource: "flag" | "env" | undefined;
 
-/** Parse one contract value; unknown names pin and validate at load time. */
+/** Parse one contract value; unknown names pin and validate at load time.
+ * REN-06 (E022 Inc 06 adversarial): the reserved vocabulary is matched
+ * case-folded — `--theme Dark` / OPENKAI_THEME=AUTO must not parse as a name
+ * pin that fails to load and suppresses detection forever. Theme names are
+ * lowercase by convention, so folding the whole value is safe. */
 export function parseExplicitThemeValue(value: string): ExplicitTheme | undefined {
-	const trimmed = value.trim();
+	const trimmed = value.trim().toLowerCase();
 	if (trimmed === "" || trimmed === "auto") return undefined;
 	if (trimmed === "dark" || trimmed === "light") return { lock: trimmed };
 	return { pin: trimmed };

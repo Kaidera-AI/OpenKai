@@ -142,12 +142,67 @@ export function floorMatchFor(cwd: string, target: string): string | undefined {
 export function outsideCwd(cwd: string, target: string): boolean {
 	const canonical = resolveCanonical(cwd, target);
 	const tmpRoot = tmpdirCanonical();
-	if (canonical === tmpRoot || canonical.startsWith(`${tmpRoot}${path.sep}`)) {
+	if (tmpExemptionApplies() && (canonical === tmpRoot || canonical.startsWith(`${tmpRoot}${path.sep}`))) {
 		return false;
 	}
 	const cwdCanonical = resolveCanonical(cwd, ".");
 	const rel = path.relative(cwdCanonical, canonical);
 	return rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+}
+
+/** REN-04 (E022 Inc 06 adversarial): os.tmpdir() is env-controlled
+ * (TMPDIR/TMP/TEMP). A broad value ($HOME, $PWD, the workspace root) would
+ * silently disable deny-by-containment for the whole session. The exemption
+ * therefore applies only when the resolved temp root is genuine scratch:
+ * never the operator's home (or an ancestor of it), and only a platform
+ * temp root. Sessions sandboxed UNDER the real temp (the upstream SDK
+ * pattern) keep the exemption — their tmpRoot is the platform temp. */
+function tmpExemptionApplies(): boolean {
+	const tmpRoot = tmpdirCanonical();
+	const home = homeCanonical();
+	if (tmpRoot === home || home.startsWith(`${tmpRoot}${path.sep}`)) return false;
+	return isPlatformTempRoot(tmpRoot);
+}
+
+let homeCache: string | undefined;
+function homeCanonical(): string {
+	if (homeCache === undefined) {
+		try {
+			homeCache = fs.realpathSync(os.homedir());
+		} catch {
+			homeCache = os.homedir();
+		}
+	}
+	return homeCache;
+}
+
+/** Platform temp roots that may act as exempt scratch. */
+function isPlatformTempRoot(root: string): boolean {
+	switch (process.platform) {
+		case "darwin":
+			return (
+				root === "/tmp" ||
+				root === "/private/tmp" ||
+				root === "/var/tmp" ||
+				root.startsWith("/var/folders/") ||
+				root.startsWith("/private/var/folders/")
+			);
+		case "linux":
+			return (
+				root === "/tmp" ||
+				root.startsWith("/tmp/") ||
+				root === "/var/tmp" ||
+				root.startsWith("/var/tmp/") ||
+				root.startsWith("/dev/shm/") ||
+				root.startsWith("/run/user/")
+			);
+		case "win32": {
+			const lower = root.toLowerCase();
+			return lower.includes("\\temp") || lower.includes("\\tmp");
+		}
+		default:
+			return root === "/tmp" || root.startsWith("/tmp/");
+	}
 }
 
 let tmpdirCache: string | undefined;
@@ -161,4 +216,9 @@ function tmpdirCanonical(): string {
 		}
 	}
 	return tmpdirCache;
+}
+
+/** Test hook: drop the cached temp root after a TMPDIR mutation. */
+export function resetTmpdirCacheForTest(): void {
+	tmpdirCache = undefined;
 }

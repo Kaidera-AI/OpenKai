@@ -42,6 +42,11 @@ export async function compileCodingAgent(options: CodingAgentCompileOptions): Pr
 				"process.env.PI_COMPILED": JSON.stringify("true"),
 				"process.env.PI_TINY_TRANSFORMERS_VERSION": JSON.stringify(options.transformersVersion),
 				"process.env.PI_DOCS_EMBED": JSON.stringify((await buildDocsIndexPayload()).payload),
+				// OpenKai fork (E022 Inc 06, REN-01): stamp the standalone channel
+				// so the witnessed upgrader (openkai/upgrade-trust) is reachable in
+				// shipped binaries; without it BUILD_CHANNEL reads "npm" and every
+				// standalone install defers to a package manager that does not own it.
+				OPENKAI_BUILD_CHANNEL: JSON.stringify("standalone"),
 			},
 			minify: {
 				identifiers: options.minifyIdentifiers ?? false,

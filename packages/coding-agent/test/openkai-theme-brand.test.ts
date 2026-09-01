@@ -170,3 +170,11 @@ describe("E022 Inc 01: golden first frames", () => {
 		}
 	});
 });
+
+describe("E022 Inc 06 (REN-06): the contract vocabulary is case-folded", () => {
+	test("Dark/Light/AUTO parse as reserved words, not name pins", () => {
+		expect(parseExplicitThemeValue("Dark")).toEqual({ lock: "dark" });
+		expect(parseExplicitThemeValue("LIGHT")).toEqual({ lock: "light" });
+		expect(parseExplicitThemeValue("AUTO")).toBeUndefined();
+	});
+});

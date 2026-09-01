@@ -271,3 +271,19 @@ describe("E022 Inc 04: witnessed upgrade + reversible rollback", () => {
 		expect(result.alreadyUpToDate).toBe(true);
 	});
 });
+
+describe("E022 Inc 06 (REN-03/05): target + prerelease hardening", () => {
+	test("detectTarget emits the musl id when the binary is musl-linked", () => {
+		expect(detectTarget("linux", "x64", true)).toBe("linux-musl-x64");
+		expect(detectTarget("linux", "arm64", true)).toBe("linux-musl-arm64");
+		expect(detectTarget("linux", "x64", false)).toBe("linux-x64");
+		expect(detectTarget("darwin", "arm64", true)).toBe("darwin-arm64"); // musl never on darwin
+	});
+
+	test("a prerelease in the manifest never reads as newer than the same base", () => {
+		expect(compareVersions("0.1.10", "0.1.10-rc.1")).toBe(1);
+		expect(compareVersions("0.1.10-rc.1", "0.1.10")).toBe(-1);
+		expect(compareVersions("0.1.10-rc.1", "0.1.10-rc.1")).toBe(0);
+		expect(compareVersions("0.1.10-rc.2", "0.1.10-rc.10")).toBe(-1);
+	});
+});

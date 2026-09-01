@@ -12,7 +12,7 @@ import type { ExtensionAPI } from "../src/extensibility/extensions/types.js";
 await import("../src/discovery/index.js");
 const { default: openkaiFloor } = await import("../src/openkai/floor-extension.js");
 
-import { floorMatchFor, outsideCwd } from "../src/openkai/gate-floor.js";
+import { floorMatchFor, outsideCwd, resetTmpdirCacheForTest } from "../src/openkai/gate-floor.js";
 
 describe("E021 F3: the deny floor on the fork", () => {
 	test("the factory wires its handlers when attached", async () => {
@@ -80,5 +80,30 @@ describe("E021 F3: the deny floor on the fork", () => {
 		// Temp scratch passes containment (the upstream SDK sandbox contract).
 		const scratch = fire({ path: path.join(tmpdir(), "ok-scratch", "x.txt") });
 		expect(scratch).toBeUndefined();
+	});
+});
+
+describe("E022 Inc 06 (REN-04): the temp exemption is bounded", () => {
+	test("a broad TMPDIR (home as temp root) disables the exemption", () => {
+		const realCwd = realpathSync(path.join(import.meta.dir, "..", "src"));
+		const home = realpathSync(process.env.HOME ?? "");
+		const saved = process.env.TMPDIR;
+		process.env.TMPDIR = home;
+		resetTmpdirCacheForTest();
+		try {
+			// Containment is back ON: a target outside the cwd under the home
+			// is denied again — the exemption must not swallow the real tree.
+			expect(outsideCwd(realCwd, path.join(home, "Documents", "secret-plans.md"))).toBe(true);
+		} finally {
+			if (saved === undefined) delete process.env.TMPDIR;
+			else process.env.TMPDIR = saved;
+			resetTmpdirCacheForTest();
+		}
+	});
+
+	test("the platform temp root keeps the exemption (SDK sandbox contract)", () => {
+		const realCwd = realpathSync(path.join(import.meta.dir, "..", "src"));
+		resetTmpdirCacheForTest();
+		expect(outsideCwd(realCwd, path.join(tmpdir(), "sdk-sandbox", "x.txt"))).toBe(false);
 	});
 });

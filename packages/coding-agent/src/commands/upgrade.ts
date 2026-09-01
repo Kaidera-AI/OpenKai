@@ -17,8 +17,8 @@
 import * as fsp from "node:fs/promises";
 
 import { Command, Flags } from "@oh-my-pi/pi-utils/cli";
-import { VERSION } from "@oh-my-pi/pi-utils/dirs";
 import { upgradeHelp as commandHelp } from "../cli/command-help";
+import { PRODUCT_VERSION } from "../openkai/brand";
 import {
 	BUILD_CHANNEL,
 	BUILD_RELEASE_KEY,
@@ -93,8 +93,20 @@ export default class Upgrade extends Command {
 			say("openkai is npm-managed — upgrade with: npm install -g @kaidera/openkai");
 			return;
 		}
+		// REN-02 (E022 Inc 06 adversarial): the witnessed swap renames the
+		// downloaded artifact over process.execPath. Only a compiled OpenKai
+		// binary may be the swap target — under a script launch (node/bun
+		// running the CLI) execPath is the runtime itself, and the env channel
+		// override would clobber it. The compile step stamps PI_COMPILED
+		// (define), so its absence means "not a standalone binary" regardless
+		// of the env override.
+		if (process.env.PI_COMPILED !== "true") {
+			say(
+				"openkai upgrade (standalone) needs the compiled binary; this install is package-managed — use its package manager.",
+			);
+			return;
+		}
 
-		// Standalone: the witnessed trust root.
 		const releaseKey = BUILD_RELEASE_KEY ?? Bun.env[RELEASE_KEY_ENV];
 		if (releaseKey === undefined) {
 			say("warning: no release key pinned — manifest signatures are NOT verified (SHA-256 witness still gates).");
@@ -102,36 +114,42 @@ export default class Upgrade extends Command {
 		const upgrader = new Upgrader({
 			manifestUrl: Bun.env[MANIFEST_ENV] ?? DEFAULT_MANIFEST_URL,
 			currentBinary: process.execPath,
-			currentVersion: VERSION,
+			currentVersion: PRODUCT_VERSION,
 			target: detectTarget(),
 			autoUpdateEnabled: resolveAutoUpdateEnabled(Bun.env[KILL_SWITCH_ENV]),
 			...(releaseKey !== undefined ? { releasePublicKey: releaseKey } : {}),
 			deps: defaultDeps,
 		});
 
-		if (flags.rollback) {
-			const result = await upgrader.rollback();
-			say(`rolled back: ${result.from} → ${result.to} (${result.previousBinary} is now the rollback target)`);
-			return;
-		}
+		try {
+			if (flags.rollback) {
+				const result = await upgrader.rollback();
+				say(`rolled back: ${result.from} → ${result.to} (${result.previousBinary} is now the rollback target)`);
+				return;
+			}
 
-		if (flags.check) {
-			const result = await upgrader.check();
+			if (flags.check) {
+				const result = await upgrader.check();
+				say(
+					result.updateAvailable
+						? `update available: ${PRODUCT_VERSION} → ${result.latest}`
+						: `already up to date (${result.latest})`,
+				);
+				return;
+			}
+
+			const result = await upgrader.upgrade();
+			if (result.alreadyUpToDate) {
+				say(`already up to date (${result.to})`);
+				return;
+			}
 			say(
-				result.updateAvailable
-					? `update available: ${VERSION} → ${result.latest}`
-					: `already up to date (${result.latest})`,
+				`upgraded: ${result.from} → ${result.to} (previous kept at ${result.previousBinary}; rollback: openkai upgrade --rollback)`,
 			);
-			return;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			say(`error: ${message}`);
+			process.exitCode = 1;
 		}
-
-		const result = await upgrader.upgrade();
-		if (result.alreadyUpToDate) {
-			say(`already up to date (${result.to})`);
-			return;
-		}
-		say(
-			`upgraded: ${result.from} → ${result.to} (previous kept at ${result.previousBinary}; rollback: openkai upgrade --rollback)`,
-		);
 	}
 }

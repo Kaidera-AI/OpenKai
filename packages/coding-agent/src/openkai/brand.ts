@@ -32,3 +32,19 @@ export const OPENKAI_WORDMARK = "O p e n K a i";
 
 /** Provenance line shown under the wordmark where space allows. */
 export const BRAND_TAGLINE = "by Kaidera";
+
+/**
+ * The OpenKai product version (fork line). THIS IS THE LOCKSTEP STAMP for the
+ * fork: bump it here, in the OpenKai programme repo's CHANGELOG ([x.y.z]
+ * heading), and in the release tag (v0.1.0NN) together at cut time. omp's own
+ * `VERSION` (18.x) is the engine version underneath; surfaces that name the
+ * product (welcome title, `--version`, the witnessed upgrade's currentVersion,
+ * the splash) read THIS constant, so the 0.1.x manifest namespace and the
+ * engine namespace never mix in a comparison.
+ */
+export const PRODUCT_VERSION = "0.1.10";
+
+/** The product's command name for user-facing help/version surfaces. The
+ * process name and the user-data dir (~/.omp) stay omp — renaming those is a
+ * data-migration decision, not a display one. */
+export const PRODUCT_BIN = "openkai";

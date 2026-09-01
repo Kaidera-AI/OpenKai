@@ -7,9 +7,8 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@oh-my-pi/pi-tui";
-import { APP_NAME } from "@oh-my-pi/pi-utils";
 import { theme } from "../../modes/theme/theme";
-import { KAIDERA_MARK } from "../../openkai/brand";
+import { KAIDERA_MARK, PRODUCT_VERSION } from "../../openkai/brand";
 import tipsText from "./tips.txt" with { type: "text" };
 
 /** Tips embedded at build time, one per line; blanks dropped. */
@@ -383,8 +382,10 @@ export class WelcomeComponent implements Component {
 
 		const lines: string[] = [];
 
-		// Top border with embedded title
-		const title = ` ${APP_NAME} v${this.version} `;
+		// Top border with embedded title — OpenKai fork (E022 Inc 06): the box
+		// names the PRODUCT (the fork's lockstep stamp), with the engine
+		// version (omp's VERSION) as provenance, never the other way round.
+		const title = ` OpenKai v${PRODUCT_VERSION} · engine ${this.version} `;
 		const titlePrefixRaw = hChar.repeat(3);
 		const titleStyled = theme.fg("dim", titlePrefixRaw) + theme.fg("muted", title);
 		const titleVisLen = visibleWidth(titlePrefixRaw) + visibleWidth(title);

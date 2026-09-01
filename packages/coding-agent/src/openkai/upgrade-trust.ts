@@ -19,6 +19,7 @@
  */
 
 import { createHash, createPublicKey, sign, verify } from "node:crypto";
+import * as fs from "node:fs";
 
 // ─── Channel stamp + detection ────────────────────────────────────────────────
 
@@ -74,14 +75,57 @@ export function resolveAutoUpdateEnabled(envValue: string | undefined): boolean 
 	return !["0", "false", "no", "off"].includes(envValue.trim().toLowerCase());
 }
 
-/** Detect the current platform's release target (matches build-binaries). */
-export function detectTarget(platform: string = process.platform, arch: string = process.arch): string {
+/** True when the running Linux binary is linked against musl (the dynamic
+ * loader's path appears in /proc/self/maps as ld-musl-*). glibc installs show
+ * ld-linux-* instead. Non-Linux platforms are never musl. REN-03 (E022 Inc 06
+ * adversarial): without this, a musl install resolves "linux-x64", matches the
+ * glibc artifact in the manifest, and the witnessed swap installs a binary
+ * that cannot exec. */
+export function isMuslLinux(): boolean {
+	if (process.platform !== "linux") return false;
+	try {
+		const maps = fs.readFileSync("/proc/self/maps", "utf8");
+		return /ld-musl-/.test(maps);
+	} catch {
+		return false; // no procfs visibility → assume glibc (the common case)
+	}
+}
+
+/** Detect the current platform's release target (matches build-binaries).
+ * Linux emits the musl target id when the running binary is musl-linked, so
+ * musl installs never upgrade onto a glibc artifact (REN-03). */
+export function detectTarget(
+	platform: string = process.platform,
+	arch: string = process.arch,
+	musl: boolean = isMuslLinux(),
+): string {
 	const archName = arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : arch;
+	if (platform === "linux" && musl) return `linux-musl-${archName}`;
 	return `${platform}-${archName}`;
 }
 
-/** Semver-ish comparison: returns -1, 0, or 1. Tolerant of non-numeric parts. */
+/** Semver-ish comparison: returns -1, 0, or 1. Tolerant of non-numeric parts.
+ * A prerelease suffix ("-rc.1", "-beta.2") sorts BELOW the same base version
+ * (semver precedence), so a stable install never "upgrades" onto a prerelease
+ * the manifest might carry (REN-05). */
 export function compareVersions(a: string, b: string): number {
+	const [aBase, aPre] = splitPrerelease(a);
+	const [bBase, bPre] = splitPrerelease(b);
+	const base = compareSegments(aBase, bBase);
+	if (base !== 0) return base;
+	if (aPre === undefined && bPre === undefined) return 0;
+	if (aPre === undefined) return 1; // release > prerelease
+	if (bPre === undefined) return -1;
+	return compareSegments(aPre, bPre);
+}
+
+function splitPrerelease(version: string): [string, string | undefined] {
+	const at = version.indexOf("-");
+	if (at === -1) return [version, undefined];
+	return [version.slice(0, at), version.slice(at + 1)];
+}
+
+function compareSegments(a: string, b: string): number {
 	const pa = a.split(".");
 	const pb = b.split(".");
 	const len = Math.max(pa.length, pb.length);
