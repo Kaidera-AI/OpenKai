@@ -29,11 +29,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { PRODUCT_VERSION } from "../src/openkai/brand";
-import {
-	canonicalManifestBytes,
-	type ReleaseManifest,
-	signManifest,
-} from "../src/openkai/upgrade-trust";
+import { canonicalManifestBytes, type ReleaseManifest, signManifest } from "../src/openkai/upgrade-trust";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../../..");
 const BIN_DIR = path.join(REPO_ROOT, "packages", "coding-agent", "binaries");
@@ -90,7 +86,9 @@ function main(): void {
 	if (pem) {
 		manifest.signature = signManifest(manifest, pem);
 	} else {
-		process.stderr.write("warning: OPENKAI_RELEASE_PRIVATE_KEY unset — shipping an UNSIGNED manifest (pinned builds will refuse it).\n");
+		process.stderr.write(
+			"warning: OPENKAI_RELEASE_PRIVATE_KEY unset — shipping an UNSIGNED manifest (pinned builds will refuse it).\n",
+		);
 	}
 
 	fs.writeFileSync(outPath, `${JSON.stringify(manifest, null, 2)}\n`);

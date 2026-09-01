@@ -47,6 +47,12 @@ export async function compileCodingAgent(options: CodingAgentCompileOptions): Pr
 				// shipped binaries; without it BUILD_CHANNEL reads "npm" and every
 				// standalone install defers to a package manager that does not own it.
 				OPENKAI_BUILD_CHANNEL: JSON.stringify("standalone"),
+				// OpenKai release signing public key (same keypair as the 0.84
+				// line, generated 2026-08-19, custody CTO; the workstation's
+				// ~/.openkai/release-private.pem derives this SPKI — verified
+				// 2026-09-01). Pinned builds verify manifest signatures
+				// fail-closed; the private key never enters the tree (QW-03).
+				OPENKAI_RELEASE_KEY: JSON.stringify("MCowBQYDK2VwAyEA1c1pWQeIn8V1uihqu28f0680kt8jUDXddOE35VrW67U="),
 			},
 			minify: {
 				identifiers: options.minifyIdentifiers ?? false,

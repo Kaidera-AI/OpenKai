@@ -15,7 +15,16 @@ import { Text } from "@oh-my-pi/pi-tui";
 
 import type { CustomTool } from "../extensibility/custom-tools/types.js";
 import { readOpenkaiConfig } from "./config-io.js";
-import { defaultFusionLogPath, type FuseResult, FusionBandit, fuse, readFusionRuns } from "./fusion/index.js";
+import { cortexClientForSession, cortexManaged } from "./cortex-memory.js";
+import {
+	defaultFusionLogPath,
+	exportFusionRunArtifact,
+	type FuseResult,
+	FusionBandit,
+	fuse,
+	readFusionRuns,
+	recordFusionRun,
+} from "./fusion/index.js";
 import type { ShiftPosture } from "./orchestrate.js";
 import { candidateKey, type PairCandidate, postureBucket, suggestPair } from "./pairing.js";
 import { RlmRegistry } from "./rlm.js";
@@ -175,6 +184,17 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
 				architectModel: architect,
 				builderModel: builder,
 				gate: params.gate === true,
+			});
+			// QW-01 (E022 Inc 06 adversarial): the redaction boundary is the ONLY
+			// writer for fusion telemetry — the bandit's evidence log and the
+			// managed-mode Cortex artifact both ride it, so nothing leaves the
+			// process unredacted and the Inc 03 scorer-source branch has live
+			// evidence. Best-effort by contract; never fails the run.
+			void recordFusionRun(result.record).then(() => {
+				if (cortexManaged()) {
+					const client = cortexClientForSession();
+					if (client) void exportFusionRunArtifact(client, result.record, "openkai");
+				}
 			});
 			const details: FusionDetails = {
 				task: params.task,

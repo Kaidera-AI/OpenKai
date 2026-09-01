@@ -513,7 +513,6 @@ async function runInteractiveMode(
 			startupLease?.composer,
 			subagentEventBus,
 		);
-		startupLease?.adopt();
 	} catch (error) {
 		startupLease?.dispose();
 		throw error;
@@ -543,6 +542,22 @@ async function runInteractiveMode(
 			: [];
 		playStartupSplash = showStartupSplash && setupScenes.length === 0;
 
+		// E022 Inc 06 (K3-03): when the prepaint composer is live, the splash
+		// runs BEFORE adopt/init — its input is still deferred, so the
+		// fullscreen overlay never covers a live composer and nothing is typed
+		// blind beneath a stale frame; init's full repaint afterwards
+		// overwrites whatever the alt-buffer restore leaves behind. Raw input
+		// is enabled for the splash so the skip key works; adopt() afterwards
+		// is then just the ownership transfer. The rare no-lease path (no
+		// prepaint composer, TUI not started until init) keeps the old order.
+		if (setupWizard && playStartupSplash && startupLease) {
+			mode.composer.enableInput();
+			await setupWizard.runStartupSplash(mode);
+			startupLease.adopt();
+		} else {
+			startupLease?.adopt();
+		}
+
 		await logger.time("InteractiveMode.init", () =>
 			mode.init({
 				suppressWelcomeIntro: resuming || setupScenes.length > 0 || playStartupSplash,
@@ -552,11 +567,14 @@ async function runInteractiveMode(
 		);
 		void startBackgroundModelDiscovery?.();
 	} catch (error) {
+		startupLease?.dispose();
 		mode.stop();
 		throw error;
 	}
 
-	if (setupWizard && playStartupSplash) {
+	// No-prepaint-composer path: the TUI only starts inside init, so the splash
+	// keeps its old position (after init) there.
+	if (setupWizard && playStartupSplash && !startupLease) {
 		await setupWizard.runStartupSplash(mode);
 	}
 
