@@ -513,8 +513,7 @@ function inScope(name: string, scope: Scope): boolean {
 
 if (import.meta.main) {
 	const scopeArg = process.argv.indexOf("--scope");
-	const scope: Scope =
-		scopeArg === -1 ? "all" : ((process.argv[scopeArg + 1] as Scope) ?? "all");
+	const scope: Scope = scopeArg === -1 ? "all" : ((process.argv[scopeArg + 1] as Scope) ?? "all");
 	if (nativeLeafTag) {
 		await publishNativeLeafPackage(nativeLeafTag);
 	} else {
