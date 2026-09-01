@@ -46,3 +46,15 @@ honestly on bare Linux.
    ingest stays environmental-red until then).
 5. Your seven dogfood drives (PARITY_CENSUS §4).
 6. KOS follow-up handoff delivered: `docs/HANDOFF_TO_KOS_0110_SHIPPED.md`.
+
+## CI findings at the cut (all upstream-inherited or environmental)
+
+- **pi-shell `kill_builtin_signals_every_process_in_a_jobspec_pipeline`**
+  (upstream, unmodified by the fork diff): times out on stock ubuntu runners;
+  upstream's own stock-ubuntu CI is red on it; passes on macOS (proven in this
+  epic's runs). Rust job gets its own runner var (`OMP_RUST_RUNNER`, Kaidera:
+  macos-14; upstream default unchanged).
+- **Visible-tab browser test** (upstream-inherited): the fork now provisions a
+  window manager (openbox) under Xvfb AND gates the suite on a strict headful
+  probe that exercises the test's own contract (launch + CDP resize). Runs
+  where it can pass; skips honestly elsewhere.
