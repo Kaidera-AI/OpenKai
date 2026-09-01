@@ -9,8 +9,8 @@ import {
 } from "@oh-my-pi/pi-tui";
 import { APP_NAME } from "@oh-my-pi/pi-utils";
 import { theme } from "../../modes/theme/theme";
-import tipsText from "./tips.txt" with { type: "text" };
 import { KAIDERA_MARK } from "../../openkai/brand";
+import tipsText from "./tips.txt" with { type: "text" };
 
 /** Tips embedded at build time, one per line; blanks dropped. */
 const TIPS: readonly string[] = tipsText

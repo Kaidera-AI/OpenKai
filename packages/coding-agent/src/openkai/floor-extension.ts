@@ -14,36 +14,36 @@ import { floorMatchFor, outsideCwd } from "./gate-floor.js";
 const PATH_ARG_KEYS = ["path", "file", "filePath", "target", "targetPath", "outputPath"] as const;
 
 function pathsFromArgs(args: unknown): string[] {
-  if (args === null || typeof args !== "object") return [];
-  const out: string[] = [];
-  for (const key of PATH_ARG_KEYS) {
-    const value = (args as Record<string, unknown>)[key];
-    if (typeof value === "string") out.push(value);
-  }
-  return out;
+	if (args === null || typeof args !== "object") return [];
+	const out: string[] = [];
+	for (const key of PATH_ARG_KEYS) {
+		const value = (args as Record<string, unknown>)[key];
+		if (typeof value === "string") out.push(value);
+	}
+	return out;
 }
 
 /** The extension factory — the runtime calls this with the API surface. */
 export default function openkaiFloor(pi: ExtensionAPI): void {
-  pi.on("tool_call", (event, ctx) => {
-    const cwd = ctx.cwd ?? process.cwd();
-    const input: unknown = "input" in event ? event.input : undefined;
+	pi.on("tool_call", (event, ctx) => {
+		const cwd = ctx.cwd ?? process.cwd();
+		const input: unknown = "input" in event ? event.input : undefined;
 
-    for (const target of pathsFromArgs(input)) {
-      if (outsideCwd(cwd, target)) {
-        return {
-          block: true,
-          reason: `openkai deny floor: ${target} is outside the working folder (${cwd}) — no approval surface can lift this`,
-        };
-      }
-      const floor = floorMatchFor(cwd, target);
-      if (floor !== undefined) {
-        return {
-          block: true,
-          reason: `openkai deny floor: ${target} matches protected path "${floor}" — refused absolutely (never prompted)`,
-        };
-      }
-    }
-    return undefined;
-  });
+		for (const target of pathsFromArgs(input)) {
+			if (outsideCwd(cwd, target)) {
+				return {
+					block: true,
+					reason: `openkai deny floor: ${target} is outside the working folder (${cwd}) — no approval surface can lift this`,
+				};
+			}
+			const floor = floorMatchFor(cwd, target);
+			if (floor !== undefined) {
+				return {
+					block: true,
+					reason: `openkai deny floor: ${target} matches protected path "${floor}" — refused absolutely (never prompted)`,
+				};
+			}
+		}
+		return undefined;
+	});
 }

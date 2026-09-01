@@ -30,30 +30,30 @@ import {
 	KILL_SWITCH_ENV,
 	MANIFEST_ENV,
 	RELEASE_KEY_ENV,
+	type ReleaseManifest,
 	resolveAutoUpdateEnabled,
 	resolveChannel,
-	type ReleaseManifest,
-	Upgrader,
 	type UpgradeDeps,
+	Upgrader,
 } from "../openkai/upgrade-trust";
 
 const defaultDeps: UpgradeDeps = {
-	fetchManifest: async (url) => {
+	fetchManifest: async url => {
 		const res = await fetch(url);
 		if (!res.ok) throw new Error(`manifest fetch failed: ${res.status} ${url}`);
 		return (await res.json()) as ReleaseManifest;
 	},
-	download: async (url) => {
+	download: async url => {
 		const res = await fetch(url);
 		if (!res.ok) throw new Error(`artifact fetch failed: ${res.status} ${url}`);
 		return new Uint8Array(await res.arrayBuffer());
 	},
-	readFile: (p) => fsp.readFile(p),
+	readFile: p => fsp.readFile(p),
 	writeFile: (p, d) => fsp.writeFile(p, d),
 	rename: (from, to) => fsp.rename(from, to),
 	copyFile: (from, to) => fsp.copyFile(from, to),
 	chmod: (p, m) => fsp.chmod(p, m),
-	stat: async (p) => {
+	stat: async p => {
 		const s = await fsp.stat(p);
 		return { isFile: s.isFile() };
 	},

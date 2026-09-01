@@ -43,17 +43,17 @@
  * and left the leading character exposed.
  */
 export const SECRET_PREFIXES: readonly string[] = [
-  "sk-", // openai, anthropic, deepseek, openrouter (sk-or-), kimi (sk-kim)
-  "csk-", // cerebras
-  "nvapi-", // nvidia
-  "gsk_", // groq
-  "hf_", // huggingface
-  "fw_", // fireworks
-  "tgp_v1_", // together
-  "xai-", // xai
-  "AIza", // google / gemini
-  "github_pat_", // github fine-grained PAT
-  "AKIA", // aws access key id
+	"sk-", // openai, anthropic, deepseek, openrouter (sk-or-), kimi (sk-kim)
+	"csk-", // cerebras
+	"nvapi-", // nvidia
+	"gsk_", // groq
+	"hf_", // huggingface
+	"fw_", // fireworks
+	"tgp_v1_", // together
+	"xai-", // xai
+	"AIza", // google / gemini
+	"github_pat_", // github fine-grained PAT
+	"AKIA", // aws access key id
 ];
 
 /** PEM private-key headers — not a prefix-shaped token. */
@@ -68,19 +68,19 @@ const PRIVATE_KEY_SOURCE = "-----BEGIN (?:RSA |OPENSSH |EC |PGP )?PRIVATE KEY---
  * previous pattern caught only `ghp_`.
  */
 const SECRET_VALUE_SOURCE = `(${[
-  "sk-[A-Za-z0-9_-]{10,}",
-  "csk-[A-Za-z0-9_-]{10,}",
-  "nvapi-[A-Za-z0-9_-]{10,}",
-  "gsk_[A-Za-z0-9_-]{10,}",
-  "hf_[A-Za-z0-9]{10,}",
-  "fw_[A-Za-z0-9_-]{10,}",
-  "tgp_v1_[A-Za-z0-9_-]{10,}",
-  "xai-[A-Za-z0-9_-]{10,}",
-  "AIza[A-Za-z0-9_-]{10,}",
-  "github_pat_[A-Za-z0-9_]{10,}",
-  "gh[opusr]_[A-Za-z0-9]{10,}",
-  "AKIA[0-9A-Z]{16}",
-  PRIVATE_KEY_SOURCE,
+	"sk-[A-Za-z0-9_-]{10,}",
+	"csk-[A-Za-z0-9_-]{10,}",
+	"nvapi-[A-Za-z0-9_-]{10,}",
+	"gsk_[A-Za-z0-9_-]{10,}",
+	"hf_[A-Za-z0-9]{10,}",
+	"fw_[A-Za-z0-9_-]{10,}",
+	"tgp_v1_[A-Za-z0-9_-]{10,}",
+	"xai-[A-Za-z0-9_-]{10,}",
+	"AIza[A-Za-z0-9_-]{10,}",
+	"github_pat_[A-Za-z0-9_]{10,}",
+	"gh[opusr]_[A-Za-z0-9]{10,}",
+	"AKIA[0-9A-Z]{16}",
+	PRIVATE_KEY_SOURCE,
 ].join("|")})`;
 
 /** Non-global — safe for repeated `test()`. */
@@ -111,9 +111,9 @@ const SECRET_VALUE_GLOBAL = new RegExp(SECRET_VALUE_SOURCE, "g");
  * at that point. Upgrade path: add the provider's prefix above once it has one.
  */
 const OPAQUE_AFTER_CREDENTIAL_WORD = new RegExp(
-  "(?<=(?:key|token|secret|password|credential|bearer|authorization)[\"'`\\s:=,]{1,6})" +
-    "[A-Za-z0-9][A-Za-z0-9_-]{19,}",
-  "gi",
+	"(?<=(?:key|token|secret|password|credential|bearer|authorization)[\"'`\\s:=,]{1,6})" +
+		"[A-Za-z0-9][A-Za-z0-9_-]{19,}",
+	"gi",
 );
 
 /** Env var NAMES that carry credentials regardless of their value's shape. */
@@ -161,26 +161,26 @@ const MIN_KNOWN_VALUE_LENGTH = 12;
  * streamed token.
  */
 function knownSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
-  const values: string[] = [];
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined) continue;
-    if (value.length < MIN_KNOWN_VALUE_LENGTH) continue;
-    if (!REDACTABLE_NAME_PATTERN.test(name)) continue;
-    // A credential-NAMED variable can still hold a path (`SSH_PRIVATE_KEY`
-    // pointing at a file) or a sentence; blanking those from output is pure
-    // noise. Second guard behind the name anchor, cheap and kills a class.
-    //
-    // Deliberately a PATH-PREFIX test, not "contains a slash": a real secret
-    // can contain a slash mid-string. `AWS_SECRET_ACCESS_KEY` is 40 chars of
-    // base64 and the canonical example value carries two of them, so a
-    // contains-a-slash guard skipped the one AWS credential that has no `AKIA`
-    // shape to fall back on. Paths and drive letters START with the separator;
-    // secrets do not.
-    if (/\s/.test(value)) continue;
-    if (/^(?:[A-Za-z]:[\\/]|~?\.{0,2}\/)/.test(value)) continue;
-    values.push(value);
-  }
-  return values.sort((a, b) => b.length - a.length);
+	const values: string[] = [];
+	for (const [name, value] of Object.entries(env)) {
+		if (value === undefined) continue;
+		if (value.length < MIN_KNOWN_VALUE_LENGTH) continue;
+		if (!REDACTABLE_NAME_PATTERN.test(name)) continue;
+		// A credential-NAMED variable can still hold a path (`SSH_PRIVATE_KEY`
+		// pointing at a file) or a sentence; blanking those from output is pure
+		// noise. Second guard behind the name anchor, cheap and kills a class.
+		//
+		// Deliberately a PATH-PREFIX test, not "contains a slash": a real secret
+		// can contain a slash mid-string. `AWS_SECRET_ACCESS_KEY` is 40 chars of
+		// base64 and the canonical example value carries two of them, so a
+		// contains-a-slash guard skipped the one AWS credential that has no `AKIA`
+		// shape to fall back on. Paths and drive letters START with the separator;
+		// secrets do not.
+		if (/\s/.test(value)) continue;
+		if (/^(?:[A-Za-z]:[\\/]|~?\.{0,2}\/)/.test(value)) continue;
+		values.push(value);
+	}
+	return values.sort((a, b) => b.length - a.length);
 }
 
 /**
@@ -206,14 +206,12 @@ function knownSecretValues(env: NodeJS.ProcessEnv = process.env): string[] {
  * tell you to update the shell scan too.
  */
 export function redactSecrets(text: string, env: NodeJS.ProcessEnv = process.env): string {
-  let out = text;
-  for (const value of knownSecretValues(env)) {
-    // split/join rather than RegExp — no metacharacter escaping to get wrong.
-    // Longest-first (see knownSecretValues) so a short secret cannot fragment
-    // a longer one that contains it.
-    if (out.includes(value)) out = out.split(value).join(MARKER);
-  }
-  return out
-    .replace(SECRET_VALUE_GLOBAL, MARKER)
-    .replace(OPAQUE_AFTER_CREDENTIAL_WORD, MARKER);
+	let out = text;
+	for (const value of knownSecretValues(env)) {
+		// split/join rather than RegExp — no metacharacter escaping to get wrong.
+		// Longest-first (see knownSecretValues) so a short secret cannot fragment
+		// a longer one that contains it.
+		if (out.includes(value)) out = out.split(value).join(MARKER);
+	}
+	return out.replace(SECRET_VALUE_GLOBAL, MARKER).replace(OPAQUE_AFTER_CREDENTIAL_WORD, MARKER);
 }

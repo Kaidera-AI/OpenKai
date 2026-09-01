@@ -50,7 +50,6 @@ import {
 import { AsyncJobManager } from "./async";
 import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/controller";
 import { createAutoresearchExtension } from "./autoresearch";
-import { openkaiBuiltinTools, openkaiFloor, openkaiKeywords, openkaiShift } from "./openkai/index.js";
 import { loadCapability } from "./capability";
 import { type Rule, ruleCapability, setActiveRules } from "./capability/rule";
 import { bucketRules } from "./capability/rule-buckets";
@@ -77,6 +76,7 @@ import { buildServiceTierByFamily } from "./config/service-tier";
 import { Settings, type SkillsSettings } from "./config/settings";
 import { CursorExecHandlers, type CursorMcpResourceAdapter } from "./cursor";
 import { createBridgeEditTool, createBridgeGrepFactory } from "./cursor-bridge-tools";
+import { openkaiBuiltinTools, openkaiFloor, openkaiKeywords, openkaiShift } from "./openkai/index.js";
 import "./discovery";
 import { createImageUrlServiceFromSettings } from "./blob-broker/service";
 import { wrapStreamFnWithBlobUrlFallback } from "./blob-broker/stream-fallback";

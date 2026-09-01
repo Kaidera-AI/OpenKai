@@ -21,19 +21,19 @@ import { SECRET_NAME_PATTERN, SECRET_VALUE_PATTERN } from "./secrets.js";
  * `extra` entries are applied last (an `undefined` value deletes the key).
  */
 export function scrubbedChildEnv(extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value === undefined) continue;
-    if (SECRET_NAME_PATTERN.test(name)) continue;
-    if (SECRET_VALUE_PATTERN.test(value)) continue;
-    out[name] = value;
-  }
-  out.CI = "1";
-  if (extra) {
-    for (const [name, value] of Object.entries(extra)) {
-      if (value === undefined) delete out[name];
-      else out[name] = value;
-    }
-  }
-  return out;
+	const out: NodeJS.ProcessEnv = {};
+	for (const [name, value] of Object.entries(process.env)) {
+		if (value === undefined) continue;
+		if (SECRET_NAME_PATTERN.test(name)) continue;
+		if (SECRET_VALUE_PATTERN.test(value)) continue;
+		out[name] = value;
+	}
+	out.CI = "1";
+	if (extra) {
+		for (const [name, value] of Object.entries(extra)) {
+			if (value === undefined) delete out[name];
+			else out[name] = value;
+		}
+	}
+	return out;
 }

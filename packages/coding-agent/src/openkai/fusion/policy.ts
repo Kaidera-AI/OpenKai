@@ -10,46 +10,42 @@
 export type FusionPriority = "low" | "medium" | "high" | "urgent";
 
 /** Task classes that justify fusion at high priority or above. */
-export type FusionTaskClass =
-  | "architecture"
-  | "ambiguous"
-  | "high-blast-radius"
-  | "routine";
+export type FusionTaskClass = "architecture" | "ambiguous" | "high-blast-radius" | "routine";
 
 export interface FusionPolicyInput {
-  priority?: FusionPriority;
-  taskClass?: FusionTaskClass;
-  /** Distinct files the task is expected to touch. */
-  filesBreadth?: number;
-  /** Explicit operator override (`openkai fuse` passes force=true). */
-  force?: boolean;
+	priority?: FusionPriority;
+	taskClass?: FusionTaskClass;
+	/** Distinct files the task is expected to touch. */
+	filesBreadth?: number;
+	/** Explicit operator override (`openkai fuse` passes force=true). */
+	force?: boolean;
 }
 
 export interface FusionPolicyConfig {
-  /** Priorities that always fuse. Default: ["urgent"]. */
-  fusePriorities: FusionPriority[];
-  /** Classes that fuse at high priority or above. Default: all but routine. */
-  fuseClasses: FusionTaskClass[];
-  /** Files-breadth at or above which any task fuses. Default: 10. */
-  breadthThreshold: number;
+	/** Priorities that always fuse. Default: ["urgent"]. */
+	fusePriorities: FusionPriority[];
+	/** Classes that fuse at high priority or above. Default: all but routine. */
+	fuseClasses: FusionTaskClass[];
+	/** Files-breadth at or above which any task fuses. Default: 10. */
+	breadthThreshold: number;
 }
 
 export interface FusionPolicyDecision {
-  fuse: boolean;
-  reason: string;
+	fuse: boolean;
+	reason: string;
 }
 
 export const DEFAULT_FUSION_POLICY: FusionPolicyConfig = {
-  fusePriorities: ["urgent"],
-  fuseClasses: ["architecture", "ambiguous", "high-blast-radius"],
-  breadthThreshold: 10,
+	fusePriorities: ["urgent"],
+	fuseClasses: ["architecture", "ambiguous", "high-blast-radius"],
+	breadthThreshold: 10,
 };
 
 const PRIORITY_RANK: Record<FusionPriority, number> = {
-  low: 0,
-  medium: 1,
-  high: 2,
-  urgent: 3,
+	low: 0,
+	medium: 1,
+	high: 2,
+	urgent: 3,
 };
 
 /**
@@ -62,41 +58,38 @@ const PRIORITY_RANK: Record<FusionPriority, number> = {
  *   5. otherwise the cheap single-model path.
  */
 export function shouldFuse(
-  input: FusionPolicyInput,
-  config: FusionPolicyConfig = DEFAULT_FUSION_POLICY,
+	input: FusionPolicyInput,
+	config: FusionPolicyConfig = DEFAULT_FUSION_POLICY,
 ): FusionPolicyDecision {
-  if (input.force === true) {
-    return { fuse: true, reason: "explicit invocation (force)" };
-  }
+	if (input.force === true) {
+		return { fuse: true, reason: "explicit invocation (force)" };
+	}
 
-  const priority = input.priority ?? "medium";
-  if (config.fusePriorities.includes(priority)) {
-    return { fuse: true, reason: `priority ${priority} is a fusion priority` };
-  }
+	const priority = input.priority ?? "medium";
+	if (config.fusePriorities.includes(priority)) {
+		return { fuse: true, reason: `priority ${priority} is a fusion priority` };
+	}
 
-  if (
-    input.taskClass !== undefined &&
-    config.fuseClasses.includes(input.taskClass) &&
-    PRIORITY_RANK[priority] >= PRIORITY_RANK["high"]
-  ) {
-    return {
-      fuse: true,
-      reason: `${priority}-priority ${input.taskClass} work is a fusion class`,
-    };
-  }
+	if (
+		input.taskClass !== undefined &&
+		config.fuseClasses.includes(input.taskClass) &&
+		PRIORITY_RANK[priority] >= PRIORITY_RANK.high
+	) {
+		return {
+			fuse: true,
+			reason: `${priority}-priority ${input.taskClass} work is a fusion class`,
+		};
+	}
 
-  if (
-    input.filesBreadth !== undefined &&
-    input.filesBreadth >= config.breadthThreshold
-  ) {
-    return {
-      fuse: true,
-      reason: `blast radius ${input.filesBreadth} files >= threshold ${config.breadthThreshold}`,
-    };
-  }
+	if (input.filesBreadth !== undefined && input.filesBreadth >= config.breadthThreshold) {
+		return {
+			fuse: true,
+			reason: `blast radius ${input.filesBreadth} files >= threshold ${config.breadthThreshold}`,
+		};
+	}
 
-  return {
-    fuse: false,
-    reason: "default single-model path (no fusion rule matched)",
-  };
+	return {
+		fuse: false,
+		reason: "default single-model path (no fusion rule matched)",
+	};
 }

@@ -69,7 +69,6 @@ describe("documented-but-unregistered plugin verbs do not leak to launch (#2935)
 		for (const [verb, hint] of [
 			["marketplace", "omp plugin marketplace"],
 			["discover", "omp plugin discover"],
-			["upgrade", "omp plugin upgrade"],
 			["uninstall", "omp plugin uninstall"],
 			["enable", "omp plugin enable"],
 			["disable", "omp plugin disable"],
@@ -78,10 +77,15 @@ describe("documented-but-unregistered plugin verbs do not leak to launch (#2935)
 			expect(result).not.toHaveProperty("argv");
 			expect("error" in result && result.error).toContain(hint);
 		}
+		// E022 Inc 04 contract change: `upgrade` is a REGISTERED subcommand now
+		// (the witnessed trust root — channel detection, --check, --rollback).
+		// Plugin upgrades stay at `omp plugin upgrade`; bare `omp upgrade`
+		// upgrades OpenKai itself.
+		expect(resolveCliArgv(["upgrade"])).toEqual({ argv: ["upgrade"] });
 	});
 
 	test("`name@marketplace` plugin ids hint instead of launching (#4845)", () => {
-		for (const verb of ["uninstall", "upgrade", "enable", "disable"] as const) {
+		for (const verb of ["uninstall", "enable", "disable"] as const) {
 			const result = resolveCliArgv([verb, "code-review@claude-plugins-official"]);
 			expect(result).not.toHaveProperty("argv");
 			expect(result).toHaveProperty("error");
@@ -89,7 +93,7 @@ describe("documented-but-unregistered plugin verbs do not leak to launch (#2935)
 	});
 
 	test("plugin ids after documented flags hint instead of leaking to launch", () => {
-		for (const verb of ["uninstall", "upgrade", "enable", "disable"] as const) {
+		for (const verb of ["uninstall", "enable", "disable"] as const) {
 			const result = resolveCliArgv([verb, "--scope", "project", "code-review@claude-plugins-official"]);
 			expect(result).not.toHaveProperty("argv");
 			expect(result).toHaveProperty("error");
@@ -97,8 +101,11 @@ describe("documented-but-unregistered plugin verbs do not leak to launch (#2935)
 	});
 
 	test("prose prompts beginning with the new verbs still route to launch (#4845)", () => {
+		// E022 Inc 04: `upgrade` is a registered subcommand — prose after it is
+		// its own argument surface, not a launch prompt (the witnessed upgrader
+		// parses --check/--rollback and ignores unknown positionals).
 		expect(resolveCliArgv(["upgrade", "the", "deps"])).toEqual({
-			argv: ["launch", "upgrade", "the", "deps"],
+			argv: ["upgrade", "the", "deps"],
 		});
 		// `marketplace` followed by a non-subcommand word is a genuine prompt.
 		expect(resolveCliArgv(["marketplace", "research", "for", "me"])).toEqual({

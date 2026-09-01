@@ -27,33 +27,33 @@ import type { Tier, TierDecisionSource } from "./tier.js";
 
 /** A routing decision event — emitted when a stage is routed to a model. */
 export interface RoutingEvent {
-  /** Event discriminator — always one of the routing kinds. */
-  kind: "routing" | "fallback" | "routing_error";
-  /** The stage this routing decision applies to. */
-  stage: Stage;
-  /** The model id selected for this stage (absent on terminal errors). */
-  model?: string;
-  /** The provider id for this model. */
-  provider?: string;
-  /**
-   * Zero-based position in the fallback chain (0 = primary). Present on
-   * `routing` and `fallback` events.
-   */
-  attempt?: number;
-  /**
-   * The tier the turn was routed at (OK-9.1). Present on tier-aware
-   * decisions from the orchestration facade; absent on plain stage routes.
-   */
-  tier?: Tier;
-  /**
-   * Why the tier was chosen (OK-9.1 observability discipline — the label the
-   * calibration loop and the `/shift` ledger read).
-   */
-  source?: TierDecisionSource;
-  /** Human-readable reason (classification basis, error summary, etc.). */
-  reason?: string;
-  /** Token usage from a successful call (present on `routing` when known). */
-  usage?: { totalTokens?: number };
+	/** Event discriminator — always one of the routing kinds. */
+	kind: "routing" | "fallback" | "routing_error";
+	/** The stage this routing decision applies to. */
+	stage: Stage;
+	/** The model id selected for this stage (absent on terminal errors). */
+	model?: string;
+	/** The provider id for this model. */
+	provider?: string;
+	/**
+	 * Zero-based position in the fallback chain (0 = primary). Present on
+	 * `routing` and `fallback` events.
+	 */
+	attempt?: number;
+	/**
+	 * The tier the turn was routed at (OK-9.1). Present on tier-aware
+	 * decisions from the orchestration facade; absent on plain stage routes.
+	 */
+	tier?: Tier;
+	/**
+	 * Why the tier was chosen (OK-9.1 observability discipline — the label the
+	 * calibration loop and the `/shift` ledger read).
+	 */
+	source?: TierDecisionSource;
+	/** Human-readable reason (classification basis, error summary, etc.). */
+	reason?: string;
+	/** Token usage from a successful call (present on `routing` when known). */
+	usage?: { totalTokens?: number };
 }
 
 /** The activity sink shape — same callback convention as `onActivity`. */
@@ -69,18 +69,18 @@ export type ActivitySink = (event: RoutingEvent) => void;
  * Non-string fields (numbers, booleans) pass through untouched.
  */
 export function redactRoutingEvent(event: RoutingEvent): RoutingEvent {
-  return {
-    kind: event.kind,
-    stage: event.stage,
-    model: event.model !== undefined ? redactSecrets(event.model) : undefined,
-    provider: event.provider !== undefined ? redactSecrets(event.provider) : undefined,
-    attempt: event.attempt,
-    // tier/source are closed-vocabulary enums — no secret surface, copied through.
-    tier: event.tier,
-    source: event.source,
-    reason: event.reason !== undefined ? redactSecrets(event.reason) : undefined,
-    usage: event.usage,
-  };
+	return {
+		kind: event.kind,
+		stage: event.stage,
+		model: event.model !== undefined ? redactSecrets(event.model) : undefined,
+		provider: event.provider !== undefined ? redactSecrets(event.provider) : undefined,
+		attempt: event.attempt,
+		// tier/source are closed-vocabulary enums — no secret surface, copied through.
+		tier: event.tier,
+		source: event.source,
+		reason: event.reason !== undefined ? redactSecrets(event.reason) : undefined,
+		usage: event.usage,
+	};
 }
 
 /**
@@ -94,7 +94,7 @@ export function redactRoutingEvent(event: RoutingEvent): RoutingEvent {
  * writer — never a parallel one.
  */
 export function createRedactingSink(sink: ActivitySink): ActivitySink {
-  return (event: RoutingEvent) => {
-    sink(redactRoutingEvent(event));
-  };
+	return (event: RoutingEvent) => {
+		sink(redactRoutingEvent(event));
+	};
 }

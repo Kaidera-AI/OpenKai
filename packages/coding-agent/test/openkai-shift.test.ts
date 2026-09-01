@@ -12,67 +12,67 @@ await import("../src/discovery/index.js");
 const { default: openkaiShift } = await import("../src/openkai/shift-extension.js");
 
 describe("E021 F2: shift extension on the fork", () => {
-  test("the factory wires its handlers when attached", async () => {
-    const handlers = new Map<string, Array<(event: never, ctx: never) => unknown>>();
-    const pi = {
-      logger: { info: () => undefined },
-      registerCommand: () => undefined,
-      on: (event: string, handler: (event: never, ctx: never) => unknown) => {
-        const list = handlers.get(event) ?? [];
-        list.push(handler);
-        handlers.set(event, list);
-      },
-    } as unknown as ExtensionAPI;
-    openkaiShift(pi);
-    expect(handlers.size).toBeGreaterThan(0);
-  });
+	test("the factory wires its handlers when attached", async () => {
+		const handlers = new Map<string, Array<(event: never, ctx: never) => unknown>>();
+		const pi = {
+			logger: { info: () => undefined },
+			registerCommand: () => undefined,
+			on: (event: string, handler: (event: never, ctx: never) => unknown) => {
+				const list = handlers.get(event) ?? [];
+				list.push(handler);
+				handlers.set(event, list);
+			},
+		} as unknown as ExtensionAPI;
+		openkaiShift(pi);
+		expect(handlers.size).toBeGreaterThan(0);
+	});
 
-  test("tool signals drive the orchestrator; a flip sets the status chip + the model", async () => {
-    const handlers = new Map<string, Array<(event: never, ctx: never) => unknown>>();
-    const statuses = new Map<string, string | undefined>();
-    const setModelCalls: unknown[] = [];
-    const smol = { id: "smol-model", provider: "mock" };
-    const slow = { id: "slow-model", provider: "mock" };
-    const pi = {
-      logger: { info: () => undefined },
-      on: (event: string, handler: (event: never, ctx: never) => unknown) => {
-        const list = handlers.get(event) ?? [];
-        list.push(handler);
-        handlers.set(event, list);
-      },
-    } as unknown as ExtensionAPI;
+	test("tool signals drive the orchestrator; a flip sets the status chip + the model", async () => {
+		const handlers = new Map<string, Array<(event: never, ctx: never) => unknown>>();
+		const statuses = new Map<string, string | undefined>();
+		const setModelCalls: unknown[] = [];
+		const smol = { id: "smol-model", provider: "mock" };
+		const slow = { id: "slow-model", provider: "mock" };
+		const pi = {
+			logger: { info: () => undefined },
+			on: (event: string, handler: (event: never, ctx: never) => unknown) => {
+				const list = handlers.get(event) ?? [];
+				list.push(handler);
+				handlers.set(event, list);
+			},
+		} as unknown as ExtensionAPI;
 
-    openkaiShift(pi);
+		openkaiShift(pi);
 
-    const ctx = {
-      cwd: process.cwd(),
-      ui: { setStatus: (k: string, t: string | undefined) => statuses.set(k, t) },
-      models: { resolve: (role: string) => (role === "smol" ? smol : role === "slow" ? slow : undefined) },
-      model: smol,
-      setModel: async (m: unknown) => {
-        setModelCalls.push(m);
-        return true;
-      },
-    };
+		const ctx = {
+			cwd: process.cwd(),
+			ui: { setStatus: (k: string, t: string | undefined) => statuses.set(k, t) },
+			models: { resolve: (role: string) => (role === "smol" ? smol : role === "slow" ? slow : undefined) },
+			model: smol,
+			setModel: async (m: unknown) => {
+				setModelCalls.push(m);
+				return true;
+			},
+		};
 
-    for (const h of handlers.get("session_start") ?? []) await h({} as never, ctx as never);
-    for (const h of handlers.get("turn_start") ?? []) await h({} as never, ctx as never);
-    expect(statuses.get("openkai-tier")).toMatch(/^t:(cap|eff)$/);
+		for (const h of handlers.get("session_start") ?? []) await h({} as never, ctx as never);
+		for (const h of handlers.get("turn_start") ?? []) await h({} as never, ctx as never);
+		expect(statuses.get("openkai-tier")).toMatch(/^t:(cap|eff)$/);
 
-    // Corroborated distress: hard errors spin the score past the threshold —
-    // the flip must drive setModel to the slow (capable) lane.
-    for (let i = 0; i < 3; i += 1) {
-      for (const h of handlers.get("tool_result") ?? []) {
-        await h(
-          { toolName: "bash", isError: true, resultText: "FATAL: out of memory, killed process" } as never,
-          ctx as never,
-        );
-      }
-    }
-    // Let the async flushTier chain settle.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(setModelCalls.length).toBeGreaterThan(0);
-    expect((setModelCalls[0] as { id: string }).id).toBe("slow-model");
-    expect(statuses.get("openkai-tier")).toBe("t:cap");
-  });
+		// Corroborated distress: hard errors spin the score past the threshold —
+		// the flip must drive setModel to the slow (capable) lane.
+		for (let i = 0; i < 3; i += 1) {
+			for (const h of handlers.get("tool_result") ?? []) {
+				await h(
+					{ toolName: "bash", isError: true, resultText: "FATAL: out of memory, killed process" } as never,
+					ctx as never,
+				);
+			}
+		}
+		// Let the async flushTier chain settle.
+		await new Promise(resolve => setTimeout(resolve, 50));
+		expect(setModelCalls.length).toBeGreaterThan(0);
+		expect((setModelCalls[0] as { id: string }).id).toBe("slow-model");
+		expect(statuses.get("openkai-tier")).toBe("t:cap");
+	});
 });
