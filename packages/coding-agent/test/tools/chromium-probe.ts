@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
-import type { BrowserHandle } from "@oh-my-pi/pi-coding-agent/tools/browser/registry";
 import { ensureChromiumExecutable } from "@oh-my-pi/pi-coding-agent/tools/browser/launch";
+import type { BrowserHandle } from "@oh-my-pi/pi-coding-agent/tools/browser/registry";
 
 /**
  * Whether the Chromium puppeteer resolves can actually execute on this host.
@@ -65,9 +65,7 @@ async function headfulCanLaunch(): Promise<boolean> {
 	if (!(await chromiumCanLaunch())) return false;
 	if (process.platform !== "linux") return true;
 	if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
-	const { acquireBrowser, releaseBrowser } = await import(
-		"@oh-my-pi/pi-coding-agent/tools/browser/registry"
-	);
+	const { acquireBrowser, releaseBrowser } = await import("@oh-my-pi/pi-coding-agent/tools/browser/registry");
 	let browser: BrowserHandle | undefined;
 	try {
 		browser = await acquireBrowser({ kind: "headless", headless: false }, { cwd: process.cwd() });
