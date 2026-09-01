@@ -905,13 +905,18 @@ jobs:
            uses: ./.github/actions/native-artifacts
            with:
               targets: linux-x64-baseline linux-x64-modern
-         - name: Publish to npm
+         - name: Publish to npm (omp-named scope)
            env:
               # Fallback auth: setup-node wrote an .npmrc referencing
               # NODE_AUTH_TOKEN; npm uses it only when OIDC has no trusted
               # publisher for the package (or on a first publish).
               NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-           run: bun run ci:release:publish
+           # E022 Inc 06 (CTO decision 6): CI publishes the omp-named scope
+           # (every package skips as already-published upstream at the pinned
+           # version). The Kaidera scope (@kaidera/openkai-engine + wrapper)
+           # is published manually from the release workstation per
+           # docs/RELEASE_SOP.md — the Kaidera npm credentials live there.
+           run: bun scripts/ci-release-publish.ts --scope omp
 
    # Regenerate the Homebrew tap formula (can1357/homebrew-tap) from the freshly
    # published release assets and push it. Gated on release_github_verify so the

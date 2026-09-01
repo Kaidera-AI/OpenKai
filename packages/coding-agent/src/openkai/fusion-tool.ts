@@ -307,4 +307,7 @@ const fusionToolBase: CustomTool<typeof FusionParams, FusionDetails> = {
 
 // The tool loader carries `path` for provenance — a built-in declares its
 // own. Not part of the CustomTool interface; attached structurally.
-export const fusionTool = Object.assign(fusionToolBase, { path: "builtin:openkai/fusion" });
+// The unparameterised CustomTool keeps the declaration emit nameable (the
+// publish tsgo run rejects the inferred LegacyTypeBoxCompat/RuntimeType shapes
+// from omptype, which are not exported names).
+export const fusionTool = Object.assign(fusionToolBase, { path: "builtin:openkai/fusion" }) as CustomTool;

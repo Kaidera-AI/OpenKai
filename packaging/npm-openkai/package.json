@@ -1,0 +1,21 @@
+{
+	"name": "@kaidera/openkai",
+	"version": "0.1.10",
+	"description": "OpenKai — the Kaidera agent harness + TUI on the omp engine (fusion, switchyard, RLM, Cortex memory).",
+	"license": "MIT",
+	"bin": {
+		"openkai": "bin/openkai.js"
+	},
+	"files": [
+		"bin"
+	],
+	"engines": {
+		"bun": ">=1.3.14"
+	},
+	"dependencies": {
+		"@kaidera/openkai-engine": "18.0.11"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

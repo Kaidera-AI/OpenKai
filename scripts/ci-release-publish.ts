@@ -63,6 +63,19 @@ export interface PublishPackage {
 	 * without a build; publish swaps in the `prepack` bundle.
 	 */
 	publishBin?: Readonly<Record<string, string>>;
+	/**
+	 * Publish under a different npm name than the on-repo manifest (E022 Inc
+	 * 06, CTO decision 6): the fork's coding-agent ships as
+	 * `@kaidera/openkai-engine` while its dependencies stay upstream-named
+	 * (they are byte-identical at the pinned version). The on-repo name is
+	 * never mutated.
+	 */
+	publishName?: string;
+	/**
+	 * Skip the type-emission build steps (E022 Inc 06): for shim-only packages
+	 * with no TS source (the `@kaidera/openkai` wrapper).
+	 */
+	skipBuild?: boolean;
 }
 
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
@@ -163,7 +176,16 @@ export const packages: PublishPackage[] = [
 		extraTypeConfigs: ["tsconfig.publish.client.json"],
 	},
 	{ dir: "packages/agent", kind: "typescript" },
-	{ dir: "packages/coding-agent", kind: "typescript", publishBin: { omp: "dist/cli.js" } },
+	// E022 Inc 06 (CTO decision 6): the fork's coding-agent ships under the
+	// Kaidera scope; its dependencies stay upstream-named (byte-identical at
+	// the pinned version). Order matters: the wrapper depends on the engine.
+	{
+		dir: "packages/coding-agent",
+		kind: "typescript",
+		publishBin: { omp: "dist/cli.js" },
+		publishName: "@kaidera/openkai-engine",
+	},
+	{ dir: "packaging/npm-openkai", kind: "typescript", skipBuild: true },
 ];
 
 function rewriteSrcToTypes(value: string): string {
@@ -218,6 +240,7 @@ function rewriteExports(exports: JsonValue, publishJs: boolean): JsonValue {
 export async function rewriteManifest(pkg: PublishPackage, write: boolean): Promise<PackageManifest> {
 	const manifestPath = path.join(repoRoot, pkg.dir, "package.json");
 	const manifest = (await Bun.file(manifestPath).json()) as PackageManifest;
+	if (pkg.publishName) manifest.name = pkg.publishName;
 	if (pkg.publishBin) manifest.bin = { ...pkg.publishBin };
 	if (typeof manifest.types === "string" && manifest.types.startsWith("./src/")) {
 		manifest.types = rewriteSrcToTypes(manifest.types);
@@ -231,8 +254,10 @@ export async function rewriteManifest(pkg: PublishPackage, write: boolean): Prom
 		if (!files.includes(legalFile)) files.push(legalFile);
 	}
 	const hasDist = files.includes("dist");
-	if (!hasDist && !files.includes("dist/types")) files.push("dist/types");
-	if (pkg.publishJs && !hasDist && !files.includes("dist/js")) files.push("dist/js");
+	if (!pkg.skipBuild) {
+		if (!hasDist && !files.includes("dist/types")) files.push("dist/types");
+		if (pkg.publishJs && !hasDist && !files.includes("dist/js")) files.push("dist/js");
+	}
 	for (const extra of pkg.extraFiles ?? []) {
 		if (!hasDist && !files.includes(extra)) files.push(extra);
 	}
@@ -246,21 +271,25 @@ async function preparePackage(pkg: PublishPackage): Promise<PackageManifest> {
 	for (const argv of pkg.preBuild ?? []) {
 		await $`${argv}`.cwd(pkgDir);
 	}
-	await $`bun x tsgo -p tsconfig.publish.json`.cwd(pkgDir);
-	for (const cfg of pkg.extraTypeConfigs ?? []) {
-		await $`bun x tsgo -p ${cfg}`.cwd(pkgDir);
-	}
-	if (pkg.publishJs) {
-		await $`bun x tsgo -p tsconfig.publish.js.json`.cwd(pkgDir);
+	if (!pkg.skipBuild) {
+		await $`bun x tsgo -p tsconfig.publish.json`.cwd(pkgDir);
+		for (const cfg of pkg.extraTypeConfigs ?? []) {
+			await $`bun x tsgo -p ${cfg}`.cwd(pkgDir);
+		}
+		if (pkg.publishJs) {
+			await $`bun x tsgo -p tsconfig.publish.js.json`.cwd(pkgDir);
+		}
 	}
 	const sourceManifest = (await Bun.file(path.join(pkgDir, "package.json")).json()) as PackageManifest;
 	await stageLegalPayloads(pkgDir, sourceManifest.license, !isDryRun);
 	// Both emits run under `moduleResolution: "Bundler"`, so relative
 	// specifiers land extensionless — unresolvable for a `nodenext` consumer
 	// (types) and for Node ESM at runtime (js). Rewrite them to explicit `.js`.
-	await fixEmitExtensions(path.join(pkgDir, "dist/types"), ".d.ts");
-	if (pkg.publishJs) {
-		await fixEmitExtensions(path.join(pkgDir, "dist/js"), ".js");
+	if (!pkg.skipBuild) {
+		await fixEmitExtensions(path.join(pkgDir, "dist/types"), ".d.ts");
+		if (pkg.publishJs) {
+			await fixEmitExtensions(path.join(pkgDir, "dist/js"), ".js");
+		}
 	}
 	return rewriteManifest(pkg, !isDryRun);
 }
@@ -444,7 +473,13 @@ async function publishNativePackage(pkg: PublishPackage): Promise<void> {
 	await packAndPublish(pkgDir, name, version);
 }
 
-async function publishPackage(pkg: PublishPackage): Promise<void> {
+async function publishPackage(pkg: PublishPackage, scope: Scope): Promise<void> {
+	const sourceManifest = (await Bun.file(path.join(repoRoot, pkg.dir, "package.json")).json()) as PackageManifest;
+	const effectiveName = pkg.publishName ?? sourceManifest.name ?? path.basename(pkg.dir);
+	if (!inScope(effectiveName, scope)) {
+		console.log(`Skipping ${effectiveName} (out of scope ${scope})`);
+		return;
+	}
 	if (pkg.kind === "native") {
 		await publishNativePackage(pkg);
 		return;
@@ -458,15 +493,33 @@ async function publishPackage(pkg: PublishPackage): Promise<void> {
 		console.log(`Skipping ${name} (private)`);
 		return;
 	}
+	if (!inScope(name, scope)) {
+		console.log(`Skipping ${name} (out of scope ${scope})`);
+		return;
+	}
 	await packAndPublish(pkgDir, name, version);
 }
 
+/** E022 Inc 06 (CTO decision 6): CI publishes the omp-named packages (every
+ * one of which skips as already-published upstream at the pinned version);
+ * the Kaidera-scoped engine + wrapper are published manually from the
+ * release workstation, where the Kaidera npm credentials live. */
+type Scope = "all" | "omp" | "kaidera";
+function inScope(name: string, scope: Scope): boolean {
+	if (scope === "all") return true;
+	if (scope === "kaidera") return name.startsWith("@kaidera/");
+	return !name.startsWith("@kaidera/");
+}
+
 if (import.meta.main) {
+	const scopeArg = process.argv.indexOf("--scope");
+	const scope: Scope =
+		scopeArg === -1 ? "all" : ((process.argv[scopeArg + 1] as Scope) ?? "all");
 	if (nativeLeafTag) {
 		await publishNativeLeafPackage(nativeLeafTag);
 	} else {
 		for (const pkg of packages) {
-			await publishPackage(pkg);
+			await publishPackage(pkg, scope);
 		}
 	}
 }
