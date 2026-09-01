@@ -1,4 +1,11 @@
-# EPIC SPEC — E020: 0.1.10 maintenance release (scope closed)
+# EPIC SPEC — E020: 0.1.10 maintenance release (CANCELLED)
+
+> **CANCELLED 2026-09-01 (CTO):** the thin 0.84-line maintenance cut is skipped —
+> this line ships nothing further and stays maintenance-only (security/crash fixes,
+> unreleased). The version number 0.1.10 moves to the fork line's first public
+> release: see `Program/Release_v0.1.010/E022_FORK_RELEASE/EPIC_SPEC.md`.
+> `/shake thinking` and the dogfood-campaign outputs already landed on this branch
+> and carry forward through the fork port, not through a release from here.
 
 **Epic:** E020_OMP18_FOLDINS → **rescoped to a thin maintenance release**
 **Release:** v0.1.10 (0.1.10 — ships ONLY on explicit CTO consent per docs/RELEASE_SOP.md)

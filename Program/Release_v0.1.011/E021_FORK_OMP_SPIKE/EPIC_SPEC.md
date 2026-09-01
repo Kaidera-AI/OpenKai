@@ -1,8 +1,11 @@
 # EPIC SPEC — E021: the omp fork spike — OpenKai on omp's base
 
 **Epic:** E021_FORK_OMP_SPIKE
-**Release:** v0.1.011 (0.1.11 — the fork's first public release; ships ONLY on
-explicit CTO consent per docs/RELEASE_SOP.md)
+**Release:** ~~v0.1.011~~ → **RENUMBERED 2026-09-01 (CTO): the fork's first public
+release ships as v0.1.10**, spec'd in `Program/Release_v0.1.010/E022_FORK_RELEASE/`
+(the 0.84 thin cut that held the number is cancelled). This directory name stays as
+a historical artifact of the spike. Ships ONLY on explicit CTO consent per
+docs/RELEASE_SOP.md.
 **Owner:** kai@openkai (lead) · **spike lead: ren@openkai (CPO)**
 **Opened:** 2026-08-22 · **Decision:** CTO 2026-08-22 ("lets go with
 recommendation, lets start working on the fusion and the RLM; for memory, stick

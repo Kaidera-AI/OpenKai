@@ -3,13 +3,25 @@
 **Program:** OpenKai v1 — standalone open-source agent harness + TUI with Cortex memory and fusion
 **Product ADR:** `research/2026-08-14-openkai-harness-tui-ADR.md` (ratified 2026-08-14, D1–D5) · OK-9 `research/2026-08-18-shift-fusion-orchestration-ADR.md` (ratification requested 2026-08-18)
 **Ledger owner:** kai@openkai (lead) · PM hygiene: beat@openkai
-**Updated:** 2026-08-19 (ren@openkai — full inventory + E017 epic)
+**Updated:** 2026-09-01 (kai@openkai — E022 opened, 0.1.10 renumbered to the fork, goals refreshed)
 
 ---
 
 ## Release plan
 
-**Last shipped: E017 — v0.1.007 (2026-08-19).** Next: DeepSeek/Cordis plugin-architecture review (ADR parked in main's checkout: `research/2026-08-19-adr-ok9-deepseek-harness-cordis.md`) + OK-10 served-TUI increments 11.1–11.5. **Current epic: E017 — Orchestration Composition (v0.1.007).** Spec: `Program/Release_v0.1.007/E017_ORCHESTRATION_COMPOSITION/EPIC_SPEC.md` (opened 2026-08-19, ren@openkai). Goal: wire the composition the research proves — shift predicts, fusion multiplies, the gate verifies, outcomes teach the router — and make it visible in the TUI. 10 increments (TUI visibility slice → orchestration facade → operator priorities → cascade completion → compaction switch → reward loop → synthesis upgrade → calibration harness → release-key signing → release with adversarial gate).
+**Last shipped: E019 — v0.1.9 (2026-08-23)** on all four channels (npm, brew, install.sh, bun); the published core carries the SSRF guard (tarball-verified 2026-09-01). **The product line forked (E021):** `Kaidera-AI/OpenKai` main is the omp-fork line since the 2026-08-22 CTO cutover (upstream `can1357/oh-my-pi` v18, openkai layer behind extension seams, 18/18 spike gates green, upstream v18.0.10 merged clean); the pi-0.84 line lives on `maintenance/0.84-line` (maintenance-only, unreleased — its thin 0.1.10 cut is CANCELLED). **Current epic: E022 — Fork Release (v0.1.10, renumbered from 0.1.11 by CTO 2026-09-01).** Spec: `Program/Release_v0.1.010/E022_FORK_RELEASE/EPIC_SPEC.md`. Contents: upstream v18.0.11 sync → theme/brand completeness (+ `--theme`/`OPENKAI_THEME`, KOS priority) → 0.1.9 parity census → fusion-first defaults + switchyard recommendations → clean-room TUI-native push-to-talk (whisper.cpp; LocalFlow is licence-barred from bundling) → four-channel release machinery + fork CI → trust surface + KOS reply → adversarial rounds → ship on CTO consent. Dev handoff: `docs/HANDOFF_KAI_E022_OMP_K3.md`.
+
+### Standing goals (refreshed 2026-09-01 from the omp+K3 session record)
+
+1. Build from the omp source line; keep incorporating upstream improvements (latest directive 2026-08-29).
+2. Fusion + switchyard + RLM are the core, default-on: 2-model pairing suggested by the scorer (never hardcoded), provider→model selection for both slots, interactive `/fuse`, operator-priority UI.
+3. The formula: **functionality from omp, look and feel from Droid/Kaidera** — sharp hexagon, brand colours, splash every launch.
+4. Settings is the container (themes inside, live preview); zero-friction in-TUI onboarding (keyless boot is a permanent gate; subscription sign-in incl. Claude in-TUI; only `/exit` exits).
+5. Output legibility + permission control the user can see and steer; claude-code-grade mouse/input.
+6. Release control is the CTO's: explicit consent, pre-publish feature checklist (nothing demoed ever drops again), channel-aware upgrade, signed brew.
+7. Adversarial gates every release (ren → K3 → qwen3.8) with recorded handoffs.
+8. OpenKai independent; KOS bundles it over one canonical provider/model config; Cortex is the shared memory (registration currently MISSING in the shared API — operator restore pending).
+9. NEW (2026-09-01): fully-local push-to-talk voice input in the TUI, clean-room (whisper.cpp), KaiVoice/provider STT as future pluggable backends.
 
 | Sprint | Window | Contents | Exit | Status |
 |---|---|---|---|---|
