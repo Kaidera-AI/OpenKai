@@ -767,6 +767,11 @@ jobs:
       runs-on: ubuntu-22.04
       permissions:
          contents: write
+         # SLSA build provenance for the signed release channel (docs/
+         # RELEASE_SOP.md): users verify with
+         # `gh attestation verify <binary> --repo Kaidera-AI/OpenKai`.
+         id-token: write
+         attestations: write
       steps:
          - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
          - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -811,6 +816,15 @@ jobs:
                 latest.json \
                 LICENSE \
                 THIRD-PARTY-NOTICES.txt
+         # Signed release channel (SOP): SLSA build-provenance attestations on
+         # every platform binary, uploaded before the release is created so the
+         # attestation bundle ships with the release assets.
+         - name: Attest build provenance
+           uses: actions/attest-build-provenance@v2
+           with:
+              subject-path: |
+                 packages/coding-agent/binaries/omp-*
+                 packages/browser-relay/dist/omp-browser-relay-extension.zip
          - name: Create GitHub Release
            uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
            with:
