@@ -32,8 +32,12 @@ case "$os" in
     *) echo "openkai: unsupported OS: $os (use npm: npm i -g @kaidera/openkai)" >&2; exit 1 ;;
 esac
 
-asset="openkai-$os-$arch"
+# The 0.1.10 fork line ships omp-* engine binaries (the OpenKai wrapper is the
+# npm/bun surface); older 0.1.* lines shipped openkai-*. Fetch omp- first.
+asset="omp-$os-$arch"
+legacy="openkai-$os-$arch"
 url="https://github.com/$REPO/releases/download/$VERSION/$asset"
+legacy_url="https://github.com/$REPO/releases/download/$VERSION/$legacy"
 
 echo "openkai: downloading $asset ($VERSION)"
 tmp="$(mktemp -d)"
@@ -50,10 +54,19 @@ fetch() {
     fi
 }
 
-fetch "$url" "$tmp/openkai"
+if ! fetch "$url" "$tmp/openkai" 2>/dev/null; then
+    echo "openkai: no omp-* asset, trying legacy openkai-* name" >&2
+    fetch "$legacy_url" "$tmp/openkai"
+fi
 
 # Verify the published checksum, when one exists, before touching DEST.
 if fetch "$url.sha256" "$tmp/openkai.sha256" 2>/dev/null; then
+    :
+elif fetch "$legacy_url.sha256" "$tmp/openkai.sha256" 2>/dev/null; then
+    :
+elif fetch "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" 2>/dev/null; then
+    # The 0.1.10 fork line publishes one SHA256SUMS.txt, not per-asset sidecars.
+    grep -E "[[:space:]]${asset}$" "$tmp/SHA256SUMS.txt" | awk '{print $1 "  " $2}' > "$tmp/openkai.sha256" || true
     expected="$(cut -d' ' -f1 < "$tmp/openkai.sha256" | tr -d '[:space:]')"
     # Accept only a bare 64-char hex digest.
     if [ "${#expected}" -ne 64 ] || [ -n "$(printf '%s' "$expected" | tr -d '0-9a-fA-F')" ]; then
