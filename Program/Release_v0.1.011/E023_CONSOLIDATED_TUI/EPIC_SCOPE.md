@@ -165,6 +165,7 @@ Cortex parked for v0.1.13; no code until the operator finalises it):
 - **Inc 05** — ship on CTO consent, four channels + Kaidera tap.
 - **Inc 06** — memory/Cortex implementation per MEMORY_CORTEX_DESIGN.md; opens
   only after the operator finalises its §7 open questions.
+  Dev handoff for the triggered session: `docs/HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md`.
 
 Exit criteria: parity census re-walked at 100% dispositioned; 9 standing goals
 re-audited; KOS reply updated if the minimum version moved; CHANGELOG + tag +
