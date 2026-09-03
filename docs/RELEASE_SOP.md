@@ -155,7 +155,8 @@ The private source handoff is deleted before publication. Users verify with:
 
 `scripts/install.sh` remains the zero-dependency path: sha256-verified before
 install, no trust prompt, no node. npm is the lockstep package channel, using
-canonical-repository OIDC rather than a long-lived publish token.
+canonical-repository OIDC with an `NPM_TOKEN` secret fallback only when npm has
+no matching trusted publisher, including a package's first release.
 
 **Release order (supersedes the earlier sequence where it differs):**
 consent → private source version/tag → SHA-verified canonical draft handoff →
