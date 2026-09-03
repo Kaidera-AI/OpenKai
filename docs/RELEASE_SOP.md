@@ -36,26 +36,23 @@ Consent is **per version, per session**. A consent for 0.1.5 does not cover 0.1.
 
 ## Release sequence (after consent)
 
-1. Prepare the executable source in private `Kaidera-AI/openkai-fork`: the
-   engine manifest, `@kaidera/openkai` wrapper, wrapper engine dependency, and
-   runtime `PRODUCT_VERSION` MUST have one `0.1.N` version.
-2. Run `bun run release <0.1.N>` from that source repository. It validates the
-   source commit, tags it, and uploads a SHA-256-recorded source handoff to a
-   **draft** release in canonical `Kaidera-AI/OpenKai`.
-3. The canonical `OpenKai release` workflow materializes that exact handoff,
-   verifies its source SHA and public-version contract, then builds every
-   native addon and standalone target.
-4. The workflow attaches all binaries, browser relay extension, signed
-   `latest.json`, checksums, and SLSA provenance to the still-private draft.
-5. It publishes `@kaidera/openkai-engine` before `@kaidera/openkai` through
-   npm OIDC trusted publishing.
-6. It removes the private handoff assets, publishes the canonical GitHub
-   release, then regenerates and pushes the Kaidera Homebrew formula from the
-   release asset digests.
-7. Verify the released registry versions, `latest.json`, and all canonical
-   release assets; then exercise the applicable installed update path.
-8. Report the source SHA, package versions, tag, distribution state, and every
-   authorized exception to the CTO.
+1. Fold every intended source, documentation, and candidate-tested feature into
+   `main`; the release commit is the candidate commit.
+2. Add accurate notes under `packages/coding-agent/CHANGELOG.md` →
+   `[Unreleased]`.
+3. Run `bun run release 0.1.N`. It atomically aligns
+   `@kaidera/openkai-engine`, `@kaidera/openkai`, the wrapper's engine pin,
+   `PRODUCT_VERSION`, and the `v0.1.N` tag. Inherited `@oh-my-pi/*`
+   compatibility packages retain their pinned upstream version.
+4. The tag pipeline builds every release binary, signs/attests the published
+   assets, generates `latest.json`, and verifies the published macOS binary.
+5. Only after those checks, the same pipeline publishes the engine before the
+   wrapper, then updates the OpenKai Homebrew formula. All public OpenKai
+   channels therefore carry the same `0.1.N` release.
+6. Verify registry versions, GitHub assets and `latest.json`, Homebrew state,
+   and an upgrade from the prior release.
+7. Report the version, tag, artifact checks, npm versions, and channel state to
+   the CTO.
 
 ## Known bootstrap quirk
 
@@ -69,12 +66,6 @@ Every version ≥0.1.6 uses the GitHub-hosted manifest and self-sustains.
 - 2026-08-18: v0.1.6 (npm + tag + release) published while the CTO considered
   0.1.006 not ready. Left in place (rollback is more disruptive); this SOP
   adopted; 0.1.007 started on `release/0.1.007`.
-
-- 2026-09-03: v0.1.12 is explicitly authorized with the Windows/PowerShell
-  runtime check and the clean-host, Cortex, and enrichment external gates
-  waived. The published release notes MUST carry this exception; build,
-  version-contract, asset-integrity, and non-waived smoke checks remain
-  required.
 
 ## Local-binary hygiene (added 2026-08-18)
 
@@ -95,33 +86,34 @@ because features validated on the `openkai-next` candidate repeatedly failed
 to reach the published channel (stale binaries, unmerged branches).
 
 **Fold-in gate — the candidate IS the release:**
-1. `openkai-next` (the UAT candidate) is rebuilt from the same private-source
-   SHA carried in the canonical release handoff.
-2. Every intended feature is present in the source handoff and in the packed
-   `@kaidera/openkai-engine` payload.
-3. All intended source work is merged to `openkai-fork/main` before the
-   source tag is created.
+1. `openkai-next` (the UAT candidate) is rebuilt from the SAME commit that
+   will be published. Never publish a commit the candidate wasn't built from.
+2. Diff the candidate's feature surface against the release commit:
+   `git log --oneline <candidate-build-commit>..HEAD` must be empty (or every
+   delta intentionally listed).
+3. Every feature the CTO tested on `openkai-next` (brand, mouse, panels,
+   commands) is present in the published tarball — verify by unpacking:
+   `npm pack @kaidera/openkai@<v> && tar -xzf` and grep the dist for the
+   feature markers.
+4. All research/handoff work intended for the release is MERGED to main
+   (check `git branch --contains` for feature branches).
 
 **Quality gate:**
-4. The source release check and the canonical workflow's version assertion,
-   native build, and applicable binary smoke paths succeed.
-5. CHANGELOG entry for the version exists and lists every folded increment.
-6. A gate may be waived only by explicit, version-scoped consent in the live
-   session; the canonical release notes MUST state the exception.
+5. `bun run check` and the changed-contract tests are green on the release
+   commit; CI repeats the full release matrix.
+6. Security checks required by the release gate are green.
+7. The OpenKai `[Unreleased]` entry names every folded user-visible change.
 
 **Channel gate (after consent):**
-7. Engine manifest, wrapper manifest, wrapper engine pin, and runtime version
-   are lockstep `0.1.N`.
-8. The source archive SHA and source revision are verified before canonical
-   builds begin; the handoff archive is removed before the draft is public.
-9. npm OIDC publishes `@kaidera/openkai-engine` before
-   `@kaidera/openkai`; both registry versions equal the release version.
-10. GitHub release contains every target binary, relay extension, checksums,
-    SLSA provenance, and a signed `latest.json` whose version equals npm.
-11. The Kaidera Homebrew formula is generated from those canonical asset
-    digests and pushed after the GitHub release is public.
-12. CTO explicit consent and every exception are recorded for this version in
-    this session.
+8. One product-version contract: engine, wrapper, wrapper dependency, runtime
+   stamp, `v0.1.N`, binaries, `latest.json`, and the OpenKai formula match.
+9. One CI pipeline builds every target, verifies the published GitHub release,
+   then publishes the engine → wrapper package pair in that order.
+10. Verify `latest.json`, npm package manifests, binaries, and Homebrew report
+    the same product version.
+11. Local-binary hygiene: refresh `~/.local/bin/openkai` + `openkai-next`;
+    `which -a openkai` reports the released version everywhere.
+12. CTO explicit consent recorded for THIS version in THIS session.
 
 ## Homebrew tap trust (added 2026-08-18)
 
@@ -145,24 +137,21 @@ code-execution policy (formulas are Ruby), identical for every third-party tap.
 We therefore do NOT treat brew as the primary channel and never ask users to
 trust our tap as the intended flow.
 
-**Primary install = signed binaries:** canonical
-`.github/workflows/release.yml` is manually dispatched only after the
-consented source handoff is staged on a draft release. It verifies the handoff
-SHA, builds the source snapshot, attaches SLSA build-provenance attestations to
-every platform binary, and signs `latest.json` with the canonical release key.
-The private source handoff is deleted before publication. Users verify with:
+**Primary install = signed binaries:** `.github/workflows/ci.yml` runs on a
+`v0.1.*` tag pushed with the release commit and attaches SLSA
+build-provenance attestations to every platform binary. It publishes CI-built
+assets plus a fresh `latest.json` whose version is the same OpenKai product
+version carried by the npm engine and wrapper. Users verify with:
 `gh attestation verify <binary> --repo Kaidera-AI/OpenKai`
 
 `scripts/install.sh` remains the zero-dependency path: sha256-verified before
-install, no trust prompt, no node. npm is the lockstep package channel, using
-canonical-repository OIDC trusted publishing.
+install, no trust prompt, no node. npm is the lockstep package channel.
 
-**Release order (supersedes the earlier sequence where it differs):**
-consent → private source version/tag → SHA-verified canonical draft handoff →
-canonical CI builds/signs/stages assets → npm engine→wrapper publish → publish
-the GitHub draft → update Kaidera Homebrew tap. Document `brew trust` as a
-known Homebrew limitation, not the intended default.
-\n
+**Release order (supersedes earlier sequences where it differs):**
+consent → product-version bump → one CI tag pipeline builds+attests+uploads
+assets → published-asset verification → engine then wrapper npm publish →
+OpenKai Homebrew formula → end-to-end upgrade verification.
+
 ## Bun channel (added 2026-08-20)
 
 `bun add -g @kaidera/openkai` is a supported install channel. `openkai update`
