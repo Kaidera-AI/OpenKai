@@ -48,3 +48,31 @@ the heavy-runner label is parameterised: `vars.OMP_HEAVY_RUNNER || 'omp-kata'`
 (hosted, real display, bazel-capable). The tag was moved to the true release
 tip `b65f1ff271` (the CI workflow triggers on main pushes; the release run is
 dispatched with the tag at HEAD).
+
+## Post-ship amend (2026-09-03, kai)
+
+Landed on product main after the cut; NOT re-tagged (rides the next cut on CTO
+consent), so the published 0.1.10 binaries predate it except the brew channel
+below, which was repaired in place.
+
+- **Rebrand + fusion + OMLX batch** `5b7dd76a05` + `51062c9d1e`: pointy-top sharp
+  hexagon restored everywhere (brand/splash/welcome segfault-free), shimmer
+  pink-family → teal/lime/mint, `update` routed to the OpenKai channel-aware
+  upgrade (`update-omp` keeps upstream), ollama keyless lane verified.
+  Adversarial fold review dispatched to a kai@k3 session on
+  `docs/HANDOFF_KAI_REBRAND_FUSION_REVIEW.md` (fork); findings come back for
+  written disposition before the 0.1.11 fold gate.
+- **Short-terminal layouts** `f96329d37c` (fixes the K3-era 24-row wizard +
+  28-30-row resize regressions): below `PI_LOGO.length + 16` rows the welcome
+  box drops the 16-row hero + right column for the Kaidera glyph line, so the
+  retired header survives the composer's transient resize reflow.
+  welcome/wizard/splash suites 123/0, suite-wide 67/0.
+- **Kaidera tap repair** `fb1485e` (tap): the published openkai formula's
+  `v#{version}` URLs resolved to the nonexistent tag `v0.1.10` —
+  `brew install kaidera-ai/tap/openkai` 404'd on all four assets. Repaired to
+  literal `v0.1.010` URLs + `using: :nounzip` (bare binaries); sha256s verified
+  against the release SHA256SUMS.txt byte-for-byte.
+- **Tap CI** `69ff74d37c`: `release_brew_openkai` (gate-parity to
+  `release_brew`, short-circuits cleanly without the key) + `product-version`
+  output on `release_metadata` mapping v0.1.010 → 0.1.10. Operator action: add
+  the `KAIDERA_TAP_DEPLOY_KEY` secret so future cuts regen the formula.
