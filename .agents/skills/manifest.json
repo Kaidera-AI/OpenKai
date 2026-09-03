@@ -1,10 +1,65 @@
 {
   "_generated": {
-    "hash": "06e04a1dc51b",
+    "hash": "14f4cd365541",
     "note": "GENERATED FROM CORTEX — DO NOT EDIT",
     "source": "agent_skills+agent_skill_bindings"
   },
-  "bindings": [],
+  "bindings": [
+    {
+      "binding_type": "include",
+      "conditions": {},
+      "priority": 50,
+      "skill_slug": "kaidera-sdlc",
+      "subject": "cpo",
+      "subject_kind": "role",
+      "version_pin": null
+    },
+    {
+      "binding_type": "include",
+      "conditions": {},
+      "priority": 50,
+      "skill_slug": "kaidera-sdlc",
+      "subject": "full-stack-developer",
+      "subject_kind": "role",
+      "version_pin": null
+    },
+    {
+      "binding_type": "include",
+      "conditions": {},
+      "priority": 50,
+      "skill_slug": "kaidera-sdlc",
+      "subject": "knowledge-keeper",
+      "subject_kind": "role",
+      "version_pin": null
+    },
+    {
+      "binding_type": "include",
+      "conditions": {},
+      "priority": 50,
+      "skill_slug": "kaidera-sdlc",
+      "subject": "lead",
+      "subject_kind": "role",
+      "version_pin": null
+    },
+    {
+      "binding_type": "include",
+      "conditions": {},
+      "priority": 50,
+      "skill_slug": "kaidera-sdlc",
+      "subject": "orchestrator",
+      "subject_kind": "role",
+      "version_pin": null
+    },
+    {
+      "binding_type": "include",
+      "conditions": {},
+      "priority": 50,
+      "skill_slug": "kaidera-sdlc",
+      "subject": "pm",
+      "subject_kind": "role",
+      "version_pin": null
+    }
+  ],
   "project": "openkai",
   "skills": []
 }
