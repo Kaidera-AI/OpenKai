@@ -37,4 +37,6 @@ Blast radius: user skills dir + one prompt line; nothing in the agent loop. Irre
 - `curl /boot/kai` → rule `sdlc-loop` + skill `kaidera-sdlc` present.
 
 ## Amendments
-(none yet)
+- 2026-09-03 — Proof ran on the final tree: `bun run check:types` clean, `bunx biome check` clean, `bun test test/openkai-sdlc-skill.test.ts test/openkai-registration.test.ts` → 9 pass / 0 fail, `bun test test/openkai-*.test.ts` → 127 pass / 0 fail; compiled `openkai/0.1.12` deployed as `openkai-next-fork`; `config list` → `skills.bundled = true`; a headless run (exits on the key check) still materialised `~/.omp/agent/skills/kaidera-sdlc/` with the marker at `83b3169c`; `GET /boot/kai` → rule `sdlc-loop` + skill `kaidera-sdlc`.
+- 2026-09-03 — Departures: the build now emits `dist/openkai` (the parallel session's public-identity rename), not `dist/omp`; the rule was first seeded with the file stem as slug (`openkai`) and deprecated via the admin plane before the consolidated-file reseed produced `sdlc-loop` — recorded as design-31 friction in the handoff return.
+- 2026-09-03 — Not in this plan: `/init` behaviour was not driven on the compiled binary (needs a model); covered by the prompt directive + touch-list only.
