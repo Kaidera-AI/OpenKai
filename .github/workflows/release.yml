@@ -355,10 +355,6 @@ jobs:
         with:
           targets: linux-x64-baseline linux-x64-modern
       - name: Publish engine before wrapper
-        env:
-          # npm uses this only when OIDC has no matching trusted publisher
-          # (including a package's first release).
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: bun scripts/ci-release-publish.ts --scope kaidera
 
   publish_release:
