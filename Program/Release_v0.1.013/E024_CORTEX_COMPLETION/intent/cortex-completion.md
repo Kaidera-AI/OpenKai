@@ -1,6 +1,6 @@
 # Intent: finish the OpenKai release — Cortex as the memory, operationally accepted
 
-Author: CTO (operator), relayed through `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Lead: kai@openkai. Status: accepted (planning stage; no build authorised by this intent).
+Author: CTO (operator), relayed through `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Lead: kai@openkai. Status: accepted 2026-09-04 (CTO: "yes to you" — recommendations D0–D6 accepted; build waves W3+ authorised on the plan's gates).
 Source: operator message 2026-09-04 ("a comprehensive plan for finishing this openkai release … all my instructions on cortex to replace all the omp memory stuff … folded in this delivery"); the handoff above; design v2 `Program/Release_v0.1.011/E023_CONSOLIDATED_TUI/MEMORY_CORTEX_DESIGN.md` (the detailed instructions). Date: 2026-09-04.
 
 ## Problem
@@ -30,4 +30,14 @@ OpenKai users (memory setting, `/cortex`, `/memory`, `learn`), the openkai roste
 6. D5 — who runs the clean-host drive and on what host (kos-test VM, or a fresh macOS user account)? Owner: CTO.
 
 ## Grill record
-Mode: quick (the operator's instructions are detailed; the genuine decisions are D0–D5 above). Decisions taken by kai under the standing order: epic/version allocation (E024 / 0.1.13), the single-authority document (`STATE.md`), the acceptance project pattern, and wave shape per the handoff §5. Next stage: SPEC (`EPIC_SPEC.md`) → PLAN (`PLAN.md`).
+Mode: quick (the operator's instructions are detailed; the genuine decisions are D0–D6 above). Decisions taken by kai under the standing order: epic/version allocation (E024 / 0.1.13), the single-authority document (`STATE.md`), the acceptance project pattern, and wave shape per the handoff §5.
+
+**Decisions — CTO 2026-09-04 ("yes to you"), on kai's recommendations:**
+- D0 — 0.1.12 stands as released; the ledger records it as a **consent exception** (external gates waived at publication); no re-tag; 0.1.13 follows RELEASE_SOP in full.
+- D1 — **retire omp's `local` memory pipeline**: `memory.backend` becomes `off | cortex`; migration `local → off` with a one-time notice; `learned.md` / `memory_summary.md` stay on disk; manual `cortex-ingest-memories --path` is the documented import; no automatic import.
+- D2 — no product export/import for legacy Hindsight/Mnemopi data; retention/discovery path documented.
+- D3 — hosted Cortex deferred to the platform workstream (alpha@kaidera) with acceptance criteria; not a 0.1.13 deliverable unless the contract and environment exist before W7.
+- D4 — acceptance drives use project `openkai-acceptance`, agent `probe` (role `probe`), created and archived per drive; production `openkai` never receives synthetic data.
+- D5 — transcript ingest stays off by default; retention per appliance config (`cortex-retain --status`).
+- D6 — kai runs the drives; the clean-host drive on the kos-test VM if reachable, else a fresh macOS user account; a missing host/credential is a blocked row with evidence.
+Next stage: W1 (ren reviews spec + plan) in parallel with W2 (drives).

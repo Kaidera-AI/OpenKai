@@ -2,7 +2,15 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
-## [0.1.11] — v0.1.011 (E023: memory/Cortex + features wave)
+## [0.1.12] — v0.1.12 (E023 shipped release)
+
+Released 2026-09-03 across the OpenKai npm wrapper and engine, GitHub binaries,
+`latest.json`, and Homebrew. The canonical product entry is
+`packages/coding-agent/CHANGELOG.md` in the source fork. E023's planned 0.1.11
+cut was renumbered to 0.1.12 at release; the section below preserves its
+programme-era detail.
+
+## [0.1.11] — planned cut, shipped as v0.1.12
 
 **22 commits since 0.1.10.** Tool set expanded to 14+ tools with LSP code
 intelligence, MCP integration, Plan/Act toggle, subagent steering, chat
