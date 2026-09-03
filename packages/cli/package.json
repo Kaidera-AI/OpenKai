@@ -1,6 +1,6 @@
 {
   "name": "@kaidera/openkai",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "OpenKai CLI + TUI \u2014 the operator surface for the OpenKai harness.",
   "type": "module",
   "bin": {

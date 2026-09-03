@@ -2,6 +2,67 @@
 
 All notable changes to OpenKai are documented here. The project adheres to [Semantic Versioning](https://semver.org/); the release tag style is `v0.01.001` (npm-normalised as `0.1.1`).
 
+## [0.1.11] — v0.1.011 (E023: memory/Cortex + features wave)
+
+**22 commits since 0.1.10.** Tool set expanded to 14+ tools with LSP code
+intelligence, MCP integration, Plan/Act toggle, subagent steering, chat
+connectors, hub daemon, and Kaidera Manifold provider. Memory/Cortex design
+v2 (sharpshooter retired onto cortex-ingest). Consolidated TUI scope for
+v0.1.11.
+
+### New tools
+
+- **LSP code intelligence** — `lsp` tool with 9 operations: definition,
+  references, hover, diagnostics, rename, symbols, code_actions, status,
+  reload. Auto-detects typescript-language-server, gopls, pyright.
+- **MCP integration** — `mcp_status` built-in + dynamic tool discovery from
+  `~/.openkai/mcp.json` config. JSON-RPC 2.0 stdio transport.
+- **Plan/Act toggle** — `/plan` command swaps agent tool set between full
+  (13+) and read-only (7) modes. Status bar shows plan state.
+- **Subagent steering** — `task` tool supports `outputSchema` for typed
+  JSON returns, IRC steering via `steerChild()`, `activeChildren()`.
+- **Chat connectors** — Slack Socket Mode bridge with per-thread OpenKai
+  sessions. `openkai bridge` CLI entry.
+- **Hub daemon** — Unix socket server for session persistence across
+  restarts. `openkai serve` CLI entry.
+
+### Providers
+
+- **Kaidera Manifold** — 21st provider: Kaidera's OpenAI-compatible `/v1`
+  aggregator edge. Config: `KAIDERA_MANIFOLD_API_KEY`,
+  `KAIDERA_MANIFOLD_BASE_URL`, `KAIDERA_MANIFOLD_PROJECT_ID`.
+
+### Memory & Cortex
+
+- **Memory design v2** — sharpshooter retired onto cortex-ingest;
+  embedding/rerank pickers; hosted Cortex parked (alpha handoff).
+- **Cortex live contract** — session ingestion into `/sessions/ingested-ids`
+  in managed mode.
+
+### TUI
+
+- **15-line hexagon splash** — thin-box-drawing hexagon with 9 nodes,
+  Kaidera brand mint gradient.
+- **8-line compact boot mark** — `KAIDERA_MARK_COMPACT` for the boot card.
+- **Theme auto-detection** — OSC 11 + COLORFGBG fallback, 150ms timeout.
+- **Two-sided status bar** — left: brand/agent/provider/git/persist/state,
+  right: tokens/ctx/model. 4 presets.
+- **Git + context chips** — `git:<branch>` and `ctx:<percent>` chips.
+- **`/models` fullscreen hub** — 814 models, ctx+cost, sidebar scopes.
+- **Tips** — 26 tips with weighted `[NEW]` rotation.
+
+### Research & architecture
+
+- **DeepSeek Harness ADR (OK-9)** — plugin architecture from Cordis.
+- **OMP v18.0.0 research** — off-thread TtyWriter, async spellcheck.
+- **jcode research** — Rust-based, RAM efficiency, semantic memory.
+- **OpenCodeReview skill** — hybrid deterministic + agent code review.
+- **Fusion + Switchyard research** — FU-1 through FU-5 fusion core.
+
+### Governance
+
+- `docs/RELEASE_SOP.md` binding: no publish without explicit CTO consent.
+
 ## [0.1.10] — v0.1.010 (E022: the fork's first public release — DRAFT, ships on CTO consent)
 
 The omp-fork line's first release (the 0.84 thin cut that previously held this
