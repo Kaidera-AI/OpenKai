@@ -1,86 +1,72 @@
-<div align="center">
-
 # OpenKai
 
-**The open agent harness + TUI.** 30+ providers and subscriptions, durable memory, multi-model fusion — in a terminal that treats you like an operator, not a passenger.
+OpenKai is Kaidera's terminal-first coding agent. Its TUI lets you choose models, supervise worker agents, use an advisor for a second opinion, ask an explicit Fusion team to compare hard choices, and optionally share durable project memory through Cortex.
 
-![OpenKai TUI](docs/assets/tui-hero.png)
+## Start with the TUI
 
-[![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![CI](https://github.com/Kaidera-AI/OpenKai/actions/workflows/ci.yml/badge.svg)](https://github.com/Kaidera-AI/OpenKai/actions/workflows/ci.yml)
-[![Status](https://img.shields.io/badge/status-alpha-orange)]()
-
-</div>
-
----
-
-## Why OpenKai
-
-Every agent harness gives you a chat box. OpenKai gives you a **workstation**:
-
-- **Every provider, one flag.** OpenRouter's 300+ model catalogue, direct providers (Anthropic, OpenAI, Google, DeepSeek, Kimi, Qwen, xAI, Mistral, Groq, Cerebras, Together, Fireworks, NVIDIA, MiniMax, Z.ai…), and subscription lanes (Codex, Copilot). `--provider anthropic --model …` and you're running. Keys live in a local `.env` — yours, never uploaded.
-- **Durable memory.** Sessions persist as branchable JSONL trees; when attached to a [Cortex](https://github.com/Kaidera-AI) deployment, every run checkpoints into pgvector-backed project memory. Standalone mode works fully offline.
-- **Fusion, honestly.** `openkai fuse` runs your task through an architect + builder panel (separate fresh sessions, in parallel), then a third session merges them into an attributed synthesis — consensus, divergences kept with attribution, discards with reasons, blind spots. Optional **gate-first validation**: a validator designs executable checks *before* any work, the baseline must fail red, and the loop halts loudly at the cap. No silent merges.
-- **Consent, not theatre.** A real permission engine gates `write_file`/`edit_file`/`bash` with inline diffs and once/always/reject. The deny floor (`.env`, keys, `.ssh`) is enforced at the tool layer and cannot be rule-overridden. Shadow-git snapshots before every approved mutation — `openkai undo` restores.
-- **Terminal-native design.** Design tokens, one interaction grammar on every overlay, clean-by-default density with thinking behind `Ctrl+O`, command palette (`Ctrl+K`), prompt stash, frecency history, focus-aware attention, per-agent identity.
-
-## Install
-
-```bash
-# Homebrew (macOS/Linux)
-brew install kaidera-ai/tap/openkai
-
-# curl (standalone binary, no node required)
-curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh
-
-# npm (node ≥ 22.19)
-npm install -g @kaidera/openkai
-
-# bun
-bun add -g @kaidera/openkai
+```sh
+openkai
 ```
 
-Then: `openkai info` to self-check, `openkai` to start. Upgrades: `openkai
-upgrade` detects the channel and runs it (brew → `brew upgrade`, npm →
-`npm install -g`, bun → `bun add -g`, standalone → signed self-upgrade);
-rollback built in.
+Then use these three commands:
 
-```bash
-# 30 seconds to a working agent
-echo 'OPENROUTER_API_KEY=…' >> ~/.openkai/.env
-openkai chat --prompt "explain this repo's layout"
-openkai fuse --prompt "design the caching layer" --gate
+```text
+/login       connect a provider
+/model       choose the active model
+/settings    change durable preferences
 ```
 
-## The surface
+Ask a small question about the current folder first. Type `/help` at any time.
 
-| Command | What it does |
-|---|---|
-| `openkai` / `openkai tui` | The alt-screen TUI: streaming transcript, tool cards, permission overlays, palette |
-| `openkai chat --prompt …` | Print-mode single turn (scriptable) |
-| `openkai fuse --prompt … [--gate]` | Architect + builder panel → attributed synthesis; optional gate-first validation |
-| `openkai fusion report` | Per-model-pair A/B telemetry from your runs |
-| `openkai sessions` | Browse/resume branchable session trees |
-| `openkai undo [--history]` | Restore the work tree to a pre-mutation snapshot |
-| `openkai events --print` | Live Cortex event stream (managed mode) |
-| `openkai info` | Self-check: mode, providers, catalogue, local state |
-| `openkai upgrade` / `rollback` | Dual-channel auto-update with kill-switch and witness verification |
+| Need | Control |
+| --- | --- |
+| Continue the previous conversation | `.` |
+| Search conversation history | `Ctrl+R` |
+| Leave safely and keep an unfinished draft | `Ctrl+D` |
+| Watch or steer a worker agent | `Alt+A`, select an agent, then `Enter` |
+| Ask a deliberate model team | `/fusion your task` |
+| Check Cortex and memory health | `/cortex status`, `/memory stats` |
 
-## Design rules we hold
+## Two ways to use more than one model
 
-1. **Tokens, not literals** — one theme module is the only colour source.
-2. **One interaction grammar** — every overlay: `↑/↓ Navigate · Enter Select · ESC Cancel`.
-3. **Clean by default** — thinking collapses; density on demand; nothing moves without meaning.
-4. **Evidence or it didn't happen** — tests, reproducers, captured frames. No performance claim without its script.
+**Two-model teamwork is the normal mode.** The active model works while an advisor model checks progress and sends notes. Turn it off in **Settings → Model → Two-model teamwork** when you deliberately want one model. A child agent can also be set to one-model mode in Agent Hub.
+
+**Fusion is a focused comparison for a difficult decision.** `/fusion` starts an Architect, a Builder, and a fresh Judge. The Architect plans, the Builder gives an independent answer, and the Judge tells you what agrees, which choice to keep, what to set aside, and what to check.
+
+```text
+/fusion design a safe migration for this service
+/fusion help
+```
+
+## Optional Cortex memory
+
+Cortex is a shared project notebook. Enable it from **Settings → Memory**, then:
+
+```text
+/cortex status
+/cortex install
+/cortex register [project] [agent] [role]
+```
+
+Installation and registration ask before changing anything. Registration requires `CORTEX_ADMIN_TOKEN`; a normal API token cannot create a shared project or roster.
 
 ## Documentation
 
-[Quickstart](docs/quickstart.md) · [Commands](docs/commands.md) · [Sessions](docs/sessions.md) · [Fusion](docs/fusion.md) · [Memory](docs/memory.md) · [Providers](docs/providers.md) · [Tools](docs/tools.md) · [Brand](docs/brand.md) · [Run modes](docs/modes.md) · [Install runbook](docs/install.md) · [Onboarding](docs/onboarding.md)
+- [TUI first steps](docs/tui-first-steps.md)
+- [Installation](docs/install.md)
+- [Cortex projects, agents, profiles, personas, and steering](docs/cortex-projects-agents.md)
+- [Memory](docs/memory.md)
+- [Fusion](docs/fusion.md)
+- [Providers](docs/providers.md)
+- [Commands](docs/commands.md)
+- [Modes](docs/modes.md)
+- [Sessions and agent steering](docs/sessions.md)
+- [Tools](docs/tools.md)
+- [Fork boundary and upstream compatibility](docs/FORK-SOP.md)
+- [Finalization handoff](docs/HANDOFF_GITHUB_OPENKAI_FINALISATION.md)
 
-## Contributing
+## Release status
 
-OpenKai is built in the open and contributors are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) — the short version: tests green, typecheck green, security audit green, evidence in the PR. Good first issues are labelled. [Code of Conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md).
+The tracked E023 memory, Fusion, advisor, installer, and branding work is **unreleased** until the source fork passes its focused validation and the required clean-host/local-Cortex checks are recorded. Documentation names the intended public `openkai` command and `openkai-*` release assets; it does not claim that an unpublished build has shipped.
 
-## Licence
-
-MIT © Kaidera contributors. Built on the MIT-licensed pi substrate ([pi-ai](https://www.npmjs.com/package/@earendil-works/pi-ai), pi-tui, pi-agent-core). Strix-derived skills under `.agents/skills/` are Apache-2.0 with attribution.
+**Windows validation caveat:** this package candidate has not received a PowerShell parser check or a Windows-host install run. It may be packaged by explicit approval, but it must not be represented as Windows-validated.

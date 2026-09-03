@@ -1,193 +1,51 @@
-# Memory & Cortex
+# Memory
 
-OpenKai's memory system is **Cortex-first** — pgvector-backed project memory
-with embeddings and reranking. Standalone mode works fully offline.
+OpenKai supports memory as an optional capability. Choose it in **Settings → Memory**.
 
-## Architecture
+| Backend | Use it when | Scope |
+| --- | --- | --- |
+| **Off** | You want no memory backend | None |
+| **Local** | You want memory that stays on this machine | Local profile/session storage |
+| **Cortex** | A project needs shared, durable memory | Registered Cortex project |
 
-```
-openkai
-  └── ~/.openkai/
-      ├── sessions/          # Local JSONL session trees (always available)
-      ├── .env               # API keys (yours, never uploaded)
-      └── config.json        # Session config (model, provider, theme)
+## Cortex flow
 
-Cortex (managed mode)
-  └── http://127.0.0.1:8501  # cortex-api REST endpoint
-      ├── /sessions          # Session ingestion + checkpoint
-      ├── /memory            # Project memory (pgvector embeddings)
-      ├── /decisions         # Decision log
-      ├── /handoffs          # Agent coordination
-      └── /search            # Semantic search across project memory
+```text
+/cortex status
+/cortex install
+/cortex register [project] [agent] [role]
+/memory stats
 ```
 
-## Modes
+`/cortex install` and `/cortex register` ask before changing state. Registration requires `CORTEX_ADMIN_TOKEN`; it creates a project and its first roster writer. A normal Cortex API token does not grant that administrative operation.
 
-### Standalone (default)
+Once active, Cortex can recall relevant shared context on a first prompt, search through `cortex_search`, write intentional facts with `cortex_record` or `learn`, and receive high-signal decision deltas after substantive work.
 
-No Cortex required. Sessions persist as local JSONL trees. Memory is
-local-only. Fully offline.
+## Safe write rules
 
-```bash
-openkai  # starts in standalone mode
-```
+- An implicit Cortex write uses the registered project default writer.
+- An explicit writer can be selected with **Cortex Agent** or `OPENKAI_AGENT`.
+- If neither is valid, OpenKai refuses the write instead of sending a placeholder identity.
+- Text crossing the Cortex write boundary is redacted for known credential patterns.
 
-### Managed (Cortex-backed)
+The automatic delta extractor accepts only friction-earned decisions such as corrections, regressions, and subtle constraints. It strips code fences, quote lines, diff-style payloads, and log-looking lines before checking evidence.
 
-Attach to a Cortex deployment for durable project memory:
+## Transcript ingest
 
-```bash
-# Point OpenKai at your Cortex API
-export CORTEX_API_URL=http://127.0.0.1:8501
-export CORTEX_PROJECT=myproject
+Transcript ingest is **off by default**. If you enable it in **Cortex Ingest**, OpenKai sends prepared visible user/assistant text at session end. Known secrets are redacted, but you should still treat this as deliberate sharing: do not enable it for conversations you do not intend to put in the shared service.
 
-openkai  # sessions checkpoint into pgvector-backed memory
-```
+## Enrichment providers
 
-## How memory works
+**Cortex Ingest** contains embedding and optional **Rerank model (Marksman)** settings. An unset reranker means vector-only retrieval.
 
-### 1. Session ingestion
+Selections are recorded under `~/.openkai/config.json`. OpenKai does not copy the active chat model's API key into Cortex. Configure the selected enrichment provider in the place Cortex expects credentials. With `CORTEX_ADMIN_TOKEN`, OpenKai attempts live appliance application; without it, the selection is reported as pending.
 
-Every session is ingested into Cortex as a structured document:
+Run `/cortex models` to refresh supported discovery. Live discovery currently covers Ollama and OpenRouter; the picker also carries curated NVIDIA NIM and DashScope rows.
 
-- Session ID, model, provider, timestamps
-- Turn-by-turn transcript (user/assistant/tool calls)
-- Fusion runs (architect/builder outputs, synthesis, gate results)
-- Tool call metadata (approval decisions, denial reasons)
+## Diagnose
 
-### 2. Embeddings
+- `/cortex status` — endpoint, local/hosted state, project registration, provider outcome.
+- `/memory stats` — memory backend and retrieval/degradation information.
+- `/cortex doctor` — installed appliance verification.
 
-Each turn is embedded as a semantic vector using the configured embedding
-model (default: `text-embedding-3-small`). The embedding captures the semantic
-meaning of the turn for similarity search.
-
-**Embedding models available:**
-- `text-embedding-3-small` — fast, cheap, good for most tasks
-- `text-embedding-3-large` — higher quality, better for nuanced queries
-- `text-embedding-ada-002` — OpenAI's general-purpose embedding
-
-### 3. Reranking
-
-When the agent searches memory, results are reranked using a cross-encoder
-model (default: `bge-reranker-v2-m3`). Reranking re-scores the top-k
-candidates for precision, not just recall.
-
-**Rerank models available:**
-- `bge-reranker-v2-m3` — best balance of speed and quality
-- `bge-reranker-large` — higher precision, slower
-- `bge-reranker-base` — fastest, lower precision
-
-### 4. Memory recall
-
-At the start of each turn, OpenKai queries the memory graph:
-
-1. **Semantic search** — embed the current prompt, find k nearest vectors
-2. **Rerank** — re-score candidates with the cross-encoder
-3. **Inject** — top results are injected into the system prompt as context
-4. **Gate** — a lightweight model verifies relevance before injection
-
-This happens **passively** — the agent does not call memory tools. The
-memory system works like human recall: relevant context surfaces
-automatically.
-
-### 5. Memory extraction
-
-Periodically (semantic drift, K turns since last extraction, session end),
-a memory side-agent extracts durable facts from the conversation:
-
-- **Lessons learned** — patterns that worked or failed
-- **Decisions** — architectural choices and their rationale
-- **Preferences** — coding style, naming conventions, tool preferences
-- **Project context** — file layout, dependencies, environment setup
-
-Extracted memories are stored in the project memory graph with embeddings
-for future recall.
-
-### 6. Memory consolidation
-
-Periodically (ambient mode), memories are reorganised:
-
-- Stale memories archived
-- Conflicting memories flagged
-- Duplicates merged
-- Importance re-scored
-
-## Configuration
-
-### `~/.openkai/config.json`
-
-```json
-{
-  "memory": {
-    "enabled": true,
-    "embeddingModel": "text-embedding-3-small",
-    "rerankModel": "bge-reranker-v2-m3",
-    "maxRecallItems": 5,
-    "consolidationIntervalHours": 12
-  }
-}
-```
-
-### Environment variables
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `CORTEX_API_URL` | Cortex API endpoint | `http://127.0.0.1:8501` |
-| `CORTEX_PROJECT` | Active project key | (required for managed mode) |
-| `OPENKAI_EMBEDDING_MODEL` | Embedding model override | `text-embedding-3-small` |
-| `OPENKAI_RERANK_MODEL` | Rerank model override | `bge-reranker-v2-m3` |
-| `OPENKAI_MEMORY_MAX_ITEMS` | Max memory items to inject | `5` |
-
-## CLI
-
-```bash
-# Check memory status
-openkai info
-
-# Search project memory
-cortex-search "how did we handle the auth flow?"
-
-# View recent decisions
-cortex-log kai decision "chose pgvector over chroma for memory"
-
-# Ingest a session into Cortex
-openkai sessions --ingest <session-id>
-
-# View ingested sessions
-openkai sessions --list
-```
-
-## Integration with fusion
-
-Fusion runs are also ingested into memory:
-
-- Architect and builder outputs are embedded separately
-- Synthesis artifacts are embedded as merged documents
-- Gate results (checks, outcomes, failures) are embedded as decision records
-- Fusion telemetry (bandit recommendations, pair performance) feeds the
-  memory graph
-
-This means the fusion system learns from past runs: the bandit recommends
-pairs based on what actually worked in similar tasks, not just generic
-model rankings.
-
-## Cortex repo
-
-The Cortex backend lives at
-[github.com/Kaidera-AI/cortex](https://github.com/Kaidera-AI/cortex).
-It provides:
-
-- REST API for session ingestion, memory, decisions, handoffs
-- pgvector-backed semantic search
-- Agent coordination (handoffs, claims, returns)
-- Project isolation (each project has its own memory graph)
-
-For local development, run Cortex locally:
-
-```bash
-# Start Cortex API (requires Docker + Postgres)
-cd ~/DevVault/kaidera-os
-docker-compose -f .agents/docker-compose.cortex.yml up -d
-```
-
-The API runs at `http://127.0.0.1:8501`. OpenKai auto-detects it.
+For project/agent/profile/personality/steering setup, see [Cortex projects and agents](cortex-projects-agents.md).

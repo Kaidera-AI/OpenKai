@@ -1,182 +1,52 @@
-# EPIC SCOPE — E023: consolidated TUI, next release (v0.1.11)
+# E023 scope — consolidated TUI remediation
 
-**Drafted:** 2026-09-03 · **Owner:** kai@openkai (lead) · **Status:** SCOPE for CTO
-consent — the epic opens only on explicit consent per docs/RELEASE_SOP.md.
-**Line:** `Kaidera-AI/OpenKai` main (the omp-fork line). Tag rule (CTO 2026-09-01):
-product 0.1.11 ships as tag `v0.1.011`.
-**Basis:** E022 ship record + post-ship amend; PARITY_CENSUS (Inc 02);
-EPIC_SPEC E022; standing goals (PROGRESS.md, refreshed 2026-09-01); the gap audit
-(`research/2026-08-21-openkai-tui-design-practices-gap-audit.md`); the KOS
-six-ask reply; the K3 fold review (in flight on the fork).
+**Status:** source remediation is implemented in a working tree. E023 is **not shipped** and this file is not release approval.
 
-The "consolidated TUI" is the fork surface as shipped: omp v18 functionality
-behind the extension seams + the openkai layer (fusion/shift/RLM, trust root,
-brand) + Kaidera look-and-feel. 0.1.10 proved the consolidation exists; 0.1.11
-makes it complete — every registry row either working or formally retired,
-every CTO port landed, upstream v18.1.0 folded, and the KOS terminal-lane
-contract proven live.
+## In scope
 
----
+E023 consolidates existing OpenKai surfaces around five connected user flows:
 
-## Goals
+1. **Start and configure OpenKai** — public command/installers/assets use `openkai`; the TUI leads with `/login`, `/model`, `/settings`, and `/help`.
+2. **Work with one or two models intentionally** — advisor teamwork is the default; Settings, Agent Hub, and task-agent frontmatter make single-model mode explicit.
+3. **Compare a hard decision** — `/fusion` runs Architect, Builder, and Judge and renders an actionable verdict.
+4. **Use shared project memory safely** — Settings-driven Cortex connection, roster-safe writes, opt-in transcript ingest, hostile pasted-text filtering, and visible provider state.
+5. **Install/register Cortex with operator control** — `/cortex preflight|install|register|agent|doctor|models` follow confirmation and administrator-token boundaries.
 
-Carry the nine standing goals (PROGRESS.md §Standing goals) and close the gaps
-they still name:
+## Explicitly out of scope
 
-1. **Upstream currency:** fold `omp (upstream)` v18.1.0 (tag present upstream;
-   the fork currently rides the 18.0.10/18.0.11 merge). Adopt upstream flows,
-   never fork them.
-2. **Fusion-first default-on, complete:** scorer-driven pairing, provider→model
-   pickers for both slots, operator-priority/routing surface in settings
-   (OK-9.7 — the one Inc-03 port still absent), headless `fuse` CLI + calibrate
-   exposure if ported (§Fixes/Upgrades).
-3. **Kaidera look-and-feel, complete:** sharp pointy-top hexagon everywhere
-   (restored post-ship; golden-gated), Kaidera shimmer family, splash every
-   launch, short-terminal layouts holding the brand (landed, rides this cut).
-4. **Zero-friction boot:** keyless boot (permanent gate, re-proven on the fork);
-   Claude subscription sign-in in-TUI proven by operator drive (0.1.10 walk item
-   still open); only `/exit` exits; short terminals and 24-row wizard safe.
-5. **Visible control:** legible output + steerable permission surface; parity
-   on mouse/input grammar (click-to-cursor, drag-select drives).
-6. **CTO release control:** parity census 100% dispositioned before the walk;
-   channel-aware upgrade (landed: `update` → OpenKai channels, `update-omp`
-   upstream); brew formula CI-regenerated (new job, secret-gated).
-7. **Adversarial chain:** ren → K3 → qwen3.8 passes with written dispositions;
-   the parked kai@k3 fold review of the rebrand/fusion/OMLX batch is the first
-   input, its findings dispositioned before the fold gate.
-8. **KOS contract:** canonical provider/model config write path (the
-   `openkai provider` port) so KOS bundles OpenKai over one config; terminal
-   lane live typed round-trip once KOS lifts the disabled policy (their side,
-   gated on our reply — minimum version re-stated as 0.1.11 if the ports land
-   after 0.1.10); session theme contract honoured (explicit `--theme`/
-   `OPENKAI_THEME` already; verify spawn-fixed theme renders match).
-9. **Voice/PTT stays OUT** (CTO 2026-09-01, transferred to kaidera-os).
+The following are not E023 deliverables and must not be claimed in release notes or public docs:
 
----
+- a new feature/labs/settings tab;
+- a public headless Fusion CLI, `fusion report`, or `fusion dashboard` command;
+- model-authored Fusion gates running shell commands;
+- generic dynamic discovery of arbitrary enrichment providers;
+- hosted Cortex service rollout or a platform-side credential workflow;
+- unrelated drawer/layout/plugin/obligation-ledger ports;
+- broad upstream version sync or a parity-census completion claim;
+- a release, package publication, tag, commit, or push.
 
-## Fixes (defects named for this cut)
+## Safety invariants
 
-Rides landed-but-unreleased (post-ship amend, main @ `69ff74d37c`+):
-- Rebrand/fusion/update-routing batch (`5b7dd76a05`, `51062c9d1e`): flat-top →
-  pointy-top hexagon, brand shimmer family, `update` channel routing, ollama
-  keyless lane.
-- Short-terminal welcome/wizard/resize regressions (`f96329d37c`), threshold
-  `PI_LOGO.length + 16` rows; suites 123/0.
-- K3-era opener regressions on compiled drives (24-row wizard, 28–30-row
-  resize) — same commit.
-- Kaidera tap: `v#{version}` URLs → nonexistent tag (brew install 404); repaired
-  in-tap (`fb1485e`) with literal `v0.1.010` + `using: :nounzip`; sha256s
-  verified. CI regenerator prevents recurrence.
-- REN-01 revisited (`7e908eb296`): `update` routed into the channel-aware
-  witnessed upgrade (amend batch) + a compiled-binary `--smoke-test` gate
-  asserting `BUILD_CHANNEL === "standalone"`, release-CI-enforced.
+- A Cortex durable write must use an explicit registered writer or the registered project default. No placeholder agent identity may leave OpenKai.
+- Automatic decision extraction must not turn pasted fences, quotes, diffs, or logs into durable evidence.
+- Transcript ingest stays off until the operator enables it.
+- OpenKai does not copy the active chat model credential into a Cortex enrichment-provider selection.
+- Installation, project registration, and roster changes require a user confirmation; project registration also requires `CORTEX_ADMIN_TOKEN`.
+- Public product surfaces use OpenKai/openkai. Internal runtime compatibility identifiers are not a license to expose legacy branding.
 
-Closed since the 0.1.10 cut (verified, not riding this cut):
-- **F10** (`list_files` on a `.ssh` *directory* node leaks names) — CLOSED on
-  both lines 2026-09-03 (fork gate-floor carries `**/.ssh` node-retained,
-  16/0 inverted-asserted; 0.84 REPRO 12 inverted green); drop from cutover.
-- **K3 fold-review findings** — CLOSED at `7bbbd125a0` (2026-09-03): ren's
-  REV-01/02/03 (welcome mark truncation, update-omp help, brand comment)
-  fixed with the permanent gate `test/openkai-welcome-fold.test.ts`; NO-GO
-  lifts on the evidence, ren revalidation moot.
-- **0.1.10 pre-publish walk failures** (PARITY_CENSUS §4 operator drives):
-  Claude subscription sign-in overlay, approval-mode picker UX + persisted
-  per-tool approvals, magic-keyword shimmer live, click-to-cursor/drag-select,
-  `/settings` theme live preview restore-on-cancel, Ctrl+R history search.
-  Each drive that fails becomes a named fix in Inc 02 of this epic.
-- **`/model` hub on 24-row terminals** (the 0.84 picker-crash regression drive)
-  — verify with the welcome-box fix in place; fix if it still breaks.
+## Exit criteria
 
----
+E023 can enter release review only after:
 
-## Full functionality upgrades
+1. `bun --cwd=packages/coding-agent run check` and focused changed-contract tests are green;
+2. interactive verification covers `/fusion help`, `/cortex help`, advisor/single-model configuration, and the TUI help tips;
+3. a clean-host public installer/binary drive proves the `openkai` executable and `openkai-*` assets;
+4. a local Cortex install → registration drive uses a valid admin token;
+5. a live provider-application drive proves or explicitly rejects the intended enrichment provider configuration; and
+6. the finalization handoff records exact results and remaining compatibility exceptions.
 
-CTO ports (the formula says missing functionality is added, not dropped;
-retire only on explicit CTO call — PARITY_CENSUS §5):
-- `/undo` + shadow-git undo (TUI + `undo` CLI) via the openkai layer.
-- Headless `fuse` CLI (`--cast`/`--gate`) + `fusion report/dashboard` exposure
-  (calibrate already ported in-layer).
-- Ctrl+S prompt stash + frecency.
-- `openkai provider` atomic comment-preserving config write path (KOS contract
-  — required, not optional).
-- `tail -f` activity feed: port-or-retire decision; default port-unless-CTO
-  says retire (Cortex/collab coverage recorded either way).
+Until then, the correct status is **unreleased, pending external acceptance**.
 
-TUI functionality completion (parity census ports not yet scoped):
-- Settings routing/posture tab (OK-9.7 operator-priority UI).
-- Session-tree/fork picker, Mermaid render, live task rows, word-diff —
-  census "match/adopt, drive-pending": promote to tested-and-golden or fixed.
+## Future scope rule
 
-Upstream fold:
-- v18.1.0 sync spike (Inc 00): merge, 75/75 openkai gates + composer/cli suites,
-  adopt-or-resist list for any upstream change touching the seams (theme,
-  brand splash, fusion panel, upgrade path).
-
-Release machinery upgrades:
-- `release_brew_openkai` CI (landed) exercised for the first time at this cut
-  (needs the `KAIDERA_TAP_DEPLOY_KEY` secret — operator action).
-- `product-version` output mapping (landed) proven in a real run.
-- `latest.json` witnessed manifest: no regressions; 0.1.9→0.1.11 upgrade path
-  re-proven on a copy.
-
-KOS & Cortex:
-- Live typed round-trip in the KOS terminal lane (their `builders.terminal_argv`
-  entry lands once their verification completes; we owe nothing further until
-  the ports above change the minimum version).
-- Cortex managed-mode ingest: gate stays environmental-blocked; the release
-  holds the test, registration remains an operator action.
-
-Memory/Cortex redesign (operator directives 2026-09-03; **design v2** in
-`MEMORY_CORTEX_DESIGN.md` — sharpshooter retired, cortex-ingest group, hosted
-Cortex parked for v0.1.13; no code until the operator finalises it):
-- settings>memory reworked onto Kaidera Cortex (`off | local | cortex`);
-  Hindsight and Mnemopi backends retired with migrated settings, every
-  `vectorize-io/hindsight` reference replaced by `github.com/Kaidera-AI/cortex`.
-- Cortex install detection + operator-confirmed install flow in the TUI
-  (`preflight`/`install`), project binding, status rows.
-- Auto-Learn replaced by **cortex-ingest** (settings group named after the
-  Cortex command); carry-over gates ported from sharpshooter, transcript
-  ingest optional, manage skill minting retired.
-- The sharpshooter backend is retired (its decision file remains as plain
-  paperwork); its delta extractor + friction filter are ported into
-  cortex-ingest as the high-signal stage.
-- Embedding model picker: local = Ollama ladder (live discovery), or any
-  configured provider — NVIDIA NIM free tier, OpenRouter, Alibaba DashScope —
-  with free/paid badges, live enrichment via `/v1/models` probe; writes to
-  the shared `providers.embedding`. Optional reranker picker writes to
-  `providers.rerank`; unset surfaces as vector-only, never silent.
-- Hosted Cortex via Kaidera platform is *parked* (out of scope for this cut):
-  the status row supports local / hosted / not-installed via `cortex.apiUrl`
-  + `cortex.token`; handoff to alpha@kaidera submitted
-  (`docs/HANDOFF_TO_ALPHA_KAIDERA_HOSTED_CORTEX.md`).
-
----
-
-## Proposed increments (consent asks for these as one epic)
-
-- **Inc 00** — upstream v18.1.0 fold + gates (build/typecheck/openkai/composer/cli,
-  golden frames).
-- **Inc 01** — the five CTO ports + settings routing tab.
-- **Inc 02** — operator walk closure: every §4 drive green on compiled binaries;
-  fixes for any failures.
-- **Inc 03** — release machinery dry-run (manifest, tap regen with the secret,
-  install.sh/bun/npm wrapper parity) + version lockstep 0.1.11/v0.1.011.
-- **Inc 04** — adversarial chain (ren → K3 → qwen3.8) + dispositions.
-- **Inc 05** — ship on CTO consent, four channels + Kaidera tap.
-- **Inc 06** — memory/Cortex implementation per MEMORY_CORTEX_DESIGN.md.
-  **DONE 2026-09-03** on fork branch `e023/inc-06-memory-cortex` (gates in
-  `INC_06_GATE.md`; §7 decisions taken on the recommended defaults). Awaiting the
-  adversarial chain (ren → K3 → qwen3.8); ships with Inc 05 on CTO consent.
-  Dev handoff: `docs/HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md`.
-
-Exit criteria: parity census re-walked at 100% dispositioned; 9 standing goals
-re-audited; KOS reply updated if the minimum version moved; CHANGELOG + tag +
-channels on consent only.
-
-## Future (parked, review later)
-
-- **v0.1.13 scoping: hosted Cortex services via the Kaidera platform**
-  (operator directive 2026-09-03). The client contract is already on the
-  OpenKai side (`CORTEX_URL`/`CORTEX_TOKEN`, `cortex.apiUrl`/`cortex.token`
-  rows); the platform-side plan goes to alpha@kaidera. Raise this at the
-  0.1.13 scoping gate, two cuts ahead.
+Future work must be proposed independently with one existing surface, one state owner, a user-visible contract, and a focused gate. The future item does not ride E023 merely because it concerns the TUI, memory, models, or installation.

@@ -1,98 +1,90 @@
-# Installing OpenKai
+# Install OpenKai
 
-> **Pre-release status.** `openkai` is not published to npm yet and there is
-> no public release page. Both commands below install from a locally built
-> artifact. The published forms are noted so this page needs only a one-line edit
-> at release; do not copy them yet — they will fail.
+Use one of the public installation paths below. Every path should leave an `openkai` command on `PATH`.
 
-Requires Node.js >= 22.19. The binary channel additionally requires
-[bun](https://bun.sh) to compile.
+## Package install
 
-## Channel 1 — npm
-
-At release, three channels:
-- **Homebrew**: `brew install kaidera-ai/tap/openkai`
-- **curl** (standalone binary): `curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh`
-- **npm**: `npm install -g @kaidera/openkai`
-
-Until then, pack the workspaces and install the tarballs. `--prefix` keeps this
-out of your real global install:
-
-```bash
-npm run build
-npm pack ./packages/core ./packages/cli
-npm install -g --prefix /tmp/openkai ./kaidera-openkai-core-0.1.1.tgz ./kaidera-openkai-0.1.1.tgz
-export PATH="/tmp/openkai/bin:$PATH"
+```sh
+npm install -g @kaidera/openkai
+# or
+bun install -g @kaidera/openkai
 ```
 
-The leading `./` on the pack arguments is required — `npm pack packages/core`
-resolves as the GitHub shorthand `github:packages/core` and fails with a git
-authentication error.
+Verify it:
 
-This channel is **pinned at build time and never self-mutates** — `openkai info`
-reports `channel: npm`. Upgrading means installing a newer package.
-
-## Channel 2 — standalone binary
-
-At release: download `openkai-<platform>` from the release page.
-
-Until then, compile it. The script defaults to your current platform and accepts
-explicit bun targets (`bun-darwin-arm64`, `bun-darwin-x64`, `bun-linux-arm64`,
-`bun-linux-x64`):
-
-```bash
-npm run build
-packages/cli/scripts/build-binaries.sh
-packages/cli/bin/openkai-darwin-arm64 info    # runs in place; no install step needed
+```sh
+openkai --version
+openkai
 ```
+
+## macOS and Linux installer
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh
+```
+
+The installer chooses a compatible prebuilt `openkai-*` binary when possible. It supports:
+
+```sh
+# Install through Bun instead of a prebuilt binary
+curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh -s -- --source
+
+# Require a prebuilt binary
+curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh -s -- --binary
+
+# Install a specific release, branch, or commit from source
+curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh -s -- --ref <ref>
+```
+
+Set `OPENKAI_INSTALL_DIR` to change the binary directory. The installer verifies `openkai --version` after installation and tells you if the directory is missing from `PATH`.
+
+## Windows PowerShell installer
+
+```powershell
+irm https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.ps1 | iex
+```
+
+Pass `--source`, `--binary`, or `--ref <ref>` using the script's PowerShell invocation form when needed. Confirm with:
+
+```powershell
+openkai --version
+openkai
+```
+
+## Homebrew
+
+```sh
+brew install kaidera-ai/tap/openkai
+```
+
+## First run
+
+```sh
+openkai
+```
+
+Then:
+
+1. `/login` connects a provider.
+2. `/model` chooses the active model.
+3. `/settings` changes persistent preferences.
+4. `/help` explains commands inside the TUI.
+
+See [TUI first steps](tui-first-steps.md) for the beginner path.
+
+## Cortex is separate from installation
+
+Installing OpenKai does not install or register a shared Cortex project automatically. From the TUI, use `/cortex status`; if you need local Cortex, use `/cortex install`. Registration is a separate confirmed action and requires `CORTEX_ADMIN_TOKEN`:
 
 ```text
-compiling openkai-darwin-arm64...
-  -> /path/to/packages/cli/bin/openkai-darwin-arm64
+/cortex register [project] [agent] [role]
 ```
 
-Copy it onto your `PATH` as `openkai` when you want it permanently. Unlike
-Channel 1 this build reports `channel: standalone` and supports self-upgrade
-and rollback — see
-[the onboarding walkthrough](onboarding.md#5-upgrades-and-rollback).
+See [Cortex projects and agents](cortex-projects-agents.md) for the full setup and privacy model.
 
-## Verify
+## Troubleshooting
 
-```bash
-openkai info
-```
-
-## Measured install-to-first-run
-
-Channel 1 executed into a throwaway prefix on darwin/arm64, Node v24.11.1.
-Across three runs: **13.3–15.3s** on a cold npm cache, **6.0s** warm — against
-a five-minute budget. One cold run, verbatim and unedited:
-
-```text
-$ time (npm install -g --prefix "$CLEAN/prefix" kaidera-openkai-core-0.1.1.tgz kaidera-openkai-0.1.1.tgz && openkai info)
-added 193 packages in 12s
-openkai 0.0.0
-node v24.11.1 · darwin/arm64
-
-mode: standalone-local (no CORTEX_PROJECT — local persistence only)
-model catalogue: 346 OpenRouter models bundled
-openrouter key: MISSING (chat/fuse need it)
-
-local state (/private/tmp/openkai-cold.VtaMRH):
-  sessions: 0
-  fusion runs: 0
-  shadow-git: none
-
-upgrade:
-  channel: npm (pinned at build time, never self-mutates)
-  current: 0.0.0
-  check availability: openkai upgrade --check
-
-13.342 total
-```
-
-193 packages is correct — the CLI has four direct dependencies that pull the
-rest transitively.
-
-`shadow-git: none` and `openrouter key: MISSING` are correct for a fresh
-machine; [onboarding](onboarding.md) covers both.
+- **`openkai: command not found`** — add the installer directory or Bun global bin directory to `PATH`, then open a new shell.
+- **Package install succeeds but startup fails** — run `openkai --version`; the installer/package post-check should expose the exact failure.
+- **No model available** — open the TUI, run `/login`, then `/model`.
+- **Cortex is unavailable** — this does not prevent normal OpenKai use. Run `/cortex status` for the next exact action.

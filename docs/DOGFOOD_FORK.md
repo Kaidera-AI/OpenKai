@@ -1,51 +1,24 @@
-# Dogfood drive — the fork (E021 F5)
+# Dogfood drive — OpenKai source fork
 
-The fork is installed as `openkai-next-fork` (the built omp/18.0.0 + the
-openkai layer). Drive it next to `openkai-next` (the 0.1.9 maintenance line)
-and compare — the cutover decision rides on this.
+Use this checklist against a built or development OpenKai executable. It is a behavioral checklist, not proof of release readiness.
 
-## Setup
+## Core drive
 
-```bash
-openkai-next-fork --version   # omp/18.0.0 + openkai layer
-openkai-next --version        # openkai 0.1.9 (maintenance line)
-```
+1. **Public identity** — `openkai --version` and TUI help say OpenKai/openkai.
+2. **Beginner path** — `/login`, `/model`, `/settings`, `/help`, `.`, `Ctrl+R`, `Ctrl+D`, and `Alt+A` make the same promises as `docs/tui-first-steps.md`.
+3. **Two-model teamwork** — main model/advisor is on by default; switch to deliberate single-model mode in Settings and for one child agent.
+4. **Fusion** — `/fusion help`, then `/fusion <task>`; see Architect, Builder, Judge, retained choice, discarded ideas, and checks. A failed role must not look like a Judge verdict.
+5. **Cortex status** — `/cortex help` and `/cortex status` give a usable next step. Confirm registration refuses without the administrator token.
+6. **Memory safety** — an unregistered implicit writer fails before a durable write; transcript ingest remains off until enabled.
+7. **Provider truthfulness** — changing an enrichment model reports live, pending, or failed application rather than guessing.
+8. **Protected actions** — confirm active approval and protected-path behavior with a harmless controlled scenario.
 
-## The fork drives (what to verify — the layer's gates)
+## External pre-release drive
 
-1. **Boot + brand** — the Kaidera theme is the default (mint accent on
-   graphite). If the first paint looks amber/blue, the theme default regressed.
-2. **Fusion** — ask: "use the fusion tool to decide X" or type `/fuse <task>`.
-   SEE: the ◆ fusion panel card, both roles, the judge's combined verdict.
-   A divergent verdict admits a verification child (rlm_spawn) — collect it
-   with "collect the child results" (rlm_collect).
-3. **Shift** — run a task that errors repeatedly; the status line gains the
-   `t:cap`/`t:eff` chip and the model switches lanes on a flip.
-4. **The deny floor** — ask it to write `.env` or anything outside the folder.
-   SEE: an absolute refusal naming the pattern — no overlay, no approval path.
-5. **Magic keywords** — type `ultrathink <question>`: the word shimmers (omp's
-   native machinery) AND the turn routes through the fusion panel (our
-   upgrade). `ultrareview <context>` runs the adversarial review of the
-   current diff.
-6. **Cortex memory** — with `CORTEX_PROJECT=openkai openkai-next-fork`: the
-   cortex_search/cortex_record tools exist; record a learning, search it back.
+On a clean environment, record:
 
-## The parity checklist (fill as you drive — the cutover evidence)
+- public installer/binary behavior and `openkai --version`;
+- local Cortex install → registration with a valid administrator token; and
+- selected enrichment-provider live application.
 
-| Surface | Fork (omp base) | 0.1.9 line | Winner |
-|---|---|---|---|
-| Turn aliveness (loader/shimmer/cards) | | | |
-| Tool cards (live states, diffs) | | | |
-| Composer (history, paste, images) | | | |
-| Permissions UX (overlays, patterns) | | | |
-| Fusion verdicts | | | |
-| Tier routing visibility | | | |
-| Deny floor honesty | | | |
-| Sessions (resume/fork/tree) | | | |
-| Speed / memory feel | | | |
-| Crash record | | | |
-
-## Reporting
-
-Same anomaly template as docs/DOGFOOD.md; mark findings FORK or LINE.
-Crash stacks verbatim — the fork's guard prints them the same way.
+Report the exact command, environment, observed result, and failure. Do not mark an unavailable environment as passing.

@@ -1,28 +1,54 @@
-# Operational Modes
+# Ways to use OpenKai
 
-OpenKai can operate in different configurations depending on whether you are using it as a standalone tool or as part of the Kaidera OS (KOS) ecosystem.
+## Interactive TUI
 
-## Standalone Local Mode
-In this mode, OpenKai runs as a local binary. 
-- **Persistence:** Sessions are stored in `.openkai/sessions/`.
-- **Memory:** If no Cortex API is provided, OpenKai operates in "local-only" mode, where durable memory is limited to the local session tree.
-- **Connectivity:** Requires `OPENROUTER_API_KEY` for LLM access.
-
-## KOS-Managed Mode
-When running within Kaidera OS, OpenKai is integrated into the project's infrastructure.
-- **Automatic Configuration:** `CORTEX_PROJECT` and `CORTEX_API_URL` are typically provided by the environment.
-- **Durable Memory:** Every interaction is automatically checkpointed to the project's Cortex instance, allowing team-wide visibility and retrieval.
-- **Identity:** The `--agent` flag is used to identify which specific agent is performing the action in the project logs.
-
-## Environment Configuration
-
-| Variable | Purpose | Default |
-|---|---|---|
-| `CORTEX_PROJECT` | Defines the memory scope | `openkai` |
-| `CORTEX_API_URL` | The endpoint for Cortex memory | `http://localhost:8501` |
-| `OPENKAI_MODEL` | The default LLM for chat/TUI | `nvidia/nemotron-3-nano-30b-a3b:free` |
-
-To switch projects or API endpoints on the fly, use the CLI flags:
-```bash
-openkai chat --prompt "..." --project my-private-proj --api http://cortex.internal:8501
+```sh
+openkai
 ```
+
+This is the normal mode. It supports model selection, settings, task agents, Agent Hub, Fusion, and Cortex controls.
+
+## One-shot prompt
+
+```sh
+openkai -p "Explain this project"
+```
+
+The command processes the prompt and exits.
+
+## Continue or resume
+
+```sh
+openkai --continue
+openkai --resume
+```
+
+Use `.` inside the TUI to tell the current agent to continue the active conversation.
+
+## ACP editor integration
+
+```sh
+openkai --mode acp
+```
+
+ACP speaks JSON-RPC over standard input/output and is normally launched by an ACP-capable editor rather than typed directly into an interactive terminal.
+
+## Profiles
+
+```sh
+openkai --profile work
+```
+
+A profile separates local credentials, settings, caches, and session state. It does not automatically create or select a Cortex project.
+
+## Two-model and Fusion modes
+
+Two-model teamwork is a normal session setting, not a separate command mode. The main model works and an advisor checks it. Disable it in **Settings → Model → Two-model teamwork** for a deliberate single-model session.
+
+Fusion is an explicit TUI command, not a headless public CLI mode:
+
+```text
+/fusion your difficult task
+```
+
+See [Fusion](fusion.md) and [Commands](commands.md).

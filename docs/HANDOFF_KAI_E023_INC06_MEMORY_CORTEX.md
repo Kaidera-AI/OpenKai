@@ -1,4 +1,9 @@
 # Handoff: kai@openkai (this session) -> kai@openkai (future session) — E023 Inc 06, the memory/Cortex upgrade
+> **Superseded for current work.** This is the pre-remediation handoff. Use
+> `Program/Release_v0.1.011/E023_CONSOLIDATED_TUI/DISPOSITION_REN_INC06.md` and
+> [`HANDOFF_GITHUB_OPENKAI_FINALISATION.md`](HANDOFF_GITHUB_OPENKAI_FINALISATION.md)
+> for the current implementation, validation, and release boundary.
+
 
 **Date:** 2026-09-03 · **Trigger:** the operator opens a new session and points it
 at this document ("complete the upgrades to openkai"). Read this entire file
