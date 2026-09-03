@@ -1,97 +1,41 @@
-# OpenKai Capabilities — what the harness can and can't do
+# OpenKai capabilities
 
-Ground truth: the code on `main` (0.1.9-dev). Every row cites the module that
-implements it. When behaviour and this document disagree, the code is right —
-file it as a bug.
+This document describes the current public OpenKai surface. When code and documentation disagree, treat the behavior as a bug to fix rather than inventing a command.
 
-## 1. Sessions & persistence
+## TUI and sessions
 
-| Can | Can't (yet) |
-|---|---|
-| Persist every session as a branchable tree under `.openkai/sessions/` (`session-store.ts`) — `/resume`, `/fork`, `/tree`, `/sessions` | Share sessions across machines (local files only; Cortex mode checkpoints into shared memory when `CORTEX_PROJECT` is set — `runtime.ts` resolveRunMode) |
-| Rename a session (`/rename`) — sanitised, 48-char truncation in the header | Edit history entries (append-only log) |
-| Export a session as self-contained HTML (`/export`) | |
-| Steer a running turn mid-flight (type while busy — the message queues into the turn) | Cancel mid-tool from the keyboard (double-Esc clears the draft; Ctrl+C asks to quit) |
-| Undo the last gated mutation (`/undo` — shadow-git snapshot restore) | Undo ungated reads (nothing to undo) |
+- Start the interactive TUI with `openkai`.
+- Use `/login`, `/model`, `/settings`, and `/help` for setup.
+- Use `.` to continue, `Ctrl+R` to reuse/search a prior message, and `Ctrl+D` to leave safely with an unfinished draft.
+- Use `openkai --continue` or `openkai --resume` for prior sessions.
+- Use `Alt+A` to inspect and steer live worker agents.
 
-## 2. Tools & permissions
+## Models and teamwork
 
-Tools the model can call: `read_file`, `write_file`, `edit_file` (hashline),
-`bash`, `grep`/`glob`-style listing, LSP queries, MCP server tools, `task`
-(subagents) — all through the permission gate (`core/session/permission-gate.ts`,
-`tools.ts`).
+- OpenKai normally runs a main model with an advisor model that checks the work.
+- Turn off **Two-model teamwork** in Settings or for an individual child agent when you intentionally want one model.
+- `/fusion <task>` runs Architect, Builder, and Judge for a deliberate hard-choice comparison.
+- `/fusion` is interactive; no public `openkai fuse`, `fusion report`, or `fusion dashboard` command is claimed.
 
-| Can | Can't (yet) |
-|---|---|
-| Gate every mutation behind an operator decision (default `off` — everything asks) | Per-path allow rules ("always allow src/**") — the `always` cache is per-tool, per-session |
-| Session-scoped `Always` approvals from the overlay (never persisted) | Project-persistent approvals via overlay (write `tools.approval.<tool>` in `~/.openkai/config.json` — the settings routing tab shows them read-only) |
-| Deny floor that no approval can lift: `.env`, keys, `.ssh`, and paths outside the working folder are refused outright (`permissions.ts`) | Bash command-pattern rules (OMP's `bash.patterns` glob allow/deny list is researched, not folded in — E019 inc 06 candidate) |
-| Plan mode (`/plan`): read-only; mutations refused at the gate | |
-| Operator sees every denial named: tool, target, reason, and the exact place to change it (transcript error row) | |
-| The model receives denial text with the remediation path — it relays config actions instead of asking you to run commands yourself | |
+## Cortex memory
 
-## 3. Access levels (`/autonomy`, settings → interaction → access level)
+- Choose **Off**, **Local**, or **Cortex** under Settings → Memory.
+- Cortex can recall project context, search through `cortex_search`, write intentional memories, and extract high-signal decision deltas.
+- `/cortex status|preflight|install|register|agent|doctor|models` are the supported Cortex command family.
+- Registration needs `CORTEX_ADMIN_TOKEN`; transcript ingest is off by default.
+- Cortex embedding/rerank choices are visible in Settings → Memory → Cortex Ingest and report live/pending state honestly.
 
-| Level | Meaning |
-|---|---|
-| `off` | Every write/bash asks first (default) |
-| `low` | Reads + in-folder writes auto-approve; bash always asks |
-| `med` | In-folder writes auto-approve; bash still asks |
-| `high` | **Full access** — writes + bash auto-approve; only the protected-path floor refuses |
+## Tools and permissions
 
-The working folder is the process cwd. Anything outside it is deny-floor —
-no level lifts that.
+The active tool set depends on the session, model, permission settings, and extensions. The agent can use workspace/file/search/edit/shell/code-intelligence/debug/task tools when enabled. It must follow the active approval policy and protected-path rules.
 
-## 4. Models & providers
+The browser relay can operate a real logged-in Chrome tab only after explicit relay opt-in. Always target the intended tab and do not authorize unintended consequential actions.
 
-| Can | Can't (yet) |
-|---|---|
-| 30+ providers via env keys or OAuth device flow (`/settings` → providers, `openkai provider list/set/unset`) | Provider failover mid-turn (fallback chains exist for streams — `capped-retry` — not for provider outages mid-turn) |
-| 800+ model catalogue via OpenRouter, keyless local Ollama | Fine-tuned model hosting |
-| `/model` five-level picker (provider → model), `/models` hub, thinking-effort cycling | |
-| Shift tier routing: the orchestrator watches tool signals and moves stages between efficient/capable tiers (`/shift` ledger) with posture pins (quality/balanced/saver, floor/ceiling/never) | Explain a routing decision beyond the reason string (the ledger carries stage, source, reason) |
-| Fusion: two-model panel + judge synthesis (`/fuse`, configurable pair) with gate validation (`--gate` CLI) | More than two panel members |
+## What is intentionally not promised
 
-## 5. Magic keywords
+- Generic dynamic discovery of every enrichment provider.
+- A hosted Cortex rollout or a provider credential-copy mechanism.
+- A public headless Fusion CLI or model-authored shell gate.
+- A new detached feature/labs tab.
 
-| Keyword | Effect |
-|---|---|
-| `ultrathink` | Multi-model fusion think run over the prompt (hidden reasoning notice rides the payload) |
-| `ultrareview` | Multi-model adversarial review of the current shadow diff |
-
-Standalone prose only — never in code spans, fences, or paths. Rainbow shimmer
-while typing, static gradient in sent messages, shimmering status while the
-panel runs. Toggles: settings → interaction → magic keywords.
-
-## 6. The terminal surface
-
-| Can | Can't (yet) |
-|---|---|
-| Click-to-cursor in the composer (click positions, drag selects) | Clickable links inside the transcript (OSC 8 rendering yes, click-open via terminal) |
-| Live turn lifecycle: thinking pulse (✻), running tool cards, brand-shimmer activity with elapsed seconds, `✓ settled in Ns · tokens · tok/s` at turn end | Typewriter-smooth streaming reveal (OMP's 30fps reveal — researched, not folded in) |
-| Mouse: wheel scroll, drag-select copy, scrollbar drag | |
-| Theme packs with live preview (settings → appearance → theme) | |
-| Crash guard: a fatal error restores the terminal and prints the stack | |
-
-## 7. The served TUI (`openkai serve` / hub)
-
-| Can | Can't (yet) |
-|---|---|
-| Host sessions over HTTP+WS (loopback + bearer, host-verified): `POST /sessions`, `GET /attach/<id>?mode=ro|rw` | Remote access beyond loopback (by design) |
-| Read-only attaches watch; rw attaches drive input; resize is clamped | Attach to a session after its run ends (ended sessions are evicted) |
-| 16 hosted sessions max (429 beyond) | Authentication beyond the bearer token |
-
-## 8. Updates & channels
-
-| Can | Can't |
-|---|---|
-| `openkai update` detects the install channel (brew/npm/bun/standalone) and executes its upgrade | Downgrade in one step (`--rollback` restores the previous standalone binary) |
-| Standalone channel is signed end-to-end (Ed25519 manifest, fail-closed witness) | |
-| Kill-switch: `OPENKAI_NO_UPDATE`/`OPENKAI_DISABLE_UPDATE` refuses auto-upgrade | |
-
-## 9. Memory
-
-| Can | Can't (yet) |
-|---|---|
-| Project memory: `.openkai/memory/learnings.md`, shared across agents in the folder (`/memory add`) | Cross-project memory search from the TUI (Cortex mode checkpoints; `openkai events` reads them) |
-| Session goal pinning (`/goal`) | |
+See [Commands](commands.md), [Fusion](fusion.md), [Memory](memory.md), and [Cortex projects and agents](cortex-projects-agents.md).

@@ -1,75 +1,49 @@
-# Commands Reference
+# OpenKai commands
 
-All commands are executed via the `openkai` binary.
+Use `/help` inside the TUI for the live command list. This page covers the OpenKai-specific everyday commands without inventing separate CLI subcommands.
 
-## Cortex Options
-Read by `chat`, `tui` and `events` only. `sessions` and `fuse` accept them on the
-command line (the parser is shared) but ignore them — they do no Cortex reads.
+## Start and model setup
 
-| Flag | Description | Default |
-|---|---|---|
-| `--project <key>` | Cortex project scope | `$CORTEX_PROJECT` or `openkai` |
-| `--api <url>` | Cortex API base URL | `$CORTEX_API_URL` or `http://localhost:8501` |
-| `--agent <name>` | Agent name for Cortex writes / X-Agent-Name | N/A |
+| Command | Purpose |
+| --- | --- |
+| `/help` | Show available commands. |
+| `/login` | Connect a model provider. |
+| `/model` | Choose a model or configure model roles. |
+| `/settings` | Change durable settings. |
 
----
+## Work with agents
 
-## Commands
+| Control | Purpose |
+| --- | --- |
+| `Alt+A` | Open Agent Hub. |
+| `Enter` on an agent | Read or steer that agent. |
+| `.` | Tell the active agent to continue. |
+| `Ctrl+R` | Search/reuse an earlier message. |
+| `Ctrl+D` | Leave safely and preserve an unfinished draft. |
 
-### `openkai` / `openkai tui`
-Launches the pi-tui alt-screen TUI shell.
+## Fusion
 
-**Options:**
-- `--model <id>`: OpenRouter model id (default: `$OPENKAI_MODEL`).
-- `--session <id>`: Resume a specific session by id.
-- `--system-prompt <text>`: Override the default system prompt.
-- `--quiet`: Suppress stderr diagnostics.
+| Command | Purpose |
+| --- | --- |
+| `/fusion <task>` | Ask Architect, Builder, and Judge to compare a difficult task. |
+| `/fusion help` | Explain the three roles. |
+| `/fusion` | Open the model-pair menu when the TUI is available. |
 
-### `openkai chat`
-Runs a single-prompt agent turn over OpenRouter and streams the reply to stdout.
+See [Fusion](fusion.md) for the verdict format and when to use it.
 
-**Required Options:**
-- `--prompt <text>`: The user prompt for the turn.
+## Cortex
 
-**Options:**
-- `--model <id>`: OpenRouter model id (default: `$OPENKAI_MODEL` or `nvidia/nemotron-3-nano-30b-a3b:free`).
-- `--system-prompt <text>`: Override the system prompt.
-- `--quiet`: Suppress stderr diagnostics.
+| Command | Purpose |
+| --- | --- |
+| `/cortex` or `/cortex status` | Show connection and registration status. |
+| `/cortex preflight` | Run read-only installation checks. |
+| `/cortex install` | Install local Cortex after confirmation. |
+| `/cortex register [project] [agent] [role]` | Register the project and first writer; requires `CORTEX_ADMIN_TOKEN`. |
+| `/cortex agent <name> <role> [model]` | Add a roster agent after confirmation. |
+| `/cortex doctor` | Run the installed Cortex verifier. |
+| `/cortex models` | Refresh supported Cortex model discovery. |
+| `/memory stats` | Show memory backend and retrieval/provider status. |
 
-### `openkai sessions`
-Lists local persisted sessions or inspects a specific session tree.
+## Command names that do not exist
 
-**Options:**
-- `--show <id>`: Show full entries for the specified session id.
-
-### `openkai fuse`
-Runs a task through the fusion core: pairs an Architect and a Builder in parallel, then produces an attributed synthesis.
-
-**Required Options:**
-- `--prompt <text>`: The user prompt for the fusion run.
-
-**Options:**
-- `--architect-model <id>`: Model for the Architect role (default: `$OPENKAI_MODEL`).
-- `--builder-model <id>`: Model for the Builder role (default: same as architect).
-- `--judge-model <id>`: Model for synthesis and gate validation.
-- `--gate`: Enable gate-first validation (FU-3).
-- `--max-rounds <n>`: Gate repair cap, 1-10 (default: 3).
-- `--quiet`: Suppress stderr diagnostics.
-
-### `openkai events`
-Streams live Cortex team events (SSE) to stdout.
-
-**Required Options:**
-- `--print`: Required to enable streaming output.
-
-**Options:**
-- `--last-id <id>`: Resume streaming after a specific event id.
-- `--count <n>`: Events per server read, 1-200 (default: 50).
-- `--ping <seconds>`: Server keep-alive cadence, 1-60 (default: 15).
-- `--keepalive`: Print `: ping` keep-alive ticks to stdout.
-- `--verbose`: Print connect/retry diagnostics to stderr.
-
----
-
-## Help
-Use `-h` or `--help` with any command to see the usage text.
+Do not document or automate `openkai chat`, `openkai tui`, `openkai fuse`, `fusion report`, or `fusion dashboard` as public commands. Start the TUI with `openkai`; use `/fusion` and the `/cortex` family inside it.

@@ -1,4 +1,8 @@
 # Handoff: kai@openkai (lead) -> kai@openkai (github session) — sync the GitHub fork line
+> **Historical synchronization record.** It predates the E023 remediation.
+> Use [`HANDOFF_GITHUB_OPENKAI_FINALISATION.md`](HANDOFF_GITHUB_OPENKAI_FINALISATION.md)
+> for current source/program scope and validation requirements.
+
 
 **Date:** 2026-09-03 · **Trigger:** the operator triggers the github session; this
 document is self-sufficient. Execute the sync, verify it, and report back.

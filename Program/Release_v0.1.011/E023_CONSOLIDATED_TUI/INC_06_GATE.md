@@ -1,101 +1,48 @@
-# E023 Inc 06 — memory/Cortex upgrade: gate evidence (2026-09-03)
+# E023 Inc 06 — Cortex memory gate
 
-**Branch:** `e023/inc-06-memory-cortex` (fork, cut from `origin/main` @ `7e908eb296`) ·
-**Spec:** `MEMORY_CORTEX_DESIGN.md` v2 (§5 layout, §6 verification) · **Handoff:**
-`docs/HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md` · **Operator:** triggered 2026-09-03
-("update openkai … cortex to replace the memory … settings>memory"), plus the same-turn
-rider "add oMLX in the providers and show its models in /model".
+**Status:** remediation implementation complete in the source worktree; **unreleased** pending final validation and external acceptance.
 
-## §3 decisions used (trigger message was silent — recommended defaults, recorded here)
+This replaces the former gate record because it mixed historical test counts, obsolete command names, and unobserved compiled/local-service drives with release-ready claims.
 
-1. Rerank picker brand: **Marksman** (row label "Rerank model (Marksman)").
-2. Old sharpshooter decision files: **left as plain docs**; `/memory stats` lists them and
-   names the one-shot `cortex-ingest-memories --path <dir>` import.
-3. Hosted Cortex review window: **v0.1.13 confirmed** (EPIC_SCOPE §Future unchanged).
+## Implemented contracts
 
-## What landed (one paragraph)
+| Contract | Implementation |
+| --- | --- |
+| Settings-driven connection | Settings own endpoint/token/project/agent; managed environment values override them. |
+| Roster-safe writes | Explicit agent or project default is required before durable write. Missing roster rejects before payload transmission. |
+| Redacted outbound data | Memory, transcript, error, result, and Fusion persistence boundaries redact known credential patterns. |
+| Poison-resistant extraction | Fenced blocks, quotes, diffs, and log-shaped lines are excluded before evidence admission. |
+| Opt-in transcripts | Session ingest defaults off. |
+| Provider single authorship | OpenKai serializes `~/.openkai/config.json` mutations and records embedding/rerank selection there. |
+| Honest provider application | Admin-token live apply reports live/pending/failed; no chat-provider credential copy. |
+| Installation/project automation | `/cortex install` is confirmed; `/cortex register` and `/cortex agent` are confirmed and registration requires `CORTEX_ADMIN_TOKEN`. |
+| Public commands | `/cortex status|preflight|install|register|agent|doctor|models`, `/memory stats`, and `/fusion` are the documented surfaces. |
 
-`memory.backend` = `off | local | cortex`. Hindsight, Mnemopi and Sharpshooter retire with
-migration rows (`hindsight|mnemopi|mnemosyne → cortex` + `cortex.migratedFrom` notice,
-`sharpshooter → off`, `autolearn.enabled → skills.managed`); Auto-Learn's capture turn
-retires and its ≥N-tool-calls gate + Sharpshooter's delta extractor and friction filter
-are ported into **cortex-ingest** (post-stop, `cortexingest.*`), which records
-friction-earned decisions to Cortex (`POST /memory`, decisions/learnings sections) and
-optionally the transcript at session end (`POST /sessions/ingest`). Settings > Memory
-gains the **Cortex** group (status/apiUrl/token/project/agent/auto-recall/migration
-notice) and the **Cortex Ingest** group (enabled/transcripts/extraction model/embedding
-picker/optional Marksman rerank picker) — pickers seeded per provider (Ollama local,
-NVIDIA NIM free, OpenRouter, DashScope) with free/paid badges and live enrichment;
-selection authors `providers.embedding|rerank` in `~/.openkai/config.json` and applies to
-the live appliance through `PATCH /admin/cortex/config` when `CORTEX_ADMIN_TOKEN` is set
-(pending-and-said-so otherwise). `/cortex status|preflight|install|doctor|models` is the
-operator flow (install runs preflight, then installs on explicit confirmation). The
-`cortex_search`/`cortex_record` tools are settings-driven and always registered; `learn`
-writes to Cortex; first-turn auto-recall replaces flat injection. Docs rewritten; every
-vectorize-io reference gone; FORK.md touch-list extended. Rider: **oMLX** registered as a
-keyless local provider (identity-checked via `owned_by: "omlx"`, endpoint from
-`OMLX_BASE_URL` → `~/.omlx/settings.json` → `:8000/v1`), so its MLX models list in `/model`
-whenever the server answers; plus the rebrand sweep of 11 user-facing "Oh My Pi" strings.
+## Final code checks
 
-## Design §6 verification — evidence
+Run from the source fork after the final code edit:
 
-| Line | Evidence | Result |
-|---|---|---|
-| Capture ⇒ `cortex-search` round trip with NO env (settings-driven) | `test/openkai-cortex-live.test.ts` "record → search round trip lands the lesson": `Settings.isolated({memory.backend: cortex, cortex.project: openkai})`, env `CORTEX_*` deleted, `recordMemory` then `search(marker)` — found on the live appliance (:8501, v2.3) | **green** |
-| `cortex preflight`/`cortex-doctor` after the TUI install flow | `/cortex install` shells the published launcher (`cortex` on PATH or `npx @kaidera-ai/cortex`): preflight → `ctx.ui.confirm` → install → re-probe. The appliance here is already running (KOS stack), so the install leg is exercised as **status + preflight path only**; `cortex-doctor` verbs are named on the status/diagnose rows. Operator drive pending on a clean host. | **partial (env)** |
-| Provider single authorship; `cortex-embed --stats` draining with the chosen model | `applyCortexProviderSelection` writes `providers.embedding` (`~/.openkai/config.json`, atomic 0600) — unit-proven; live apply through `PATCH /admin/cortex/config` proven with an injected fetch (header + body pinned). No `CORTEX_ADMIN_TOKEN` in this shell ⇒ the live embed backlog drain could not be observed; the status row reports the pending state loudly. **Contract note:** the Cortex repo on disk ships docs + installer only; the live API's provider seam is the admin config row, not a file reader — recorded as a Cortex-side follow-up. | **partial (admin plane)** |
-| Picker shows every configured provider as a group, badges on seeded rows | `catalogOptions()` unit tests: 4 embedding provider groups, `[free · local]`/`[free]`/`[paid]` badges, live-discovered rows tagged `discovered`; selector renders "Embedding model" + "Rerank model (Marksman)" under Cortex Ingest | **green** |
-| Rerank-unset ⇒ degradation row visible, never silent | rerank picker's first option is "— none (vector-only search)" with the loud description; status row prints "rerank: off — vector-only" when `/health.rerank_enabled === false`; `/memory stats` prints Cortex's `/degradation` list | **green** |
-| Migration fixtures per retired value | `test/settings-manager.test.ts`: hindsight→cortex(+notice), mnemosyne/mnemopi→cortex(notice "mnemopi"), sharpshooter→off, explicit cortex untouched, autolearn.enabled→skills.managed | **green** |
-| Transcript ingest (opt-in) | live: `POST /sessions/ingest` accepted; `/sessions/ingested-ids` contains the uuid. Two live-contract findings folded in: `messages[].ts` must be an ISO string (422 on numbers) and the writing agent must be a **roster** agent (403 for the "openkai" placeholder) — `effectiveCortexAgent()` resolves the project's default agent when none is configured (`cortex.agent` / `OPENKAI_AGENT` override) | **green** |
+```sh
+bun --cwd=packages/coding-agent run check
+bun --cwd=packages/coding-agent test test/openkai-cortex-memory.test.ts test/openkai-cortex-extension.test.ts test/openkai-fusion.test.ts test/openkai-fusion-pairing.test.ts test/model-resolver.test.ts
+```
 
-## Gate suite
+Also run syntax checks for both installers and their targeted test coverage. The finalization handoff records the exact observed results; this document does not invent a historical all-suite pass count.
 
-| Gate | Command | Result |
-|---|---|---|
-| Typecheck | `bun run check:types` (tsgo) | clean |
-| Lint/format | `bunx biome check .` | clean (0 findings) |
-| OpenKai + memory suites | `bun test test/openkai-*.test.ts` + 15 memory-touching suites | **497 pass / 0 fail** (33 files) — includes the 3 live Cortex gates against :8501 |
-| cli suites | `bun test test/cli*.test.ts test/cli/*.test.ts` | **149 pass / 0 fail** |
-| composer (packages/tui) | `bun test --parallel test/*.test.ts` | **1399 pass / 0 fail** |
-| Compiled build | `PATH=$HOME/.cargo/bin:$PATH bun run build` | see addendum below |
+## External acceptance required before release
 
-Retired test surface (deleted with the backends): 22 suites (hindsight-*, mnemopi-*,
-sharpshooter-*, autolearn-*, memory-tools, issue-3031/7352 repros, sdk-autolearn-active-tools).
-Adapted: settings-manager, memory-backend-resolve, agent-session-memory-backend,
-dispose-concurrent (Cortex flush is the gated writer), message-pipeline (fake backends gain
-`resetConversationTracking`), config-cli-credentials (`cortex.token`), selector memory tab,
-extensions-runner, sdk-skills, sdk-tool-activation, silent-abort-print-mode, memory-protocol.
-New: `openkai-cortex-memory.test.ts` (23 unit gates), `openkai-cortex-live.test.ts` (3 live),
-`openkai-omlx-provider.test.ts` (6).
+| Check | Why it cannot be inferred from unit tests | Status |
+| --- | --- | --- |
+| Clean-host installer/binary drive | Verifies the downloaded public `openkai` executable, asset name, PATH behavior, and first launch. | Pending operator environment |
+| Local Cortex install and registration | Requires a clean local appliance plus `CORTEX_ADMIN_TOKEN`. | Pending operator environment/credential |
+| Live enrichment-provider application | Requires the selected provider credential and admin token. | Pending operator environment/credential |
 
-## Contract findings for Cortex (follow-ups, not blockers)
+## Non-blocking compatibility notes
 
-1. `POST /sessions/ingest` requires a roster agent; the docs' "worker@project" identity is
-   enforced — OpenKai now resolves it from the registry.
-2. `messages[].ts` is a string on the live schema.
-3. The provider-settings "file is the contract" story in `providers-standalone.md` has no
-   reader in the Cortex repo on disk; the effective seam is `PATCH /admin/cortex/config`
-   (admin token). OpenKai authors the file AND bridges to the row — the Cortex side should
-   either grow the file reader or document the admin plane as the contract.
+- Internal runtime package names and legacy storage paths remain for compatibility; public help and assets must not display them as product branding.
+- Dynamic enrichment discovery is intentionally limited to supported Ollama/OpenRouter refresh paths; curated rows cover the other providers.
+- Hosted Cortex rollout is not claimed by this increment.
 
-## KOS minimum version
+## Decision
 
-Unchanged (0.1.10 for the six terminal-lane asks). The memory rework ships with 0.1.11.
-
-## Addendum — compiled build + drive (2026-09-03, after the export fix)
-
-- First build failed: `Could not resolve "@oh-my-pi/pi-coding-agent/hindsight"` — the
-  legacy-pi virtual-module plugin expands every named wildcard export in
-  `packages/coding-agent/package.json`; the deleted `./hindsight` + `./hindsight/*`
-  entries were dropped (fork commit "build: drop the retired … subpath exports").
-- Rebuild: `PATH=$HOME/.cargo/bin:$PATH bun run build` → `dist/omp` (138 MB) ·
-  `./dist/omp --version` → `openkai/0.1.10` (the 0.1.11 lockstep stamp rides Inc 03).
-- Compiled settings drive: `./dist/omp config list` shows the new memory surface —
-  `memory.backend = off (off|local|cortex)`, `cortex.apiUrl = http://localhost:8501`,
-  `cortex.token/project/agent`, `cortex.autoRecall = true`, `cortex.migratedFrom`,
-  `cortexingest.enabled = true`, `cortexingest.transcripts = false`,
-  `cortexingest.model`, `cortexingest.minToolCalls = 5`, `cortex.embeddingModel`,
-  `cortex.rerankModel`; no hindsight/mnemopi/sharpshooter/autolearn keys remain.
-- Fork tree clean after the build (generated client bundle reset, nothing to commit).
-- Branch `e023/inc-06-memory-cortex` pushed to `Kaidera-AI/openkai-fork` — 7 commits.
+Do not ship Inc 06 until the code checks and all three external acceptance checks have recorded evidence. See `DISPOSITION_REN_INC06.md` and `docs/HANDOFF_GITHUB_OPENKAI_FINALISATION.md`.

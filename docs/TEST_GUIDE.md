@@ -1,107 +1,62 @@
-# OpenKai Test Guide — per-functionality UAT drives
+# OpenKai UAT guide
 
-Run everything against the dev binary: `openkai-next` (or `node packages/cli/dist/index.js`).
-Each drive lists steps + what you MUST see. Report anything that differs.
+Run these against the public `openkai` command or an equivalent built development executable. Record what you actually observe; do not turn an unavailable credential or external service into a passing result.
 
-## 1. Turn lifecycle (the aliveness surface)
+## 1. First-run path
 
-1. Launch the TUI. **See:** the boot card (brand mark + capability row + tip).
-2. Type `hello` and Enter. **See:** the boot card collapses to one compact line;
-   your message under `You`; a shimmering activity label in the status line
-   (`⠋ writing 1s` style) — it must be visibly ANIMATED.
-3. While the model works: **See** the status line name the current step
-   (`thinking` / `writing` / `tool: <name>`), and the elapsed seconds tick.
-4. If the model thinks: **See** a `✻ thinking…` row with a moving starburst and
-   a live char count; Ctrl+O reveals the reasoning.
-5. When the turn ends: **See** `✓ settled in Ns · ↑in ↓out · ⚡tok/s` and the
-   status returns to `○ idle`. If instead it errors, an error row appears and
-   the status settles — a finished turn and a crashed turn never look alike.
+1. Launch `openkai`.
+2. Confirm `/help`, `/login`, `/model`, and `/settings` are available.
+3. Confirm `.` continues an active conversation, `Ctrl+R` finds/reuses a prior message, and `Ctrl+D` preserves an unfinished draft when leaving.
+4. Compare the visible beginner guidance with `docs/tui-first-steps.md`.
 
-## 2. Tools & permissions
+## 2. Two-model teamwork and steering
 
-1. With access level `off` (default), ask: `create a file test.txt with hello`.
-   **See:** a permission overlay with a diff preview; options once/always/reject.
-2. Approve once. **See:** the write tool card run and settle `✓ done`.
-3. Ask it to `delete test.txt` then REJECT at the overlay. **See:** a red
-   `permission denied: bash — <command>` row naming the reason + where to change
-   it (`/autonomy`, settings → routing, config).
-4. Ask it to write to `~/.zshrc` (outside the folder). **See:** refusal with
-   `path outside working directory` — NO overlay, no approval possible.
-5. Ask it to write `.env`. **See:** protected-path floor refusal.
+1. In **Settings → Model**, confirm **Two-model teamwork** is enabled by default.
+2. Confirm you can deliberately turn it off for a one-model session.
+3. Create or wait for a worker agent, press `Alt+A`, select it, and press `Enter`.
+4. Send a concrete steering message and confirm it appears in that worker's session.
 
-## 3. Access levels
+## 3. Fusion
 
-1. `/autonomy` — **See:** four plain-language levels: ask every time / trusted
-   reads / trusted folder / full access.
-2. Pick `high — full access`, then ask for a bash run (`run ls -la`).
-   **See:** no overlay; the bash card runs immediately.
-3. Back to `off` via settings → interaction → access level. **See:** the status
-   line autonomy chip change.
-4. `/settings` → routing tab: **See** the read-only per-tool policy summary.
+1. Run `/fusion help`.
+2. Run `/fusion <a real hard question>` with authenticated models.
+3. Confirm the verdict identifies Architect, Builder, and Judge.
+4. Confirm it has agreement, compared choices, retained choice, discarded ideas when applicable, and checks before acting.
+5. Induce or observe a failed role only in a safe test environment; confirm no false Judge verdict is shown.
 
-## 4. Magic keywords
+## 4. Cortex without sharing
 
-1. Type `ultrathink` (not submitted). **See:** the word shimmers in rainbow as
-   you watch. In `code ticks` it does not.
-2. Submit `ultrathink what breaks if I cache this`. **See:** a multi-model
-   think panel (architect + builder outputs, then a combined verdict); the
-   status line shimmers `ultrathinking…`.
-3. Make an edit in the repo, then `ultrareview the last change`. **See:** the
-   multi-model review of your diff. On a clean tree: the honest
-   `nothing to review` notice.
-4. Settings → interaction → magic keywords: cycle through all/think/review/off
-   and confirm the toggle persists (quit, relaunch).
+1. Set Memory Backend to Cortex or set a managed project environment lane.
+2. Run `/cortex status` and `/memory stats`.
+3. Confirm transcript ingest is off by default.
+4. With a project that lacks a default writer, attempt a controlled memory write and confirm OpenKai refuses before sending the write.
 
-## 5. Mouse
+## 5. Cortex installation and registration
 
-1. Type a line of text in the composer; click mid-word. **See:** the cursor
-   jumps to the click point; typing inserts there.
-2. Drag across transcript text. **See:** selection highlights; release copies
-   (paste somewhere to confirm).
-3. Move the mouse anywhere. **See:** NO stray digits appear anywhere, ever.
-4. Wheel over the transcript scrolls; the scrollbar drags.
+Only perform this on a disposable/approved local environment.
 
-## 6. Models, providers, fusion
+1. Run `/cortex preflight`.
+2. Run `/cortex install`; confirm it asks before installation.
+3. With a real `CORTEX_ADMIN_TOKEN`, run `/cortex register <project> <agent> <role>`; confirm it asks before registration.
+4. Run `/cortex agent <name> <role> [model]` and `/cortex doctor`.
+5. Save and search a clearly marked test memory, then remove/clean it under project policy.
 
-1. `/model` — **See:** provider list with key status (✓ via KEY / OAuth lane /
-   keyless), then a model list with context + cost.
-2. `/settings` → providers → Enter on an OAuth lane (no key set). **See:** the
-   device-flow overlay (URL + code). Esc cancels cleanly.
-3. `/fuse write a haiku about caches` — **See:** two role-pilled outputs and a
-   combined verdict. `/fuse` bare → the menu.
-4. `/shift` after a few turns — **See:** routing decisions with tier + source +
-   reason (empty ledger says so honestly).
+## 6. Provider application
 
-## 7. Sessions
+1. Choose embedding/rerank entries in **Settings → Memory → Cortex Ingest**.
+2. Confirm `/cortex status` names the last outcome as live, pending, or failed.
+3. Confirm the active chat-provider key was not copied into the OpenKai provider selection.
+4. With approved provider/admin credentials, verify actual live application separately.
 
-1. `/rename my test session` — **See:** the header bar above the composer.
-2. `/new`, then `/resume` — **See:** the searchable picker lists the named
-   session; Enter restores it.
-3. `/tree` and `/fork` — **See:** the branch structure; fork rewinds to a picked
-   message.
-4. `/export` — **See:** the HTML path notice; open the file in a browser.
+## 7. Public installation
 
-## 8. Served TUI (hub)
+On a clean host or container:
 
-1. `OPENKAI_HUB_TOKEN=test openkai serve` (or `openkai hub`), then
-   `curl -H "Authorization: Bearer test" -X POST localhost:4099/sessions -d '{}'`.
-   **See:** a sessionId + attach path.
-2. Attach a client (docs/attach-protocol.md), ro mode. **See:** the settled
-   frame, then live frames. rw mode: input drives the session.
-3. Ctrl+C the hub with an attach open. **See:** it exits cleanly (no hang).
-4. `/settings → features → mouse support → off` — **See:** mouse traffic stops
-   affecting the UI entirely.
+1. Use a public package/installer or release asset.
+2. Confirm the installed command is `openkai`.
+3. Run `openkai --version` and launch the TUI.
+4. Confirm release asset and installer output use `openkai-*` names.
 
-## 9. Magic keyword + context hygiene
+## Report format
 
-1. Run a session with a thinking model, then `/shake thinking`. **See:** the
-   notice counts tool results AND thinking blocks; the next turn's context is
-   smaller (`/context` before/after).
-2. Type during boot (before the chrome appears). **See:** your text lands in
-   the composer intact — no dropped keystrokes.
-
-## 10. Crash guard
-
-1. If the TUI ever crashes: **See** the terminal restores itself and a full
-   stack prints to stderr — `openkai crashed (terminal restored): …`. Send that
-   stack verbatim with any bug report.
+For every failure include: command/input, operating system, install channel, model/provider state, Cortex endpoint mode if relevant, observed output, expected result, and a minimal reproduction.
