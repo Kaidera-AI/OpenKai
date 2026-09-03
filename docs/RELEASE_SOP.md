@@ -36,22 +36,23 @@ Consent is **per version, per session**. A consent for 0.1.5 does not cover 0.1.
 
 ## Release sequence (after consent)
 
-1. `main` green: `npm test` full suite + `scripts/security-audit.sh` PASSED.
-2. CHANGELOG entry for the version exists.
-3. Version strings bumped in lockstep: root `package.json`,
-   `packages/core/package.json`, `packages/cli/package.json` (incl. the core
-   pin), `packages/cli/src/version.ts`.
-4. `npm publish -w @kaidera/openkai-core` then `-w @kaidera/openkai` (core first;
-   the CLI pins the core version).
-5. Build all four platform binaries + sha256 sidecars.
-6. `gh release create v0.1.<NNN>` with binaries + `latest.json` manifest
-   (manifest `version` must equal the npm version). Verify the manifest serves:
-   `curl -sL .../releases/latest/download/latest.json`.
-7. Repoint `scripts/install.sh` default + Homebrew formula (tap repo) to the new
-   tag with recomputed sha256; push both.
-8. Verify the update path end-to-end: a fresh install of the previous version
-   must reach the new one via `openkai update`.
-9. Report the published versions + tag + channel state to the CTO.
+1. Fold every intended source, documentation, and candidate-tested feature into
+   `main`; the release commit is the candidate commit.
+2. Add accurate notes under `packages/coding-agent/CHANGELOG.md` →
+   `[Unreleased]`.
+3. Run `bun run release 0.1.N`. It atomically aligns
+   `@kaidera/openkai-engine`, `@kaidera/openkai`, the wrapper's engine pin,
+   `PRODUCT_VERSION`, and the `v0.1.N` tag. Inherited `@oh-my-pi/*`
+   compatibility packages retain their pinned upstream version.
+4. The tag pipeline builds every release binary, signs/attests the published
+   assets, generates `latest.json`, and verifies the published macOS binary.
+5. Only after those checks, the same pipeline publishes the engine before the
+   wrapper, then updates the OpenKai Homebrew formula. All public OpenKai
+   channels therefore carry the same `0.1.N` release.
+6. Verify registry versions, GitHub assets and `latest.json`, Homebrew state,
+   and an upgrade from the prior release.
+7. Report the version, tag, artifact checks, npm versions, and channel state to
+   the CTO.
 
 ## Known bootstrap quirk
 
@@ -98,18 +99,19 @@ to reach the published channel (stale binaries, unmerged branches).
    (check `git branch --contains` for feature branches).
 
 **Quality gate:**
-5. `npm test` full suite green on the release commit.
-6. `scripts/security-audit.sh` PASSED on the release commit.
-7. CHANGELOG entry for the version exists and lists every folded increment.
+5. `bun run check` and the changed-contract tests are green on the release
+   commit; CI repeats the full release matrix.
+6. Security checks required by the release gate are green.
+7. The OpenKai `[Unreleased]` entry names every folded user-visible change.
 
 **Channel gate (after consent):**
-8. npm core→cli lockstep publish; version strings bumped in all five places.
-9. GitHub release created with 4 binaries + sha256 sidecars + `latest.json`
-   (asset MUST be named latest.json); manifest `version` == npm version;
-   `curl -sL .../releases/latest/download/latest.json` serves it.
-10. `install.sh` default + Homebrew formula repointed with recomputed sha256;
-    both pushed; `brew info` shows the new stable.
-11. Local-binary hygiene: refresh ~/.local/bin/openkai + openkai-next;
+8. One product-version contract: engine, wrapper, wrapper dependency, runtime
+   stamp, `v0.1.N`, binaries, `latest.json`, and the OpenKai formula match.
+9. One CI pipeline builds every target, verifies the published GitHub release,
+   then publishes the engine → wrapper package pair in that order.
+10. Verify `latest.json`, npm package manifests, binaries, and Homebrew report
+    the same product version.
+11. Local-binary hygiene: refresh `~/.local/bin/openkai` + `openkai-next`;
     `which -a openkai` reports the released version everywhere.
 12. CTO explicit consent recorded for THIS version in THIS session.
 
@@ -135,23 +137,21 @@ code-execution policy (formulas are Ruby), identical for every third-party tap.
 We therefore do NOT treat brew as the primary channel and never ask users to
 trust our tap as the intended flow.
 
-**Primary install = signed binaries:** `.github/workflows/release.yml` runs on
-`v0.1.*` tag pushes (tag = consented act per this SOP) and attaches SLSA
-build-provenance attestations (GitHub Sigstore, `actions/attest-build-provenance`)
-to every platform binary, then uploads the CI-built assets + a fresh
-`latest.json` (version read from the tagged package.json) to the release.
-Users verify with:
+**Primary install = signed binaries:** `.github/workflows/ci.yml` runs on a
+`v0.1.*` tag pushed with the release commit and attaches SLSA
+build-provenance attestations to every platform binary. It publishes CI-built
+assets plus a fresh `latest.json` whose version is the same OpenKai product
+version carried by the npm engine and wrapper. Users verify with:
 `gh attestation verify <binary> --repo Kaidera-AI/OpenKai`
 
 `scripts/install.sh` remains the zero-dependency path: sha256-verified before
-install, no trust prompt, no node. npm stays the lockstep package channel
-(manual publish, consent-gated).
+install, no trust prompt, no node. npm is the lockstep package channel.
 
-**Release order (supersedes the earlier sequence where it differs):**
-consent → bump versions → CI tag pipeline builds+attests+uploads assets →
-manual npm publish (core then cli) → repoint install.sh + Homebrew formula
-(document `brew trust` as a known Homebrew limitation, not our default).
-\n
+**Release order (supersedes earlier sequences where it differs):**
+consent → product-version bump → one CI tag pipeline builds+attests+uploads
+assets → published-asset verification → engine then wrapper npm publish →
+OpenKai Homebrew formula → end-to-end upgrade verification.
+
 ## Bun channel (added 2026-08-20)
 
 `bun add -g @kaidera/openkai` is a supported install channel. `openkai update`
