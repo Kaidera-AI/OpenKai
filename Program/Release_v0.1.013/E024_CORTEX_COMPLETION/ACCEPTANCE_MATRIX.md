@@ -1,0 +1,25 @@
+# Acceptance matrix — E024 Cortex completion
+
+Environment classes: **dev** (this Mac, warm, appliance at :8501), **clean** (fresh host: kos-test VM or a new macOS user — D6), **managed** (KOS lane with `CORTEX_PROJECT`). Evidence = `evidence/<id>.md` with the command and its literal output, secrets redacted by rule (`CORTEX_ADMIN_TOKEN`, provider keys, tokens never appear). Release relevance: **gate** = must be observed before a 0.1.13 go; **info** = recorded, not blocking.
+
+| Id | Env | Drive (command) | Expected observable | Evidence | Owner | Relevance |
+|---|---|---|---|---|---|---|
+| A1 | clean | `curl -fsSL …/scripts/install.sh \| sh` (or `brew install kaidera-ai/tap/openkai`) then `openkai --version` | prints `openkai/0.1.12`; assets `openkai-*`; install.sh default = latest | A1.md | CTO/operator (D6) | gate |
+| A2 | clean | `openkai` (no keys) | TUI boots keyless; splash; `/cortex status` → "not installed — /cortex install" | A2.md | operator | gate |
+| A3 | dev | `/cortex status` with `memory.backend=off` | local appliance, project `openkai` registered, writer `kai`, rerank state line, no degradation | A3.md | kai | gate |
+| A4 | dev | `/cortex preflight` | preflight output verbatim, exit 0 | A4.md | kai | info |
+| A5 | dev (admin token in shell) | `/cortex register openkai-acceptance probe probe` (or `cortex-init-project`) | project created; roster `probe`; `curl /projects/openkai-acceptance` 200 | A5.md | kai | gate |
+| A6 | dev | Settings → Memory → Cortex, project `openkai-acceptance`, agent `probe`; `cortex_record` a marker; `cortex_search` marker | search returns the marker; `openkai` project unchanged (count before/after) | A6.md | kai | gate |
+| A7 | dev | `cortexingest.transcripts=true`; end session | `/sessions/ingested-ids` contains the session uuid; agent = `probe` | A7.md | kai | gate |
+| A8 | dev | project with NO default writer, `cortex.agent` unset; attempt `cortex_record` | refused before any HTTP call (proxy/log shows no POST); message names the fix | A8.md | kai | gate |
+| A9 | dev | paste a fake `sk-…` key into the prompt; `learn` + transcript ingest | Cortex rows, transcript payload, error text and provider file contain no key (grep on captured payloads) | A9.md | kai | gate |
+| A10 | dev | return to `off`; new session | no Cortex calls (proxy count 0); appliance rows intact | A10.md | kai | gate |
+| A11 | dev | `/cortex acceptance stop` / `cortex-remove-agent probe` + archive project | `curl /projects/openkai-acceptance` → archived/404; `openkai` untouched | A11.md | kai | gate |
+| A12 | dev (admin token + provider) | pick embedding `ollama/nomic-embed-text` (rerank unset) | provider file written; `PATCH /admin/cortex/config` 200; `/health.embed_model` = nomic-embed-text; `cortex-embed --stats` backlog drains; status "rerank: off — vector-only" | A12.md | kai | gate |
+| A13 | dev (admin token + NVIDIA key) | pick rerank `nvidia/nv-rerank-qa-mistral-4b:1` | `/health.rerank_model` set; a search shows reranked order; `/degradation` empty | A13.md | kai | info (paid/free provider availability recorded) |
+| A14 | dev | stop the embed worker; search | `/degradation` non-empty; `/memory stats` prints it verbatim; no silent success | A14.md | kai | gate |
+| A15 | managed | `CORTEX_PROJECT=openkai-acceptance openkai` | Memory UI shows the lane active; record/search work without settings edits | A15.md | kai | info |
+| A16 | dev | migration fixture `memory.backend=local` config (D1) | after upgrade: `off` + one-time notice; `learned.md` untouched on disk; no `memories.*` rows | A16.md | kai | gate (if D1) |
+| A17 | dev | backup eval | newest `~/.kaidera-os/backups/cortex-backup-*` age < threshold before any writing drive; else the drive is blocked with evidence | A17.md | kai | gate |
+| A18 | clean | upgrade path `openkai upgrade` from 0.1.10 → 0.1.12 | witnessed manifest verified; binary swapped; `--version` 0.1.12 | A18.md | operator | gate |
+| A19 | dev | channel verify script | npm, GitHub release, `latest.json`, tap formula, install.sh default all equal | A19.md | kai | gate |

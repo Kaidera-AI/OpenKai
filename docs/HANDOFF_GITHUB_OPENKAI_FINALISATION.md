@@ -1,4 +1,5 @@
 # GitHub finalization handoff — OpenKai
+> **Superseded for current state (2026-09-04).** 0.1.12 was published after this handoff; the current authority for Cortex delivery state is `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/STATE.md`. This file remains the implementation/acceptance evidence for the 0.1.12 remediation.
 
 **Purpose:** continue E023 finalization safely from the two local worktrees without mistaking remediation for a release.
 
