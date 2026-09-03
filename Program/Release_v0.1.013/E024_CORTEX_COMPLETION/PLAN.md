@@ -1,6 +1,6 @@
 # Plan: E024 — Cortex completion (from `EPIC_SPEC.md`, 2026-09-04)
 
-Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (planning mandate). Worktrees: fork `~/DevVault/openkai-fork` branches `e024/<wave>-<slug>` from `main @ c6c7fa7b1b`; programme repo `maintenance/0.84-line`. Status: **accepted 2026-09-04** (CTO "yes to you"; D0–D6 in the intent). W0 closing; W1 + W2 open.
+Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (planning mandate). Worktrees: fork `~/DevVault/openkai-fork` branches `e024/<wave>-<slug>` from `main @ c6c7fa7b1b`; programme repo `maintenance/0.84-line`. Status: **accepted 2026-09-04** with authoritative D0–D6 in the intent. W0 is closed; W1 review and W2 acceptance are open.
 
 ## Files that change (by wave; exact paths on fork `main`)
 - **W0 (programme repo, docs only):** `Program/PROGRESS.md` (header + line), `CHANGELOG.md` (`[0.1.12]` pointer entry), `docs/HANDOFF_GITHUB_OPENKAI_FINALISATION.md` + `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (supersession headers), this folder.
@@ -29,7 +29,7 @@ Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (plann
 ## Waves
 | Wave | Stage | Owner | Worktree / env | Handoff | Delivers | Depends on | Stop/go gate |
 |---|---|---|---|---|---|---|---|
-| W0 | INTENT/GRILL | kai | programme repo | this mandate | intent, STATE.md (authority), spec, plan, matrix; ledger amendments | — | CTO accepts D0–D5 |
+| W0 | INTENT/GRILL | kai | programme repo | this mandate | intent, STATE.md (authority), spec, plan, matrix; ledger amendments | — | D0–D6 recorded; programme reconciliation committed |
 | W1 | SPEC/PLAN review | ren | — | `[REVIEW] E024 spec+plan` (to mint on acceptance) | disposition on spec/plan | W0 | findings dispositioned |
 | W2 | VERIFY (external) | kai (drive) + CTO (clean host, D6) | dev Mac + local appliance; clean host | `[VERIFY] E024 acceptance drives` | evidence files per matrix row (install, register, record/search, ingest, refusal, redaction, rollback) | W0, D4, D6 | all W2 rows observed; failures become W3 REWORK |
 | W3 | BUILD/VERIFY | kai / bob | fork `e024/w3-retire-local`, `e024/w3-install-default`, `e024/w3-acceptance-helper`, `e024/w3-backup-eval` | one row per worktree | D1 retirement; install.sh default + verify; `/cortex acceptance`; backup eval; W2 REWORK items | W2, D1 | check clean + tests + compiled drive pasted |
@@ -51,5 +51,6 @@ Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (plann
 - W7: `npm view @kaidera/openkai version` = 0.1.13; `gh release view v0.1.13`; tap formula version; `latest.json`; install.sh default — all equal.
 
 ## Amendments
-- 2026-09-04 — Accepted with D0–D6 on the recommended values. W0 executed: STATE.md authority, ledger header, `[0.1.12]` changelog pointer, the four status rows returned, the KOS installer pin answered (`78f86ec5`), W1 review row minted for ren. Evidence rows A3 (API-probe form; the `/cortex status` TUI form stays an operator drive) and A17 (backup age 29 h, threshold 48 h) recorded under `evidence/`.
+- 2026-09-04 (W2 drives, dev Mac) — 11 rows observed on the released engine, settings-driven with every `CORTEX_*` env var removed: happy path (A6 record→search on `openkai-acceptance`, production `openkai` 0 hits), transcript ingest (A7), refusal before payload (A8: `CortexAgentRegistrationError`, 0 POSTs), redaction (A9: 0 rows with the fake keys), off = no client (A10), idempotent admin-plane apply (A12, appliance unchanged). Two real defects for W3: `install.sh` default `v0.1.009` (A19) and `/cortex preflight|install` depending on an unpublished `@kaidera-ai/cortex` package (A4 — blocked on the Cortex package owner; the command must degrade honestly). Cortex-side findings filed to kai@kaidera-os. A12's real model change and A14's degradation drill move to the clean host (shared appliance protection).
+- 2026-09-04 — Accepted with D0–D6: explicit 0.1.12 consent confirmed; retire `local`; no importer; hosted deferred behind contract; stable `openkai-acceptance`/`probe`; transcripts off by default; clean-host proof on both the KOS test VM and a fresh macOS user account. W0 executed: STATE.md authority, ledger header, `[0.1.12]` changelog pointer, four status rows returned, KOS installer pin answered (`78f86ec5`), W1 review row minted. Evidence rows A3 (API-probe form; TUI form remains an operator drive) and A17 (backup age 29 h, threshold 48 h) are recorded under `evidence/`.
 - 2026-09-04 — KOS readiness/attention event contract (design 27) is not present as typed events in 0.1.12 (OSC 9/777 notifications + hub `state` frames only): added to W3 as a REWORK candidate pending KOS's schema.

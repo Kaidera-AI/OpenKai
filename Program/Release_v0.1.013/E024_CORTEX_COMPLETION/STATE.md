@@ -12,7 +12,7 @@
 | Homebrew tap | formula `openkai.rb` version 0.1.12 (a local `brew info` may show a stale 0.1.10 until `brew update`) | `gh api repos/Kaidera-AI/homebrew-tap/contents/Formula/openkai.rb` |
 | `scripts/install.sh` default | **still `v0.1.009`** on product `main` — channel defect | `git show origin/main:scripts/install.sh` line 19 |
 | Source | fork `main @ c6c7fa7b1b` = tag `v0.1.12`; `e023/inc-06-memory-cortex` contained; `e023/sdlc-adoption @ aeb6770e10` NOT yet folded (review row `d774bcda`) | `git branch --contains` |
-| Consent record for 0.1.12 | **none found** in `Program/PROGRESS.md`, the E023 folder or the finalisation handoff; the completion handoff states the external gates were "waived for the 0.1.12 release" | grep "consent" 2026-09-04 — open item D0 |
+| Consent record for 0.1.12 | CTO confirmed on 2026-09-04 that explicit consent was given in the live 0.1.12 release session; the four external gates were separately waived, not passed | operator confirmation in the E024 build-authorisation session; intent D0 |
 | Local install (this Mac) | `openkai/0.1.12` via bun; `memory.backend = off`; no `cortex.*` values; no `CORTEX_PROJECT` env | `openkai config list` |
 | Cortex appliance | `http://localhost:8501` healthy (v2.3, pgvector); project `openkai` active, roster kai/ren/quill/beat/cole/bob (re-registered 2026-09-03), default writer `kai`; `/degradation` empty | `curl /health`, `/projects/openkai/runtime`, `/degradation` |
 
@@ -48,6 +48,6 @@
 1. `Program/PROGRESS.md` header: "Last shipped: 0.1.12 (2026-09-03); current epic E024; authority `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/STATE.md`".
 2. `CHANGELOG.md` (program repo): add `[0.1.12]` above `[0.1.11]` by pointer to `packages/coding-agent/CHANGELOG.md` in the source; mark `[0.1.11]` as "cut renumbered to 0.1.12 at release".
 3. Return or close Cortex rows `844f23b2`, `6526ddd0`, `8670bb13`, `b78ac3c0` against this file (they are status notes, not work).
-4. Answer `78f86ec5` (KOS installer pin) with the 0.1.12 facts above — tag `v0.1.12`, asset URLs + sha256 from `latest.json`, install/verify commands — once D0 is settled.
+4. `78f86ec5` (KOS installer pin) was answered with the 0.1.12 tag, asset/checksum and install/verify facts. D0 is settled: the CTO confirmed explicit 0.1.12 consent.
 5. Header pointers on the two superseded handoffs.
 6. Handoff/ledger protocol (binding, from `docs/DEVELOPMENT_PROCESS.md`): one authority file per epic (`STATE.md`), summaries start with `[STAGE]`, no "current state" prose outside it; beat's sweep flags any row that asserts a release state not in STATE.md.

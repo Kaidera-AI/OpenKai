@@ -1,6 +1,6 @@
 # Spec: E024 — Cortex completion: the operational model for OpenKai memory
 
-From: intent `intent/cortex-completion.md` (accepted 2026-09-04, planning stage). Owner: kai@openkai. Reviewer: ren (CPO). Status: draft — accepted for planning; build waves open only on CTO decisions D0–D5.
+From: intent `intent/cortex-completion.md` (accepted 2026-09-04). Owner: kai@openkai. Reviewer: ren (CPO). Status: accepted by the CTO for independent W1 review and subsequent build/verification waves; decisions D0–D6 are recorded in the intent.
 
 ## What we are building
 **Memory = Cortex or nothing.** `memory.backend` becomes `off | cortex` (D1). Cortex stays **opt-in**: nothing turns shared durable memory on because an appliance is reachable; activation is an explicit setting change after `/cortex status` has shown *what* will be shared and *how long it is kept*.
@@ -28,11 +28,16 @@ A default-on memory; a legacy importer; a hosted service inside OpenKai; a secon
 ## Policy applied while writing
 `kaidera-sdlc` (plan before code; verification pasted; author never approves); `docs/RELEASE_SOP.md` (consent per version); `docs/DEVELOPMENT_PROCESS.md`; `FORK.md` touch-list (upstream pristine; memory changes in the openkai layer + the sanctioned settings/memory-backend files); design v2 §2–§5; the Cortex access rule (API only, no direct DB).
 
-## Flagged concerns
-1. D1 conflicts with the completion handoff's "reversible return to `off` or `local`" — owner: CTO; resolution: the CTO's word on "replace all the omp memory stuff" (recommendation: retire `local`).
-2. 0.1.12 shipped without a recorded consent line while the external gates were waived — owner: CTO; resolution: record consent or the exception in the ledger (D0) before any 0.1.13 preparation.
-3. The admin token is loadable on the dev Mac by the KOS helper; using it in a drive is allowed, persisting or printing it is not — owner: kai; resolution: drives run in a shell where the helper exports it; evidence files are redacted by rule.
-4. `install.sh` default still `v0.1.009` — a channel defect that the coordinated release pipeline did not cover — owner: kai; resolution: W3 remediation + a release-verify check.
+## Resolved decisions and active concerns
+1. D1: retire `local`; the reversible destination is `off`, with legacy files left untouched and surfaced by a one-time notice.
+2. D0: the CTO confirmed explicit 0.1.12 consent was given in its live release session; record that separately from the waived external gates.
+3. D2: no legacy importer. Documentation must preserve discovery and retention paths.
+4. D3: hosted Cortex is deferred behind a cross-project contract and acceptance environment; it does not gate 0.1.13.
+5. D4: every synthetic drive uses `openkai-acceptance` / `probe`, archived after the drive.
+6. D5: transcript ingest remains off by default; retention follows the appliance policy.
+7. D6: clean-host acceptance runs on both the KOS test VM and a fresh macOS user account.
+8. The admin token may be loaded for a drive; persisting or printing it is forbidden. Evidence files are redacted.
+9. `install.sh` still defaults to `v0.1.009`; W3 repairs the defect and adds a release-verification check.
 
 ## Acceptance
 See `ACCEPTANCE_MATRIX.md` — every row names the environment, the drive, the expected observable, the evidence file, the owner and its release relevance. Headline: (a) fresh-host install → `openkai --version` = 0.1.12 and the TUI boots keyless; (b) settings-driven cycle on `openkai-acceptance`: status → register → record → search finds the marker → transcript ingest lands → project removed; (c) refusal proof: unregistered writer refused before payload; a pasted secret never appears in Cortex rows, transcript, error text or the provider file; (d) provider apply through the admin plane changes `/health.embed_model` and the backlog drains; (e) D1: no `local` value, no `memories.*` row, no `memory://root`, tests updated.
@@ -41,4 +46,4 @@ See `ACCEPTANCE_MATRIX.md` — every row names the environment, the drive, the e
 Retiring `local` removes an offline memory for users without Cortex — mitigated by the migration notice and by `off` being honest. Drives with the admin token: rollback = archive the acceptance project. Provider apply: rollback = re-PATCH the previous config (captured before the change). Release: `bun run release` is atomic per channel set; install.sh is repaired with a verify step.
 
 ## Open questions
-D0–D5 in the intent; D6 (who runs the clean-host drive, on what host).
+None at build entry. New evidence may create rework items, but cannot silently change D0–D6.
