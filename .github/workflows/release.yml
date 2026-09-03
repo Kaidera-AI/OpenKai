@@ -1,117 +1,399 @@
-name: release
+name: OpenKai release
 
-# Release pipeline: builds the four platform binaries from the tagged commit,
-# attaches SLSA build-provenance attestations (GitHub Sigstore) to every
-# artifact, and uploads them + a fresh latest.json manifest to the release.
-# Users verify with: gh attestation verify <binary> --repo Kaidera-AI/OpenKai
-#
-# Runs ONLY on v0.1.* tag pushes. Per docs/RELEASE_SOP.md a tag push requires
-# explicit CTO consent, so this workflow never fires without it. npm publish
-# stays MANUAL (lockstep order + consent record); this pipeline never publishes
-# to npm.
+run-name: Release OpenKai ${{ inputs.version }}
 
+# The canonical public repository owns the draft, GitHub Release, provenance,
+# npm OIDC identity, and Homebrew cutover. The executable source is handed off
+# as a SHA-256-verified archive from the private source repository; this avoids
+# pretending two divergent Git histories can be fast-forwarded into one.
 on:
-  push:
-    tags: ["v0.1.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Product version from the prepared OpenKai source handoff
+        required: true
+        type: string
+      release_exception:
+        description: Explicit release exception to publish verbatim in the notes
+        required: false
+        default: ""
+        type: string
 
 permissions:
-  contents: write
-  id-token: write # required for attestations
-  attestations: write
+  contents: read
+
+concurrency:
+  group: openkai-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build:
+  validate:
+    name: Validate source handoff
+    runs-on: ubuntu-22.04
+    outputs:
+      source-sha: ${{ steps.source.outputs.source-sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - id: source
+        uses: ./.github/actions/materialize-openkai-source
+        with:
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - name: Assert one public product version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const version = process.env.EXPECTED_VERSION;
+          if (!/^0\.1\.(?:0|[1-9]\d*)$/.test(version)) {
+            throw new Error(`invalid OpenKai release version: ${version}`);
+          }
+          const engine = JSON.parse(fs.readFileSync("packages/coding-agent/package.json", "utf8"));
+          const wrapper = JSON.parse(fs.readFileSync("packaging/npm-openkai/package.json", "utf8"));
+          const brand = fs.readFileSync("packages/coding-agent/src/openkai/brand.ts", "utf8");
+          if (
+            engine.version !== version ||
+            wrapper.version !== version ||
+            wrapper.dependencies?.["@kaidera/openkai-engine"] !== version ||
+            !brand.includes(`export const PRODUCT_VERSION = "${version}";`)
+          ) {
+            throw new Error("engine, wrapper, wrapper dependency, and runtime stamp must share one product version");
+          }
+          NODE
+      - name: Validate publish contract without publishing
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/ci-release-publish.ts --scope kaidera --dry-run
+
+  native_addons:
+    name: Build release native addons
+    needs: validate
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/materialize-openkai-source
+        with:
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - uses: bazelbuild/setup-bazelisk@v3
+      - run: bun install --frozen-lockfile
+      - id: cache
+        uses: ./.github/actions/bazel-cache
+        with:
+          scope: release-linux
+      - name: Build native addons one target at a time
+        run: |
+          set -euo pipefail
+          if [ "$(ulimit -Sn)" != unlimited ] && [ "$(ulimit -Sn)" -lt 65536 ]; then ulimit -Sn 65536 || true; fi
+          for target in \
+            natives-linux-arm64 \
+            natives-linux-musl-arm64 \
+            natives-linux-musl-x64-baseline \
+            natives-linux-x64-baseline \
+            natives-linux-x64-modern \
+            natives-win32-x64-baseline; do
+            bazelisk --bazelrc="${{ steps.cache.outputs.rc }}" build "//:$target"
+          done
+          bazelisk --bazelrc="${{ steps.cache.outputs.rc }}" build //:natives-linux-all
+      - name: Save Bazel disk cache
+        if: steps.cache.outputs.save-needed == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/omp-bazel-disk
+            ~/.cache/omp-bazel-repo
+          key: ${{ steps.cache.outputs.cache-key }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-addons
+          path: bazel-bin/natives-*/*.node
+          if-no-files-found: error
+          retention-days: 1
+
+  release_binary:
+    name: Build release binary (${{ matrix.target_id }})
+    needs: native_addons
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - target: bun-darwin-arm64
-            runs: macos-14
-          - target: bun-darwin-x64
-            runs: macos-15-intel
-          - target: bun-linux-arm64
-            runs: ubuntu-24.04-arm
-          - target: bun-linux-x64
-            runs: ubuntu-latest
-    runs-on: ${{ matrix.runs }}
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            target_id: linux-x64
+            binary_path: packages/coding-agent/binaries/openkai-linux-x64
+            native_targets: linux-x64-baseline linux-x64-modern
+          - os: ubuntu-22.04
+            platform: linux
+            libc: musl
+            arch: x64
+            target_id: linux-musl-x64
+            binary_path: packages/coding-agent/binaries/openkai-linux-musl-x64
+            native_targets: linux-musl-x64-baseline
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            target_id: linux-arm64
+            binary_path: packages/coding-agent/binaries/openkai-linux-arm64
+            native_targets: linux-arm64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            libc: musl
+            arch: arm64
+            target_id: linux-musl-arm64
+            binary_path: packages/coding-agent/binaries/openkai-linux-musl-arm64
+            native_targets: linux-musl-arm64
+          - os: ubuntu-22.04
+            platform: win32
+            arch: x64
+            target_id: win32-x64
+            binary_path: packages/coding-agent/binaries/openkai-windows-x64.exe
+            native_targets: win32-x64-baseline
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/materialize-openkai-source
         with:
-          node-version: "22"
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
-      - name: Build pinned standalone binaries
-        run: packages/cli/scripts/build-binaries.sh ${{ matrix.target }}
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/native-artifacts
+        with:
+          targets: ${{ matrix.native_targets }}
+      - name: Build release binary
         env:
-          OPENKAI_RELEASE_PUBLIC_KEY_PIN: ${{ vars.OPENKAI_RELEASE_PUBLIC_KEY_PIN }}
-      - name: sha256 sidecar
+          RELEASE_TARGETS: ${{ matrix.target_id }}
+        run: bun run ci:release:build-binaries
+      - name: Smoke release binary
+        if: matrix.platform != 'win32' && matrix.libc != 'musl'
         run: |
-          asset="packages/cli/bin/openkai-${TARGET#bun-}"
-          if command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 "$asset" | awk '{print $1 "  " $2}' > "$asset.sha256"
-          else
-            sha256sum "$asset" | awk '{print $1 "  " $2}' > "$asset.sha256"
-          fi
-        env:
-          TARGET: ${{ matrix.target }}
-      - name: Attest build provenance (SLSA, Sigstore)
-        uses: actions/attest-build-provenance@v2
+          runtime_dir="$(mktemp -d)"
+          HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "${{ matrix.binary_path }}" --version
+          HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "${{ matrix.binary_path }}" --smoke-test
+      - name: Smoke musl release binary on Alpine
+        if: matrix.libc == 'musl'
+        run: |
+          binary="$(realpath "${{ matrix.binary_path }}")"
+          docker run --rm -v "$binary:/usr/local/bin/openkai:ro" alpine:3.22 sh -ec '
+            apk add --no-cache libstdc++ libgcc >/dev/null
+            runtime_dir="$(mktemp -d)"
+            HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" openkai --version
+            HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" openkai --smoke-test
+          '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: packages/cli/bin/openkai-*
-      - uses: actions/upload-artifact@v4
-        with:
-          name: assets-${{ matrix.target }}
-          path: packages/cli/bin/openkai-*
+          name: openkai-binary-${{ matrix.target_id }}
+          path: ${{ matrix.binary_path }}
 
-  publish-assets:
-    needs: build
-    runs-on: ubuntu-latest
+  release_binary_darwin:
+    name: Build release binary (${{ matrix.target_id }})
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target_id: darwin-x64
+            binary_path: packages/coding-agent/binaries/openkai-darwin-x64
+            native_targets: darwin-x64-baseline
+          - os: macos-14
+            target_id: darwin-arm64
+            binary_path: packages/coding-agent/binaries/openkai-darwin-arm64
+            native_targets: darwin-arm64
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/materialize-openkai-source
         with:
-          pattern: assets-*
-          path: bin
-          merge-multiple: true
-      - name: Build latest.json manifest from the CI-built artifacts
-        run: |
-          python3 - <<'PYEOF'
-          import json, pathlib, os
-          tag = os.environ["GITHUB_REF_NAME"]
-          # The manifest version must equal the npm version; package.json of
-          # the tagged commit is authoritative (tag v0.1.0NN <-> npm 0.1.N).
-          version = json.loads(pathlib.Path("package.json").read_text())["version"]
-          base = f"https://github.com/Kaidera-AI/OpenKai/releases/download/{tag}"
-          artifacts = []
-          for target in ["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64"]:
-              sha = pathlib.Path(f"bin/openkai-{target}.sha256").read_text().split()[0]
-              artifacts.append({"target": target, "url": f"{base}/openkai-{target}", "sha256": sha})
-          pathlib.Path("bin/latest.json").write_text(json.dumps({"version": version, "artifacts": artifacts}, indent=2) + "\n")
-          print(pathlib.Path("bin/latest.json").read_text())
-          PYEOF
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - uses: bazelbuild/setup-bazelisk@v3
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/bazel-natives
+        with:
+          targets: ${{ matrix.native_targets }}
+          cache-scope: release-${{ matrix.target_id }}
+      - name: Build release binary
         env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-      - name: Sign the manifest (Ed25519 release key)
-        # Pinned binaries refuse unsigned manifests (fail-closed) — this step
-        # is what keeps self-upgrade possible. The private key is a repo
-        # secret; the public half is pinned in build-binaries.sh.
-        # sign-manifest.mjs imports the built dist (canonicalManifestBytes) —
-        # npm ci + build first (two v0.1.009 runs failed on the missing
-        # install, then on the missing build).
+          RELEASE_TARGETS: ${{ matrix.target_id }}
+        run: bun run ci:release:build-binaries
+      - name: Smoke release binary
         run: |
-          npm ci
-          npm run build -w @kaidera/openkai-core
-          npm run build -w @kaidera/openkai
-          OPENKAI_RELEASE_PRIVATE_KEY="$OPENKAI_RELEASE_PRIVATE_KEY" \
-            node packages/cli/scripts/sign-manifest.mjs bin/latest.json
-          test -n "$(python3 -c 'import json; print(json.load(open("bin/latest.json"))["signature"])')"
-        env:
-          OPENKAI_RELEASE_PRIVATE_KEY: ${{ secrets.OPENKAI_RELEASE_PRIVATE_KEY }}
-      - name: Upload assets + manifest to the release
-        run: gh release upload "$TAG" bin/* --clobber
+          runtime_dir="$(mktemp -d)"
+          HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "${{ matrix.binary_path }}" --version
+          HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" "${{ matrix.binary_path }}" --smoke-test
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openkai-binary-${{ matrix.target_id }}
+          path: ${{ matrix.binary_path }}
+
+  release_assets:
+    name: Stage signed release assets
+    needs: [release_binary, release_binary_darwin]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/materialize-openkai-source
+        with:
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - name: Generate release notes
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+        run: bun scripts/ci-release-notes.ts "v${{ inputs.version }}"
+      - name: Record source provenance and release exception
+        env:
+          RELEASE_EXCEPTION: ${{ inputs.release_exception }}
+        run: |
+          source_sha=$(SOURCE_PROVENANCE=./.openkai-source-provenance.json node -e "process.stdout.write(require(process.env.SOURCE_PROVENANCE).source.sha)")
+          release_exception=$(RELEASE_EXCEPTION="$RELEASE_EXCEPTION" SOURCE_PROVENANCE=./.openkai-source-provenance.json node -e "const p = require(process.env.SOURCE_PROVENANCE); process.stdout.write(process.env.RELEASE_EXCEPTION || p.releaseException || '')")
+          {
+            printf "\n\n## Build source\n\n"
+            printf -- "- \`Kaidera-AI/openkai-fork@%s\`\n" "$source_sha"
+            if [ -n "${release_exception:-}" ]; then
+              printf "\n## Release exception\n\n%s\n" "$release_exception"
+            fi
+          } >> release-notes.md
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: openkai-binary-*
+          path: packages/coding-agent/binaries
+          merge-multiple: true
+      - name: Build browser relay artifact
+        run: bun run --cwd packages/browser-relay build
+      - name: Generate signed witnessed-upgrade manifest
+        env:
+          OPENKAI_RELEASE_PRIVATE_KEY: ${{ secrets.OPENKAI_RELEASE_PRIVATE_KEY }}
+        run: bun packages/coding-agent/scripts/ci-release-manifest.ts "v${{ inputs.version }}" latest.json
+      - name: Generate release checksums
+        run: |
+          bun run ci:release:checksums SHA256SUMS.txt \
+            packages/coding-agent/binaries/openkai-* \
+            packages/browser-relay/dist/openkai-browser-relay-extension.zip \
+            latest.json \
+            LICENSE \
+            THIRD-PARTY-NOTICES.txt
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            packages/coding-agent/binaries/openkai-*
+            packages/browser-relay/dist/openkai-browser-relay-extension.zip
+      - name: Stage assets and notes on the canonical draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          gh release upload "$TAG" \
+            packages/coding-agent/binaries/openkai-* \
+            packages/browser-relay/dist/openkai-browser-relay-extension.zip \
+            latest.json \
+            LICENSE \
+            THIRD-PARTY-NOTICES.txt \
+            SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          gh release edit "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OpenKai v${VERSION}" \
+            --notes-file release-notes.md
+
+  release_npm:
+    name: Publish coordinated npm packages
+    needs: [release_assets, native_addons]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/materialize-openkai-source
+        with:
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Ensure npm supports trusted publishing
+        run: npm install -g npm@11.17.0
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/native-artifacts
+        with:
+          targets: linux-x64-baseline linux-x64-modern
+      - name: Publish engine before wrapper
+        run: bun scripts/ci-release-publish.ts --scope kaidera
+
+  publish_release:
+    name: Publish canonical release
+    needs: [release_assets, release_npm]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Remove private source handoff and publish draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          gh release delete-asset "$TAG" "openkai-source-${TAG}.tar.gz" --repo "$GITHUB_REPOSITORY" --yes
+          gh release delete-asset "$TAG" "openkai-source-${TAG}.provenance.json" --repo "$GITHUB_REPOSITORY" --yes
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  release_brew:
+    name: Update Kaidera Homebrew tap
+    needs: publish_release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/materialize-openkai-source
+        with:
+          version: ${{ inputs.version }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4"
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: Kaidera-AI/homebrew-tap
+          ssh-key: ${{ secrets.KAIDERA_TAP_DEPLOY_KEY }}
+          path: homebrew-tap
+      - name: Regenerate and push the OpenKai formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          bun scripts/ci-update-openkai-brew-formula.ts "$TAG" \
+            --version "${VERSION}" \
+            --out homebrew-tap/Formula/openkai.rb
+          cd homebrew-tap
+          if git diff --quiet -- Formula/openkai.rb; then
+            echo "formula already up to date for ${VERSION}"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "openkai ${VERSION} (${TAG})" -- Formula/openkai.rb
+          git push origin HEAD:main

@@ -1,0 +1,70 @@
+name: Materialize OpenKai release source
+description: Download the SHA-256-verified release handoff from this repository's draft and replace the workspace with the exact source snapshot.
+
+inputs:
+  version:
+    description: OpenKai product version carried by the source handoff
+    required: true
+
+outputs:
+  source-sha:
+    description: Immutable source revision declared by the verified handoff
+    value: ${{ steps.materialize.outputs.source-sha }}
+
+runs:
+  using: composite
+  steps:
+    - id: materialize
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        tag="v${VERSION}"
+        archive="openkai-source-${tag}.tar.gz"
+        provenance="openkai-source-${tag}.provenance.json"
+        handoff_dir="$RUNNER_TEMP/openkai-release-handoff"
+        extract_dir="$RUNNER_TEMP/openkai-release-source"
+        mkdir -p "$handoff_dir" "$extract_dir"
+
+        gh release download "$tag" \
+          --repo "$GITHUB_REPOSITORY" \
+          --pattern "$archive" \
+          --pattern "$provenance" \
+          --dir "$handoff_dir"
+
+        node - "$handoff_dir/$provenance" "$handoff_dir/$archive" "$VERSION" "$tag" <<'NODE'
+        const crypto = require("node:crypto");
+        const fs = require("node:fs");
+        const [provenancePath, archivePath, version, tag] = process.argv.slice(2);
+        const provenance = JSON.parse(fs.readFileSync(provenancePath, "utf8"));
+        const digest = crypto.createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
+        if (provenance.version !== version) throw new Error(`handoff version mismatch: ${provenance.version}`);
+        if (provenance.source?.tag !== tag) throw new Error(`handoff tag mismatch: ${provenance.source?.tag}`);
+        if (provenance.source?.repository !== "Kaidera-AI/openkai-fork") {
+          throw new Error(`unexpected source repository: ${provenance.source?.repository}`);
+        }
+        if (!/^[0-9a-f]{40}$/i.test(provenance.source?.sha ?? "")) {
+          throw new Error("handoff source SHA is missing or invalid");
+        }
+        if (provenance.archive?.name !== require("node:path").basename(archivePath)) {
+          throw new Error("handoff archive name mismatch");
+        }
+        if (provenance.archive?.sha256 !== digest) throw new Error("handoff archive SHA-256 mismatch");
+        if (provenance.releaseException != null && typeof provenance.releaseException !== "string") {
+          throw new Error("handoff release exception must be text or null");
+        }
+        console.log(`Verified ${tag} source handoff at ${provenance.source.sha}`);
+        NODE
+
+        tar -xzf "$handoff_dir/$archive" -C "$extract_dir"
+        source_dir="$extract_dir/openkai-fork-v${VERSION}"
+        test -f "$source_dir/package.json"
+        test -f "$source_dir/packages/coding-agent/package.json"
+
+        # Preserve the product checkout's .git metadata while making local source
+        # actions resolve at the workspace root, exactly as they do in source CI.
+        rsync -a --delete --exclude .git "$source_dir/" "$GITHUB_WORKSPACE/"
+        cp "$handoff_dir/$provenance" "$GITHUB_WORKSPACE/.openkai-source-provenance.json"
+        node -e 'const p = require("./.openkai-source-provenance.json"); require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `source-sha=${p.source.sha}\n`);'

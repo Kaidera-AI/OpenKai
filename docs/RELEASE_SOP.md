@@ -36,22 +36,26 @@ Consent is **per version, per session**. A consent for 0.1.5 does not cover 0.1.
 
 ## Release sequence (after consent)
 
-1. `main` green: `npm test` full suite + `scripts/security-audit.sh` PASSED.
-2. CHANGELOG entry for the version exists.
-3. Version strings bumped in lockstep: root `package.json`,
-   `packages/core/package.json`, `packages/cli/package.json` (incl. the core
-   pin), `packages/cli/src/version.ts`.
-4. `npm publish -w @kaidera/openkai-core` then `-w @kaidera/openkai` (core first;
-   the CLI pins the core version).
-5. Build all four platform binaries + sha256 sidecars.
-6. `gh release create v0.1.<NNN>` with binaries + `latest.json` manifest
-   (manifest `version` must equal the npm version). Verify the manifest serves:
-   `curl -sL .../releases/latest/download/latest.json`.
-7. Repoint `scripts/install.sh` default + Homebrew formula (tap repo) to the new
-   tag with recomputed sha256; push both.
-8. Verify the update path end-to-end: a fresh install of the previous version
-   must reach the new one via `openkai update`.
-9. Report the published versions + tag + channel state to the CTO.
+1. Prepare the executable source in private `Kaidera-AI/openkai-fork`: the
+   engine manifest, `@kaidera/openkai` wrapper, wrapper engine dependency, and
+   runtime `PRODUCT_VERSION` MUST have one `0.1.N` version.
+2. Run `bun run release <0.1.N>` from that source repository. It validates the
+   source commit, tags it, and uploads a SHA-256-recorded source handoff to a
+   **draft** release in canonical `Kaidera-AI/OpenKai`.
+3. The canonical `OpenKai release` workflow materializes that exact handoff,
+   verifies its source SHA and public-version contract, then builds every
+   native addon and standalone target.
+4. The workflow attaches all binaries, browser relay extension, signed
+   `latest.json`, checksums, and SLSA provenance to the still-private draft.
+5. It publishes `@kaidera/openkai-engine` before `@kaidera/openkai` through
+   npm OIDC trusted publishing.
+6. It removes the private handoff assets, publishes the canonical GitHub
+   release, then regenerates and pushes the Kaidera Homebrew formula from the
+   release asset digests.
+7. Verify the released registry versions, `latest.json`, and all canonical
+   release assets; then exercise the applicable installed update path.
+8. Report the source SHA, package versions, tag, distribution state, and every
+   authorized exception to the CTO.
 
 ## Known bootstrap quirk
 
@@ -65,6 +69,12 @@ Every version ≥0.1.6 uses the GitHub-hosted manifest and self-sustains.
 - 2026-08-18: v0.1.6 (npm + tag + release) published while the CTO considered
   0.1.006 not ready. Left in place (rollback is more disruptive); this SOP
   adopted; 0.1.007 started on `release/0.1.007`.
+
+- 2026-09-03: v0.1.12 is explicitly authorized with the Windows/PowerShell
+  runtime check and the clean-host, Cortex, and enrichment external gates
+  waived. The published release notes MUST carry this exception; build,
+  version-contract, asset-integrity, and non-waived smoke checks remain
+  required.
 
 ## Local-binary hygiene (added 2026-08-18)
 
@@ -85,33 +95,33 @@ because features validated on the `openkai-next` candidate repeatedly failed
 to reach the published channel (stale binaries, unmerged branches).
 
 **Fold-in gate — the candidate IS the release:**
-1. `openkai-next` (the UAT candidate) is rebuilt from the SAME commit that
-   will be published. Never publish a commit the candidate wasn't built from.
-2. Diff the candidate's feature surface against the release commit:
-   `git log --oneline <candidate-build-commit>..HEAD` must be empty (or every
-   delta intentionally listed).
-3. Every feature the CTO tested on `openkai-next` (brand, mouse, panels,
-   commands) is present in the published tarball — verify by unpacking:
-   `npm pack @kaidera/openkai@<v> && tar -xzf` and grep the dist for the
-   feature markers.
-4. All research/handoff work intended for the release is MERGED to main
-   (check `git branch --contains` for feature branches).
+1. `openkai-next` (the UAT candidate) is rebuilt from the same private-source
+   SHA carried in the canonical release handoff.
+2. Every intended feature is present in the source handoff and in the packed
+   `@kaidera/openkai-engine` payload.
+3. All intended source work is merged to `openkai-fork/main` before the
+   source tag is created.
 
 **Quality gate:**
-5. `npm test` full suite green on the release commit.
-6. `scripts/security-audit.sh` PASSED on the release commit.
-7. CHANGELOG entry for the version exists and lists every folded increment.
+4. The source release check and the canonical workflow's version assertion,
+   native build, and applicable binary smoke paths succeed.
+5. CHANGELOG entry for the version exists and lists every folded increment.
+6. A gate may be waived only by explicit, version-scoped consent in the live
+   session; the canonical release notes MUST state the exception.
 
 **Channel gate (after consent):**
-8. npm core→cli lockstep publish; version strings bumped in all five places.
-9. GitHub release created with 4 binaries + sha256 sidecars + `latest.json`
-   (asset MUST be named latest.json); manifest `version` == npm version;
-   `curl -sL .../releases/latest/download/latest.json` serves it.
-10. `install.sh` default + Homebrew formula repointed with recomputed sha256;
-    both pushed; `brew info` shows the new stable.
-11. Local-binary hygiene: refresh ~/.local/bin/openkai + openkai-next;
-    `which -a openkai` reports the released version everywhere.
-12. CTO explicit consent recorded for THIS version in THIS session.
+7. Engine manifest, wrapper manifest, wrapper engine pin, and runtime version
+   are lockstep `0.1.N`.
+8. The source archive SHA and source revision are verified before canonical
+   builds begin; the handoff archive is removed before the draft is public.
+9. npm OIDC publishes `@kaidera/openkai-engine` before
+   `@kaidera/openkai`; both registry versions equal the release version.
+10. GitHub release contains every target binary, relay extension, checksums,
+    SLSA provenance, and a signed `latest.json` whose version equals npm.
+11. The Kaidera Homebrew formula is generated from those canonical asset
+    digests and pushed after the GitHub release is public.
+12. CTO explicit consent and every exception are recorded for this version in
+    this session.
 
 ## Homebrew tap trust (added 2026-08-18)
 
@@ -135,22 +145,23 @@ code-execution policy (formulas are Ruby), identical for every third-party tap.
 We therefore do NOT treat brew as the primary channel and never ask users to
 trust our tap as the intended flow.
 
-**Primary install = signed binaries:** `.github/workflows/release.yml` runs on
-`v0.1.*` tag pushes (tag = consented act per this SOP) and attaches SLSA
-build-provenance attestations (GitHub Sigstore, `actions/attest-build-provenance`)
-to every platform binary, then uploads the CI-built assets + a fresh
-`latest.json` (version read from the tagged package.json) to the release.
-Users verify with:
+**Primary install = signed binaries:** canonical
+`.github/workflows/release.yml` is manually dispatched only after the
+consented source handoff is staged on a draft release. It verifies the handoff
+SHA, builds the source snapshot, attaches SLSA build-provenance attestations to
+every platform binary, and signs `latest.json` with the canonical release key.
+The private source handoff is deleted before publication. Users verify with:
 `gh attestation verify <binary> --repo Kaidera-AI/OpenKai`
 
 `scripts/install.sh` remains the zero-dependency path: sha256-verified before
-install, no trust prompt, no node. npm stays the lockstep package channel
-(manual publish, consent-gated).
+install, no trust prompt, no node. npm is the lockstep package channel, using
+canonical-repository OIDC rather than a long-lived publish token.
 
 **Release order (supersedes the earlier sequence where it differs):**
-consent → bump versions → CI tag pipeline builds+attests+uploads assets →
-manual npm publish (core then cli) → repoint install.sh + Homebrew formula
-(document `brew trust` as a known Homebrew limitation, not our default).
+consent → private source version/tag → SHA-verified canonical draft handoff →
+canonical CI builds/signs/stages assets → npm engine→wrapper publish → publish
+the GitHub draft → update Kaidera Homebrew tap. Document `brew trust` as a
+known Homebrew limitation, not the intended default.
 \n
 ## Bun channel (added 2026-08-20)
 
