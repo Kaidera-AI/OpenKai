@@ -40,7 +40,7 @@ Keep building on our codebase over the frozen pi-0.84.2 dependency line.
   proven twice this session).
 
 ### Option B — fork omp wholesale, port the differentiators (the CTO's direction)
-Fork `can1357/oh-my-pi` (MIT — copyright Mario Zechner / Can Bölük / Stencil
+Fork `omp (upstream)` (MIT — copyright Mario Zechner / Can Bölük / Stencil
 Labs; no NOTICE burden beyond the MIT header). OpenKai becomes a maintained
 fork: their agent loop, TUI, tools, permissions engine, plugin system — plus
 our layer: fusion, switchyard routing, the RLM pattern, our brand.

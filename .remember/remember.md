@@ -9,4 +9,4 @@ OpenKai harness TUI (@openkai/cli 0.1.5) on `main` in ~/DevVault/OpenKai; all wo
 3. Keep cherry-picking omp functionality per CTO formula: functionality from omp, look+feel from droid.
 
 ## Context
-CTO (Amad) tests via `openkai-next` in ghostty on the Mac; tmux captures can't render droid's composer but verify our TUI fine. omp source cloned at /tmp/omp-src (may be gone after restart — re-clone can1357/oh-my-pi if needed). pi-ai pinned 0.84.2 provides OAuth lanes + models.login. Cortex project `openkai` tracks decisions (kai@openkai, cortex-api:8501).
+CTO (Amad) tests via `openkai-next` in ghostty on the Mac; tmux captures can't render droid's composer but verify our TUI fine. omp source cloned at /tmp/omp-src (may be gone after restart — re-clone omp (upstream) if needed). pi-ai pinned 0.84.2 provides OAuth lanes + models.login. Cortex project `openkai` tracks decisions (kai@openkai, cortex-api:8501).

@@ -57,7 +57,7 @@ PR #3 run 1: surfaced 3 fixable integration defects (all fixed in `6dd1f30b6e`):
 
 **Remaining native/unit failure is upstream-inherited, not an E022 regression.**
 `browser-tab-worker-startup.test.ts > visible OMP-owned browser tabs > creates
-independent pages` fails identically on upstream `can1357/oh-my-pi`'s OWN hosted
+independent pages` fails identically on upstream `omp (upstream)`'s OWN hosted
 PR CI (runs 33492541432, 33490882549) — the test launches headful Chrome
 (`headless: false`) and the tab worker reports a swallowed `[object ErrorEvent]`
 init failure. Evidence: this branch touches no browser code

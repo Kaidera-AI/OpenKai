@@ -9,7 +9,7 @@ this pass signs off. npm versions are immutable.
 ## What just landed (round 3 — verify these, don't trust them)
 
 Commit `a1eab24` — 35 findings from a 4-slice adversarial review, all fixed in one batch.
-Commit `fc4cb6e` — NEW FEATURE (user-directed, same version): magic keywords `ultrathink` + `ultrareview`, cherry-picked from OMP (can1357/oh-my-pi) and upgraded to multi-model fusion, with composer/status shimmer. Attack this too (area 8 below).
+Commit `fc4cb6e` — NEW FEATURE (user-directed, same version): magic keywords `ultrathink` + `ultrareview`, cherry-picked from OMP (omp (upstream)) and upgraded to multi-model fusion, with composer/status shimmer. Attack this too (area 8 below).
 The fix code is NEW and is itself the freshest attack surface. Areas and what to attack:
 
 1. **`packages/cli/src/tui/theme.ts` — detectThemeAsync TUI-safety (was CRITICAL).**

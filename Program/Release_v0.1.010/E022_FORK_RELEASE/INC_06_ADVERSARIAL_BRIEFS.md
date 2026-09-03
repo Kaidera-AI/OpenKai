@@ -44,6 +44,6 @@ Findings to a handoff document.
 ## Known issue carried (not a blocker)
 
 `browser-tab-worker-startup` visible-tab test fails identically on upstream
-`can1357/oh-my-pi` hosted CI — upstream-inherited, no browser code touched by
+`omp (upstream)` hosted CI — upstream-inherited, no browser code touched by
 E022, release path (omp-kata runner) ships the display. Tracked for the next
 monthly merge. See `INC_03_04_GATE.md` §CI evidence.

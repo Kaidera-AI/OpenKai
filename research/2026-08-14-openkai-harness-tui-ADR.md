@@ -14,13 +14,13 @@
 - `research/2026-08-14-ruvllm-findings.md` — RuVector examples/ruvLLM, MIT
 - `research/2026-08-14-prime-agent-findings.md` — PrimeIntellect-ai/prime-agent @ `9f95011`, MIT
 - `research/2026-08-14-opencode-tui-findings.md` — anomalyco/opencode @ `4643e65` + docs, MIT
-- `research/2026-08-14-pi-omp-findings.md` — earendil-works/pi (pi-mono) + can1357/oh-my-pi, both MIT
+- `research/2026-08-14-pi-omp-findings.md` — earendil-works/pi (Pi (upstream)) + omp (upstream), both MIT
 
 ---
 
 ## 0. TLDR
 
-The question "how far behind omp/pi is our harness, and how do we ship our own" has a surprising answer uncovered this round: **omp and prime-agent are both forks of the same ancestor — pi-mono (`earendil-works/pi`) — and that ancestor publishes its provider layer (`pi-ai`, 30+ providers) and TUI library (`pi-tui`) as MIT npm packages with supported embedder surfaces.** We do not need to fork anything, wrap anything, or build anything from scratch to stand OpenKai up.
+The question "how far behind omp/pi is our harness, and how do we ship our own" has a surprising answer uncovered this round: **omp and prime-agent are both forks of the same ancestor — Pi (upstream) (`earendil-works/pi`) — and that ancestor publishes its provider layer (`pi-ai`, 30+ providers) and TUI library (`pi-tui`) as MIT npm packages with supported embedder surfaces.** We do not need to fork anything, wrap anything, or build anything from scratch to stand OpenKai up.
 
 **Decision: OpenKai is a standalone, open-source TypeScript product that imports `pi-ai` + `pi-tui` as npm dependencies (build-on-top option 2), keeps its own TUI, and treats KOS's Python orchestrator + Cortex (Postgres/pgvector) as its memory and orchestration plane.** It lives in its own repository, ships as an npm package + binaries, and KOS consumes it as an automatically-upgraded component through the same lane shape it uses for every other harness. Fusion (E016 FU-*) is delivered *through* OpenKai, not around it.
 
@@ -32,9 +32,9 @@ The three findings that make this cheap:
 
 ## 1. The landscape, one paragraph each
 
-**pi-mono → `earendil-works/pi` (90.4k★, MIT).** The lineage root. TS monorepo: `pi-ai` (30+ providers, OAuth, unified usage/cost, cross-provider handoff), `pi-agent-core` (Agent loop, steer/follow-up queues, compaction hooks), `pi-tui` (standalone differential-rendering TUI library), `pi-coding-agent` (the `pi` CLI + supported embedder SDK: `createAgentSession`, `AgentSessionRuntime`). Deliberate non-features: no subagents, no MCP, no permissions — all delegated to extensions.
+**Pi (upstream) → `earendil-works/pi` (90.4k★, MIT).** The lineage root. TS monorepo: `pi-ai` (30+ providers, OAuth, unified usage/cost, cross-provider handoff), `pi-agent-core` (Agent loop, steer/follow-up queues, compaction hooks), `pi-tui` (standalone differential-rendering TUI library), `pi-coding-agent` (the `pi` CLI + supported embedder SDK: `createAgentSession`, `AgentSessionRuntime`). Deliberate non-features: no subagents, no MCP, no permissions — all delegated to extensions.
 
-**omp (24.8k★, MIT) — our runtime.** A hard **source fork** of pi-mono, not an extension pack: ~80k lines of Rust N-API natives, subagents, LSP/DAP, browser, marketplace. Consequence stated plainly: tracking upstream pi means merge-from-fork, so OpenKai must not build *on omp's source*; but omp retains pi's ExtensionAPI, so an omp extension remains a valid **prototyping** surface (§3, option 1).
+**omp (24.8k★, MIT) — our runtime.** A hard **source fork** of Pi (upstream), not an extension pack: ~80k lines of Rust N-API natives, subagents, LSP/DAP, browser, marketplace. Consequence stated plainly: tracking upstream pi means merge-from-fork, so OpenKai must not build *on omp's source*; but omp retains pi's ExtensionAPI, so an omp extension remains a valid **prototyping** surface (§3, option 1).
 
 **prime-agent (15.9k★, MIT).** Also a pi fork. Its value-add over the ancestor: a three-process **daemon topology** (supervisor → resident worker per session tree → IPython kernels), generation-fenced event cursors, idempotent command journal, admission-handle subagents that survive detachment, and a dill-snapshotted Python kernel as durable context. Its harness "memory" is an mtime-polled JSON ledger — weaker than Cortex.
 
@@ -50,7 +50,7 @@ From the E015/E016 surveys, restated briefly: four harness lanes with one normal
 
 ## 3. Decision: build surface
 
-**Chosen: option 2 — OpenKai as a TypeScript app importing pi-mono libraries.** Verdicts from the pi/omp findings (each with evidence there):
+**Chosen: option 2 — OpenKai as a TypeScript app importing Pi (upstream) libraries.** Verdicts from the pi/omp findings (each with evidence there):
 
 | Option | Verdict | Why |
 |---|---|---|

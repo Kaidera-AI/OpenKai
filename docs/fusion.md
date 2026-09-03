@@ -1,89 +1,208 @@
-# Fusion Core
+# Fusion — Multi-Model by Default
 
-The Fusion core is a specialized execution mode for tasks that require both high-level planning and low-level implementation.
+OpenKai is **fusion-first**. Every task can run through an architect +
+builder panel, merged with an attributed synthesis, and optionally wrapped
+in a gate-first validation loop. Single-model is the fast path; fusion is
+the quality path.
 
-## Semantics
+## Philosophy
 
-Fusion operates by splitting a single prompt into two distinct roles:
+> **Different models make different errors.** GPT-4o stumbles on reasoning
+> chains Claude handles well. Gemini misreads ambiguous instructions Mistral
+> interprets correctly. When you run several models in parallel and aggregate
+> their answers, individual errors tend to cancel out.
 
-1. **The Architect (FU-1):** Focuses on the structure, design, and constraints of the solution.
-2. **The Builder (FU-1):** Focuses on the implementation, coding, and technical execution.
+OpenKai's fusion is not a wrapper — it is the **default architecture**. The
+harness is built so that any task can be fused, and the fusion system learns
+from every run.
 
-These roles run in separate, fresh sessions in parallel to prevent "role collapse" or premature convergence.
+## The fusion pipeline
 
-## Attributed Synthesis (FU-2)
-After the Architect and Builder complete their tasks, OpenKai performs a **Synthesis**. The final output is a merged artifact where contributions are explicitly attributed to the role that produced them. This ensures the user can distinguish between a design decision (Architect) and a technical implementation (Builder).
+```
+Task
+  │
+  ├─ Panel (FU-1)
+  │   ├─ Architect session ── fresh context, model A
+  │   └─ Builder session ─── fresh context, model B
+  │   (parallel, independent)
+  │
+  ├─ Synthesis (FU-2)
+  │   └─ Third session ───── fresh context, model C
+  │       Merges with attribution:
+  │       • consensus[]
+  │       • divergences[{topic, architect, builder, kept}]
+  │       • discarded[{item, reason, by}]
+  │       • blindSpots[]
+  │
+  └─ Gate (FU-3, optional)
+      ├─ Validator designs executable checks BEFORE work
+      ├─ Baseline MUST fail red (gate proves nothing otherwise)
+      ├─ Builder rounds with repair loop (cap 3)
+      └─ Halt loudly with full transcript
+```
 
-## Gate-First Validation (FU-3)
-By passing the `--gate` flag, you enable the gate-first validation loop. 
-
-In this mode:
-- The gate runs **before** the work, to prove it can fail. A baseline that is already
-  green proves nothing, so the run stops as a **WEAK GATE** rather than claiming success.
-- With a RED baseline established, the synthesis is passed through a **Judge** model.
-- On failure the Judge's verbatim feedback is fed back for repair.
-- This repeats until the gate passes or the `--max-rounds` cap (default 3) is reached,
-  which halts loudly as a **HALT** for triage.
-
-## Usage Example
+## Commands
 
 ```bash
-openkai fuse --prompt "Implement a secure auth middleware" --gate --max-rounds 5
+# Single-model (fast path)
+openkai chat --prompt "explain this repo's layout"
+
+# Fusion (default for complex tasks)
+openkai fuse --prompt "design the caching layer"
+
+# Fusion with gate-first validation
+openkai fuse --prompt "implement the auth middleware" --gate
+
+# Choose models for each role
+openkai fuse --prompt "review this PR" \
+  --architect-model anthropic/claude-3.5-sonnet \
+  --builder-model openai/gpt-4o
+
+# Let the bandit pick the pair
+openkai fuse --prompt "optimise this query" --auto
 ```
 
-## Calibration (`openkai fusion calibrate`)
+## Roles
 
-The calibration harness (OK-9 W6/W7) turns recorded run outcomes into an
-escalation-threshold recommendation — Switchyard's quadrant method, not a
-borrowed operating point.
+### Architect
 
-**Record shape** (JSONL, one line per run; pooled from `--runs` and the
-optional `--baseline` file):
+The architect plans, critiques, and merges. It sees the task's explicit
+requirements and produces:
 
-```json
-{"taskId": "auth-middleware", "tier": "capable", "score": 0.62, "outcome": "pass"}
-```
+- Approach outline
+- Risk assessment
+- Review criteria
+- Merge instructions for the synthesis session
 
-- `tier` — which arm the run served (`capable` or `efficient`).
-- `score` — the corroborative scorer value recorded for the task at routing
-  time (0..1); this is what the threshold sweeps against.
-- `outcome` — `pass` / `fail` for that arm on that task.
+Default: a strong reasoning model (Claude 3.5 Sonnet, GPT-4o, Gemini 2.5
+Pro).
 
-Pairing is by `taskId`: tasks present in both arms land in a quadrant —
-**RESCUE** (efficient fails, capable passes: escalation rescues the task),
-**LOSS** (efficient passes, capable fails: escalation loses quality),
-**SAFE** (both pass), **HARD** (both fail). Tasks seen in only one arm are
-reported as unpaired and excluded.
+### Builder
+
+The builder implements. It sees the architect's plan and produces:
+
+- Working code or analysis
+- Tests or verification steps
+- Known limitations and edge cases
+
+Default: a strong implementation model (GPT-4o, Claude 3.5 Sonnet, DeepSeek
+V3).
+
+### Synthesis
+
+The synthesis session merges architect and builder outputs with
+**mandatory attribution**. Every merged item is tagged:
+
+- `[ARCHITECT]` — the architect's position
+- `[BUILDER]` — the builder's position
+- `[CONSENSUS]` — both agree
+- `[DIVERGENCE]` — both disagree, both positions kept
+- `[DISCARDED]` — rejected, with reason and attribution
+
+An unattributed merge is a **regression to one opinion** and throws
+`AttributionError`.
+
+### Gate (optional)
+
+With `--gate`, a validator designs executable checks **before** any builder
+run. The baseline MUST fail red — an all-green baseline means the gate is
+theatre and throws `WeakGateError`.
+
+- Validator reads the task's explicit requirements
+- Designs 2-5 executable checks (file exists, test passes, pattern matches)
+- Baseline run MUST fail at least one check
+- Builder rounds with repair loop (cap 3, then `GateHaltError`)
+- Gate repair once per run (does not consume a builder round)
+- Builder never grades its own homework — gate execution is fully outside
+  role sessions
+
+## Model selection
+
+### Bandit recommendations
+
+The fusion bandit learns from every run. It tracks:
+
+- Which model pairs produce the best outcomes
+- Task complexity buckets (architecture, ambiguous, high-blast-radius,
+  routine)
+- Cost vs quality trade-offs
+
+The bandit recommends pairs based on **what actually worked in your
+project**, not generic model rankings.
 
 ```bash
-openkai fusion calibrate \
-  --runs .openkai/fusion/runs.jsonl \
-  --baseline calibration/capable-baseline.jsonl
+# Bandit picks the pair
+openkai fuse --prompt "refactor the auth module" --auto
+
+# See what the bandit recommends
+openkai fusion report
 ```
 
-The report shows, per threshold candidate (0.30–0.80): the strong-call
-fraction and the quality gap closed (RouteLLM's CPT/APGR frame), rescued
-RESCUE tasks, and over-escalated LOSS tasks. The recommendation is
-Switchyard's rule: **the lowest threshold that rescues RESCUE without
-over-escalating LOSS** — and when the data cannot separate the quadrants, the
-report says so instead of faking a clean pick. Every run writes a dated
-record under `research/calibration/` (override with `--record-dir`).
+### Casts
 
-The report closes with the **judge break-even** line (OK-9.4, LangChain's
-formula): `judgeCost / (dearCost − cheapCost)` from live catalogue pricing —
-the fraction of calls that must offload to the cheap tier for the judge to
-pay for itself. Models come from `--judge-model` / `--cheap-model` /
-`--dear-model` (+`--provider`), or fall back to the configured/default cast.
-The same line is emitted as an activity event whenever a fusion run resolves
-its judge, so `openkai tail` shows the judge economics of live runs.
+Casts are curated model role sets — the bandit's arm space. Each cast
+defines an architect/builder pair optimised for a task class:
 
-## Exit Codes
+| Cast | Architect | Builder | Use |
+|---|---|---|---|
+| `reasoning-heavy` | Claude 3.5 Sonnet | GPT-4o | Complex logic, multi-step reasoning |
+| `code-heavy` | GPT-4o | DeepSeek V3 | Implementation, refactoring, testing |
+| `review-heavy` | Claude 3.5 Sonnet | Gemini 2.5 Pro | Code review, security analysis |
+| `fast-cheap` | Gemini 2.5 Flash | DeepSeek V3 | High-volume, routine tasks |
+| `reasoning-max` | GPT-4o | Claude 3.5 Sonnet | Cross-provider diversity |
 
-| Code | Meaning |
-|---|---|
-| `0` | Synthesis produced. With `--gate`, the gate also passed. |
-| `1` | `OPENROUTER_API_KEY` unset, a run error, or `--gate` ended in `weak-gate`/`halt`. |
-| `2` | A named model (`--architect-model`/`--builder-model`/`--judge-model`) is not in the OpenRouter catalogue. |
+### Self-pairing
 
-Without `--gate` the gate outcome is `not-run` and a completed synthesis exits `0`.
-The gate verdict is printed to stdout as `══ GATE: … ══`.
+With a single provider, self-pairing is the default (same model for both
+roles). The bandit flags the compromise: "one provider — self-pairing works,
+but a second lane lets two INDEPENDENT models fuse."
+
+## Telemetry
+
+Every fusion run is recorded:
+
+- Per-role model, latency, token usage
+- Gate outcome (if used)
+- Bandit recommendation and confidence
+- Synthesis attribution breakdown
+- Cost per run
+
+```bash
+# View fusion telemetry
+openkai fusion report
+
+# Per-pair performance
+openkai fusion report --pair "anthropic/claude-3.5-sonnet+openai/gpt-4o"
+```
+
+## When to fuse
+
+| Task | Fuse? | Why |
+|---|---|---|
+| Simple Q&A | No | Single model is faster and cheaper |
+| Architecture decision | Yes | Two perspectives prevent blind spots |
+| Complex implementation | Yes | Builder + reviewer catch more bugs |
+| Code review | Yes | Cross-model review finds more issues |
+| High-stakes changes | Yes + gate | Gate proves the work before it lands |
+| Research/exploration | Maybe | Fusion if ambiguity is high |
+| Routine tasks | No | Bandit routes to single cheap model |
+
+## When NOT to fuse
+
+- **Latency-sensitive**: parallel + synthesis adds ~2x latency
+- **Very long documents**: synthesis may lose nuance from 50K+ token context
+- **Model-specific features**: Claude's extended thinking, OpenAI's code
+  interpreter — these are per-model, not transferable
+- **Distinctive creative voice**: synthesis averages toward the centre
+
+## Fusion + memory
+
+Fusion runs are ingested into Cortex memory (see [Memory](memory.md)):
+
+- Architect and builder outputs embedded separately
+- Synthesis artifacts embedded as merged documents
+- Gate results embedded as decision records
+- Bandit telemetry feeds the memory graph
+
+The fusion system **learns from your project** — not just generic model
+rankings, but what actually worked in similar tasks on your codebase.

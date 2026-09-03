@@ -19,14 +19,14 @@ with Cortex")
 Prove, in code and in two weeks, that OpenKai's differentiators run on omp's
 base: **fusion + switchyard routing + the RLM recursion pattern, with Cortex
 as the memory layer, Kaidera UI/UX on top.** If the spike passes its gates,
-OpenKai's future is a maintained fork of `can1357/oh-my-pi` (MIT). If it
+OpenKai's future is a maintained fork of `omp (upstream)` (MIT). If it
 fails its kill criteria, we fall back to the 0.84 line with the backlog
 intact and nothing lost but two weeks.
 
 ## 2. Architecture (decided)
 
 ```
-can1357/oh-my-pi (fork base, pinned tag v18.0.0)
+omp (upstream) (fork base, pinned tag v18.0.0)
 ├── UNTOUCHED (upstream, merge-cadence monthly):
 │   agent-loop, editor, markdown streaming, loader, permission engine
 │   (bash.patterns), plugin marketplace, hooks, extensions, config system,
@@ -53,7 +53,7 @@ usage folds up into the parent turn. NOT prime-agent's IPython-kernel grammar.
 
 | Phase | Content | Deliverable | Gate (measurable) |
 |---|---|---|---|
-| **F0** — fork + brand + build | Fork `can1357/oh-my-pi` at tag v18.0.0 into `kaidera-ai/openkai`; LICENCE headers retained; Kaidera theme + splash + chips; our 4-channel build (npm lockstep shape, brew, standalone-signed, install.sh) against their build-binary.ts | branded fork builds and installs via all four channels | fresh install passes a 10-drive smoke (boot, prompt, tool call, overlay, settings) on macOS |
+| **F0** — fork + brand + build | Fork `omp (upstream)` at tag v18.0.0 into `kaidera-ai/openkai`; LICENCE headers retained; Kaidera theme + splash + chips; our 4-channel build (npm lockstep shape, brew, standalone-signed, install.sh) against their build-binary.ts | branded fork builds and installs via all four channels | fresh install passes a 10-drive smoke (boot, prompt, tool call, overlay, settings) on macOS |
 | **F1** — fusion on seams | fusion panel/synthesis/gate as a CustomTool with our cards; bandit reward loop wired through their ModelRegistry; calibrate reads their usage entries | `/fuse` runs the panel in the fork's TUI; verdicts render in their cards; bandit posterior moves on a gated run | fusion e2e: two-model panel + judge verdict + gate pass on a scripted task |
 | **F2** — switchyard routing | our Orchestrator drives their ModelRole slots; tier chip in their status line; posture/pins from config | tier decisions visible live in the fork's status line; pins clamp | orchestrate test-suite ported to the fork's resolver |
 | **F3** — trust surface | deny floor (stricter layer over their engine), permission overlays with our denial rows, served TUI (hub + headless host as an Extension), magic keywords | deny floor holds against the 0.1.9 repro suite; an rw attach drives a fork session | security-audit equivalent of the 0.1.9 gate green on the fork |
