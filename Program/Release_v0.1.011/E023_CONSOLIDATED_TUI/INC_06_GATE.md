@@ -82,3 +82,20 @@ New: `openkai-cortex-memory.test.ts` (23 unit gates), `openkai-cortex-live.test.
 ## KOS minimum version
 
 Unchanged (0.1.10 for the six terminal-lane asks). The memory rework ships with 0.1.11.
+
+## Addendum — compiled build + drive (2026-09-03, after the export fix)
+
+- First build failed: `Could not resolve "@oh-my-pi/pi-coding-agent/hindsight"` — the
+  legacy-pi virtual-module plugin expands every named wildcard export in
+  `packages/coding-agent/package.json`; the deleted `./hindsight` + `./hindsight/*`
+  entries were dropped (fork commit "build: drop the retired … subpath exports").
+- Rebuild: `PATH=$HOME/.cargo/bin:$PATH bun run build` → `dist/omp` (138 MB) ·
+  `./dist/omp --version` → `openkai/0.1.10` (the 0.1.11 lockstep stamp rides Inc 03).
+- Compiled settings drive: `./dist/omp config list` shows the new memory surface —
+  `memory.backend = off (off|local|cortex)`, `cortex.apiUrl = http://localhost:8501`,
+  `cortex.token/project/agent`, `cortex.autoRecall = true`, `cortex.migratedFrom`,
+  `cortexingest.enabled = true`, `cortexingest.transcripts = false`,
+  `cortexingest.model`, `cortexingest.minToolCalls = 5`, `cortex.embeddingModel`,
+  `cortex.rerankModel`; no hindsight/mnemopi/sharpshooter/autolearn keys remain.
+- Fork tree clean after the build (generated client bundle reset, nothing to commit).
+- Branch `e023/inc-06-memory-cortex` pushed to `Kaidera-AI/openkai-fork` — 7 commits.
