@@ -1,57 +1,148 @@
 # Plan: E024 — Cortex completion (from `EPIC_SPEC.md`, 2026-09-04)
 
-Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (planning mandate). Worktrees: fork `~/DevVault/openkai-fork` branches `e024/<wave>-<slug>` from `main @ c6c7fa7b1b`; programme repo `maintenance/0.84-line`. Status: **accepted 2026-09-04** with authoritative D0–D6 in the intent. W0 is closed; W1 review and W2 acceptance are open.
+Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Source worktrees branch from `Kaidera-AI/openkai-fork main @ c6c7fa7b1b`; public-channel work branches from current `Kaidera-AI/OpenKai origin/main`; programme documents stay on `maintenance/0.84-line`. Status: **W0 and W1 closed; W3 source-only remediation GO; W2/W4 mutation drives and W7 release remain gated.** Authoritative decisions D0–D6 are in the intent; W1 dispositions are in `DISPOSITION_REN_W1.md`.
 
-## Files that change (by wave; exact paths on fork `main`)
-- **W0 (programme repo, docs only):** `Program/PROGRESS.md` (header + line), `CHANGELOG.md` (`[0.1.12]` pointer entry), `docs/HANDOFF_GITHUB_OPENKAI_FINALISATION.md` + `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (supersession headers), this folder.
-- **W2 (evidence only):** `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/evidence/*.md` (redacted literal output).
-- **W3 remediation (fork, conditional on W2 findings + D1):**
-  - D1 retirement: `packages/coding-agent/src/memories/index.ts`, `src/memories/storage.ts` (the omp rollout-summary pipeline — delete), `src/memory-backend/local-backend.ts` (delete), `src/memory-backend/{resolve,index,types,tool-names}.ts` (enum `off | cortex`), `src/config/settings-schema.ts` (drop 15 `memories.*` rows + the `local` option; migration `local → off` with notice), `src/config/settings.ts` (migration), `src/internal-urls/memory-protocol.ts` (retire `memory://root`; keep the scheme registered with a pointer error), `src/tools/learn.ts` (Cortex-only), `src/sdk.ts` (`memoryRootEnabled` removal), `src/slash-commands/builtin-lifecycle.ts` + `src/modes/controllers/command-controller.ts` (`/memory` verbs: `view|stats|diagnose|sync` on Cortex; `clear|reset|rebuild|queue` retire with an explanatory message), `src/prompts/memories/{stage_one_*,consolidation*,read-path}.md` (delete), tests: `test/internal-urls/memory-protocol.test.ts`, `test/modes/controllers/memory-command.test.ts`, `test/slash-commands/memory.test.ts`, `test/memory-session-storage.test.ts`, `test/tools/memory-renderer.test.ts`, `test/memory-backend-resolve.test.ts`, `test/agent-session-memory-backend.test.ts`; docs `docs/memory.md`, `docs/openkai-cortex.md`, `README.md`; `FORK.md` (touch-list line).
-  - Channel defect: `scripts/install.sh` default → the tag the release pipeline just cut, plus a `ci-release-manifest`/verify step that fails when the default lags `latest.json`.
-  - Acceptance-project helper: `src/openkai/cortex-extension.ts` — `/cortex acceptance start|stop` (creates/archives `openkai-acceptance` + `probe`; admin token from the shell) so drives are repeatable; `test/openkai-cortex-extension.test.ts`.
-  - Backup eval: `test/openkai-cortex-backup-eval.test.ts` — skips honestly without the backups dir; fails when the newest backup is older than the threshold before a writing drive (the incident's eval).
-  - Anything else W2 observes (recorded as REWORK items with a proving test each).
-- **W4 (evidence + possibly `src/openkai/cortex/provider-selection.ts`):** provider apply drive; code only if the drive finds a defect.
-- **W5 (hosted, conditional):** no OpenKai files until the platform contract lands; `docs/openkai-cortex.md` hosted section rewritten only then.
-- **W6:** dispositions in this folder. **W7:** `SHIP_RECORD.md`, `CHANGELOG`, version lockstep via `bun run release 0.1.13`.
+## Repository boundaries
 
-## Order of work
-1. W0 — write the reconciliation (done: `STATE.md`), pointer headers, ledger lines; return the four status rows and answer the KOS pin **after D0**. Check: `STATE.md` cited by `PROGRESS.md` header; zero contradictory "shipped" lines.
-2. CTO decisions D0–D5 recorded in `intent/cortex-completion.md` §Grill (dated). Check: each decision has a line and an owner.
-3. W1 — ren reviews `EPIC_SPEC.md` + this plan (review row). Check: disposition file, findings dispositioned, plan amended in the same commit.
-4. W2 — acceptance drives (isolated project). Check: every matrix row for W2 has an evidence file with literal output; refusal + redaction rows included.
-5. W3 — remediation waves, one worktree each; D1 retirement first (largest), install.sh + acceptance helper + backup eval next. Check: `bun run check` clean, changed-contract tests + a compiled `openkai-next-fork` drive per wave, pasted.
-6. W4 — provider apply drive with the admin plane. Check: `/health.embed_model` changed, `cortex-embed --stats` backlog drains, rerank-unset shows vector-only, `/degradation` verbatim.
-7. W5 — hosted: platform handoff acceptance criteria only; no OpenKai code.
-8. W6 — ren review of W3/W4 tips; kai adjudicates; fold to fork `main`.
-9. W7 — release preparation up to the gate; `SHIP_RECORD.md`; the CTO's go for **0.1.13** in the live session; else MAINTAIN.
+- **Source product:** `/Users/amadmalik/DevVault/openkai-fork`; application code, product tests, package metadata, and the private release handoff.
+- **Canonical public channel:** `/Users/amadmalik/DevVault/OpenKai` at current `origin/main`; public workflow and `scripts/install.sh`. The maintenance branch contains an obsolete tag-trigger workflow and must never overwrite the workflow on public main.
+- **Programme record:** this E024 folder and programme ledgers on `maintenance/0.84-line`.
+- **Cortex platform:** external dependency owned by alpha@kaidera; OpenKai uses typed API/CLI contracts only and never direct database access.
+
+## Files and deliverables by wave
+
+### W0 — programme reconciliation (done)
+
+`Program/PROGRESS.md`, root `CHANGELOG.md`, supersession headers, intent, `STATE.md`, this spec/plan/matrix, and the KOS pin response.
+
+### W1 — independent specification review (done)
+
+`DISPOSITION_REN_W1.md` plus same-change amendments to `EPIC_SPEC.md`, `PLAN.md`, and `ACCEPTANCE_MATRIX.md`. W1 is a hard dependency of every build path.
+
+### W2 — baseline and final acceptance evidence
+
+Only `evidence/*.md`. Existing 0.1.12 files are PARTIAL baseline. Final drives use the matrix’s candidate-specific names. Shared-appliance writes are prohibited. A5–A7/A9/A11 require the Cortex archive API and scratch appliance; A4 requires the published installer; macOS rows require an administrator.
+
+### W3A — retire local OpenKai memory
+
+Source worktree `e024/w3-retire-local`.
+
+- Delete `packages/coding-agent/src/memories/{index,storage}.ts`, `src/memory-backend/local-backend.ts`, local consolidation/read-path prompts, package exports, and the unused direct `@oh-my-pi/pi-mnemopi` dependency.
+- Make the backend contract `off | cortex`; remove local queue/clear maintenance APIs; retain `view|stats|diagnose|sync`; retired destructive/queue verbs return one explanatory pointer.
+- Migrate `memory.backend=local` and all sixteen `memories.*` keys to `off`, drop every legacy key, show one data-preserving notice, and leave the complete memory root and database rows untouched.
+- Register `memory://` only as a tombstone pointing to `cortex_search` and retained files; remove memory glob/hyperlink behavior.
+- Remove local startup/session cancellation, `memoryRootEnabled`, system-prompt advertisement, and local `learn` fallback. Managed `CORTEX_PROJECT` remains the explicit policy override and must be visible.
+- Rewrite changed-contract tests and user documentation; remove tests that exercise only the deleted pipeline. Add migration, managed precedence, tombstone, retired command, and data-retention coverage.
+
+### W3B — Cortex launcher and acceptance defects
+
+Source worktree `e024/w3-cortex-lifecycle`.
+
+- Distinguish the KOS `cortex dispatcher` from the unpublished `@kaidera-ai/cortex` installer. `/cortex preflight|install` must return a plain, actionable unavailable-installer result instead of npm E404.
+- Keep lifecycle operations on typed installed Cortex binaries/APIs; never route them through the installer package.
+- Do not claim `/cortex acceptance stop` until Cortex publishes a typed archive operation. Once the contract exists, start/reactivate and stop/archive must be one `try/finally` lifecycle with production-state comparison.
+- Fix only acceptance-observed client defects. The first-run “Welcome back” copy and any KOS typed-event proposal require separate proving tests; typed KOS readiness events are out of this epic unless KOS supplies its schema.
+
+### W3C — backup evaluator
+
+Source worktree `e024/w3-backup-eval`.
+
+- Deterministic helper accepts backup root, clock, threshold, checksum/integrity checker, and restore runner; missing/stale/corrupt/restore-mismatch results fail.
+- Unit tests use disposable fixtures. The permanent test suite never depends on developer `~/.kaidera-os/backups` and never skips a release gate.
+- A17 integration invokes the helper against a real backup and disposable Cortex appliance; that drive remains BLOCKED until KOS/Cortex provides the restore target and command.
+
+### W3D — public installer channel
+
+Canonical worktree/branch from current public `origin/main`, never the maintenance branch.
+
+- Add a tested canonical helper that updates and verifies the default in `scripts/install.sh` for an exact `0.1.N` input.
+- Add a release-workflow job after `publish_release` that checks out canonical main without source materialization, applies that exact version, commits only an actual change, and verifies the public file. `release_brew` waits for this job.
+- Merging reusable workflow logic is allowed after review. Repointing the live default, manually or by dispatch, remains RELEASE_SOP gated action 5 and occurs only in W7 after explicit consent for that version.
+
+### W4 — provider and degradation acceptance
+
+No code unless a scratch drive exposes a client defect. A12–A14 run only on a disposable appliance, snapshot full server configuration/provider file/health/degradation, restore in `finally`, and prove restoration. Missing scratch appliance or credential is BLOCKED.
+
+### W5 — hosted Cortex contract only
+
+`HOSTED_CORTEX_CONTRACT.md` records endpoint/token issuance, TLS/auth, tenancy, roster/archive lifecycle, retention/export/delete, limits, errors, cost/fallback, observability, compatibility, acceptance, and rollback. Hosted implementation and client changes are wholly deferred from 0.1.13.
+
+### W6 — review and adjudication
+
+Ren reviews each W3 tip and W4 evidence; kai writes dispositions and folds only accepted tips to source/public main. Reviewer and author never self-approve.
+
+### W7 — candidate and release
+
+Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all candidate gates. Then request explicit live-session CTO consent naming **0.1.13**. Without it: MAINTAIN; no tag, publish, public asset, Homebrew change, installer repoint, or manifest bump. After consent, run the private source handoff/canonical workflow and all post-publish rows.
+
+## Execution order
+
+1. Close W0 and record D0–D6. **Done.**
+2. Independent W1 review; disposition every finding and amend controlling documents together. **Done.**
+3. Build W3A/W3B/W3C/W3D in isolated non-overlapping worktrees. W3 depends on W1 and the initial W2 defect inventory, not on falsely green external gates.
+4. Validate each changed contract, compile the candidate, and smoke the changed surface. No shared Cortex mutations.
+5. Obtain Cortex archive/install/restore prerequisites and a disposable appliance; then rerun W2 writing rows and W4 provider rows in matrix order with unconditional cleanup.
+6. Run both D6 clean-host candidate rows. The fresh macOS row needs an operator with administrator access.
+7. Ren reviews W3/W4; kai adjudicates and folds accepted tips.
+8. Run final candidate gates on the folded SHA. Resolve every non-PASS gate.
+9. Prepare release record and stop at the consent gate. Only explicit 0.1.13 consent starts publication.
+10. Run post-publish channel/install/upgrade checks; close SHIP only when all PASS.
 
 ## Waves
-| Wave | Stage | Owner | Worktree / env | Handoff | Delivers | Depends on | Stop/go gate |
-|---|---|---|---|---|---|---|---|
-| W0 | INTENT/GRILL | kai | programme repo | this mandate | intent, STATE.md (authority), spec, plan, matrix; ledger amendments | — | D0–D6 recorded; programme reconciliation committed |
-| W1 | SPEC/PLAN review | ren | — | `[REVIEW] E024 spec+plan` (to mint on acceptance) | disposition on spec/plan | W0 | findings dispositioned |
-| W2 | VERIFY (external) | kai (drive) + CTO (clean host, D6) | dev Mac + local appliance; clean host | `[VERIFY] E024 acceptance drives` | evidence files per matrix row (install, register, record/search, ingest, refusal, redaction, rollback) | W0, D4, D6 | all W2 rows observed; failures become W3 REWORK |
-| W3 | BUILD/VERIFY | kai / bob | fork `e024/w3-retire-local`, `e024/w3-install-default`, `e024/w3-acceptance-helper`, `e024/w3-backup-eval` | one row per worktree | D1 retirement; install.sh default + verify; `/cortex acceptance`; backup eval; W2 REWORK items | W2, D1 | check clean + tests + compiled drive pasted |
-| W4 | VERIFY (external) | kai (drive with admin token from the shell) | dev Mac + local appliance | `[VERIFY] E024 provider apply` | provider apply evidence; cost/fallback policy recorded in `docs/openkai-cortex.md` | W3 | rows observed |
-| W5 | BUILD/VERIFY (conditional) | alpha@kaidera (platform) + kai (client) | platform env | cross-project row to alpha | hosted contract + acceptance env; OpenKai client changes only if the contract requires | D3 | deferred unless the contract exists before W7 |
-| W6 | REVIEW/ADJUDICATION | ren → kai | reviewed tips | `[REVIEW]` rows per W3/W4 branch | dispositions; adjudication; fold to `main` | W3, W4 | zero open blockers |
-| W7 | SHIP or MAINTAIN | kai prepares; CTO authorises | fork `main` candidate | `78f86ec5` (KOS pin) answered | `SHIP_RECORD.md`; `bun run release 0.1.13`; channel verify incl. install.sh + tap + latest.json; KOS pin | W6 | **CTO go, per version, in the live session** — else no publication |
+
+| Wave | Owner | Environment | Depends on | Exit |
+|---|---|---|---|---|
+| W0 | kai | programme repo | — | reconciliation and D0–D6 committed |
+| W1 | Ren role → kai | read-only review + programme repo | W0 | all findings dispositioned in controlling docs |
+| W2 | kai + operators | dev observation, scratch, both clean hosts | W1; row prerequisites | every candidate gate PASS; cleanup proof present |
+| W3A | kai | source worktree | W1, D1/D2, baseline findings | changed-contract tests, typecheck, compiled smoke |
+| W3B | bob/kai | source worktree | W1, installer facts; archive contract for acceptance stop | launcher defect fixed; unavailable platform behavior honest |
+| W3C | bob/kai | source worktree | W1, backup contract | deterministic evaluator green; integration contract explicit |
+| W3D | kai | canonical current-origin/main worktree | W1, public release workflow | reviewed update/verify automation; no live repoint |
+| W4 | kai + operator | scratch appliance | W3, archive/restore, credentials | A12/A14 PASS; A13 recorded |
+| W5 | alpha@kaidera + kai | contract only | D3 | contract recorded; no 0.1.13 code |
+| W6 | Ren role → kai | reviewed tips | W3, W4 | zero unresolved review blockers; accepted tips folded |
+| W7 | kai prepares; CTO authorises | folded source + canonical public main | W2, W4, W6, A19C | consented release; post-publish rows PASS |
+
+## Active external blockers
+
+| Dependency | Owner | Blocks | Required proof |
+|---|---|---|---|
+| Published local Cortex installer | alpha@kaidera | A4, W7 | clean-macOS preflight/install/status/rollback |
+| Typed Cortex project archive operation | alpha@kaidera | A5–A7, A9, A11, W4 | archived/404 plus unchanged production hashes |
+| Disposable Cortex appliance + restore command | KOS/Cortex owner | A12–A14, A17 | full snapshot restoration and backup inventory match |
+| Fresh macOS administrator | CTO/operator | A1-MAC, A2-MAC, A18-MAC | account create/drive/delete evidence |
+| Provider credential | operator | A13 only | redacted rerank apply/search/restore evidence |
+| Live version-specific consent | CTO | all W7 mutations | explicit “0.1.13” approval in that session |
+
+## Verification
+
+- W3A: coding-agent check, focused changed-contract tests, compiled binary smoke, schema listing with zero `memories.*`, migration fixture byte/row comparison, managed-lane on/off proxy counts.
+- W3B: launcher classification and error-contract tests plus actual TUI `/cortex preflight` unavailable path; no npm stack/E404 leak.
+- W3C: deterministic fresh/stale/missing/corrupt/restore-match/restore-mismatch tests; A17 is separate external evidence.
+- W3D: helper tests with valid, malformed, same-version, and changed-version fixtures; workflow syntax; no `VERSION` change in the preparatory commit.
+- W2/W4: every matrix file records candidate SHA/version, environment reset, command, literal redacted output, `finally` result, and production-state comparison.
+- W7: npm packages, GitHub release/assets, witnessed `latest.json`, Homebrew formula, public installer default, both public installs, and both upgrade rows agree on 0.1.13.
+
+## Partial-release recovery
+
+1. **Prepared source/tag/canonical draft only:** verify tag → candidate SHA and draft provenance; run `bun run release -- 0.1.13 --resume`.
+2. **Draft workflow failed before any public package:** retain draft, fix/review candidate or workflow without changing provenance, rerun the verified same-version workflow.
+3. **npm public; GitHub still draft:** halt installer/tap actions, verify npm tarball/version/provenance, resume the same version. Never republish or renumber to hide the split.
+4. **GitHub public; installer or tap stale:** keep the immutable release, repair only the failed channel to the same candidate, then rerun every A19 check and clean-host install.
+5. **Conflicting tag, package, manifest, or source SHA:** halt and escalate to CTO. Never force-move, clobber, or silently issue another version.
 
 ## Risks
-- Riskiest step: D1 retirement touches `/memory`, `learn`, `memory://` and 15 settings — blast radius is every session that had `local`; migration `local → off` with a one-time notice, `learned.md` left on disk; irreversible only if we delete user files (we do not).
-- Drives that need the admin token or a provider key are operator-present; a missing credential is a **blocked** row with evidence, never a green.
-- Two parallel kai sessions: worktree per wave; STATE.md is the merge point.
-- Channel drift (install.sh at v0.1.009) can strand fresh installs on the 0.84 line — W3 fixes it and the release verify catches recurrence.
 
-## Proof
-- W0: `grep -c "Last shipped: 0.1.12" Program/PROGRESS.md` = 1; `grep -rn "release ready" Program/PROGRESS.md` = 0 contradictions.
-- W2/W4: each `evidence/<row>.md` contains the command and its literal (redacted) output; `curl -s localhost:8501/projects/openkai-acceptance` → 404 after cleanup.
-- W3: `bun --cwd=packages/coding-agent run check` clean; `bun test test/openkai-*.test.ts test/memory-backend-resolve.test.ts test/internal-urls/memory-protocol.test.ts test/slash-commands/memory.test.ts` green; `openkai-next-fork config list | grep -c "memories\."` = 0 (D1); `scripts/install.sh` default equals `latest.json.version`.
-- W7: `npm view @kaidera/openkai version` = 0.1.13; `gh release view v0.1.13`; tap formula version; `latest.json`; install.sh default — all equal.
+- D1 touches settings, session startup, tools, commands, internal URLs, prompts, docs, and package exports. The invariant is zero deletion or mutation of legacy user bytes/rows.
+- Environment-managed activation can surprise a user reading only local settings; the UI/status must name the override and its removal action.
+- A synthetic drive without archive/restore can contaminate shared state; therefore no mutation starts while A11/A17 are blocked.
+- The public installer currently strands new installs at v0.1.009. W3D fixes recurrence machinery; the actual channel remains gated.
+- Two repositories participate in release. Source materialization replaces the canonical workspace during build jobs; the installer-update job must intentionally use an unmaterialized canonical checkout.
 
 ## Amendments
-- 2026-09-04 (W2, clean host) — kos-test drive: A18 upgrade 0.1.10→0.1.12 through the witnessed manifest PASS; A1 fresh v0.1.12 install by explicit URL + sha256 PASS; A2 keyless boot PASS. W2 is complete for everything that does not need a non-shared appliance (A12b/A13/A14 → run on kos-test once a Cortex appliance exists there, or on a scratch appliance) or D1's code (A16). W3 REWORK list is now concrete: (1) `install.sh` default + release verify; (2) `/cortex preflight|install`: distinguish the KOS dispatcher from the installer, degrade with a plain message while `@kaidera-ai/cortex` is unpublished; (3) D1 retirement of the omp `local` pipeline; (4) `/cortex acceptance` helper; (5) backup eval; (6) first-run welcome copy nit.
-- 2026-09-04 (W2 drives, dev Mac) — 11 rows observed on the released engine, settings-driven with every `CORTEX_*` env var removed: happy path (A6 record→search on `openkai-acceptance`, production `openkai` 0 hits), transcript ingest (A7), refusal before payload (A8: `CortexAgentRegistrationError`, 0 POSTs), redaction (A9: 0 rows with the fake keys), off = no client (A10), idempotent admin-plane apply (A12, appliance unchanged). Two real defects for W3: `install.sh` default `v0.1.009` (A19) and `/cortex preflight|install` depending on an unpublished `@kaidera-ai/cortex` package (A4 — blocked on the Cortex package owner; the command must degrade honestly). Cortex-side findings filed to kai@kaidera-os. A12's real model change and A14's degradation drill move to the clean host (shared appliance protection).
-- 2026-09-04 — Accepted with D0–D6: explicit 0.1.12 consent confirmed; retire `local`; no importer; hosted deferred behind contract; stable `openkai-acceptance`/`probe`; transcripts off by default; clean-host proof on both the KOS test VM and a fresh macOS user account. W0 executed: STATE.md authority, ledger header, `[0.1.12]` changelog pointer, four status rows returned, KOS installer pin answered (`78f86ec5`), W1 review row minted. Evidence rows A3 (API-probe form; TUI form remains an operator drive) and A17 (backup age 29 h, threshold 48 h) are recorded under `evidence/`.
-- 2026-09-04 — KOS readiness/attention event contract (design 27) is not present as typed events in 0.1.12 (OSC 9/777 notifications + hub `state` frames only): added to W3 as a REWORK candidate pending KOS's schema.
+- 2026-09-04 (CTO) — Non-shared test appliances approved: (A) the kos-test VM (Linux) and (B) a Mac scratch stack `cortex-test` beside the shared one. Setup requested from kai@kaidera-os (Cortex owner) by cross-project handoff; kai@openkai drives A4, A12b, A13, A14, A15 on BOTH hosts once each returns healthy with `openkai-acceptance`/`probe`, two embedding options and a reset command. The shared :8501 stack is never used for destructive rows.
+
+- 2026-09-04 (W1) — independent review returned NO-GO. All twelve findings accepted in `DISPOSITION_REN_W1.md`; baseline PASS labels reclassified PARTIAL, A11 corrected to BLOCKED, A4 promoted to gate, D6 split, provider/backup isolation strengthened, installer ownership corrected, W1 made a hard dependency, managed precedence fixed, and release recovery specified.
+- 2026-09-04 (baseline) — KOS A1/A2/A18 and dev A3/A5–A10/A12/A17 observed on 0.1.12. They are useful defect evidence, not final-candidate gates. A4 is blocked by the unpublished installer; A11 is blocked by the missing archive API; A19 fails because the public installer defaults to v0.1.009.
+- 2026-09-04 (scope) — a typed KOS readiness-event contract is absent. It is deferred to its own intent unless KOS supplies a schema; E024 does not invent one.

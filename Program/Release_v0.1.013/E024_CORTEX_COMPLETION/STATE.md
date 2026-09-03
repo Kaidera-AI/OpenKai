@@ -35,7 +35,15 @@
 3. Live embedding/rerank provider application through Settings → Memory → Cortex Ingest.
 4. A live memory round trip that does not touch the production `openkai` project.
 
-## 4 · Supersession pointers (history preserved, not rewritten)
+## 4 · E024 gate state after W1
+
+- W1 review: complete; all findings accepted in `DISPOSITION_REN_W1.md`.
+- W3 source-only remediation: GO. No shared Cortex mutation and no public channel repoint.
+- Baseline A1/A2/A3/A5–A10/A12/A17/A18: PARTIAL because they ran on 0.1.12 or proved only part of the row.
+- Release blockers: A4 unpublished Cortex installer; A11 missing typed archive API; A12–A14/A17 no disposable appliance/restore path; D6 fresh-macOS administrator absent; A19 public installer at v0.1.009; final review and explicit 0.1.13 consent absent.
+- Normative status and evidence names: `ACCEPTANCE_MATRIX.md`. A failure, blocker, or partial observation is never a passed gate.
+
+## 5 · Supersession pointers (history preserved, not rewritten)
 
 - `docs/HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md` — superseded (already marked).
 - `docs/HANDOFF_GITHUB_OPENKAI_FINALISATION.md` — implementation/acceptance evidence for 0.1.12; its "no release" boundary predates the 0.1.12 publication; current state is this file.
@@ -43,7 +51,7 @@
 - Cortex rows `844f23b2` ("v0.1.11 release ready") and the program `CHANGELOG.md` `[0.1.11]` top entry describe a cut that shipped as **0.1.12** — reconciled in W0 (see the ledger amendment plan).
 - `Program/PROGRESS.md` line "Last shipped: E019 — v0.1.9" is stale; W0 rewrites the header to point here.
 
-## 5 · Ledger amendment plan (W0, doc-only, no behaviour claims)
+## 6 · Ledger amendment plan (W0, doc-only, no behaviour claims)
 
 1. `Program/PROGRESS.md` header: "Last shipped: 0.1.12 (2026-09-03); current epic E024; authority `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/STATE.md`".
 2. `CHANGELOG.md` (program repo): add `[0.1.12]` above `[0.1.11]` by pointer to `packages/coding-agent/CHANGELOG.md` in the source; mark `[0.1.11]` as "cut renumbered to 0.1.12 at release".
