@@ -38,13 +38,20 @@ honestly on bare Linux.
 
 ## Open / operator
 
-1. Release CI green confirmation → assets + `latest.json` serve check +
-   `gh attestation verify`.
-2. Kaidera brew formula 0.1.10 (sha256s from the cut).
-3. Local-binary hygiene refresh (SOP) once the standalone cut lands.
-4. `cortex-init-project` for the `openkai` registry entry (managed-mode
-   ingest stays environmental-red until then).
-5. Your seven dogfood drives (PARITY_CENSUS §4).
+1. ~~Release CI green confirmation~~ — closed 2026-09-03: run green at the
+   release tip; `latest.json` serves 0.1.10; SLSA attestations serve and
+   `gh attestation verify` returns success against the manifest.
+2. ~~Kaidera brew formula 0.1.10~~ — closed 2026-09-03: shipped formula
+   `fb1485e` (literal `v0.1.010` asset URLs, sha256s byte-identical to the
+   release SHA256SUMS) + tap CI `69ff74d37c`; `KAIDERA_TAP_DEPLOY_KEY` set.
+3. ~~Local-binary hygiene refresh~~ — closed 2026-09-03: every local install
+   runs `openkai/0.1.10`.
+4. ~~`cortex-init-project` for the `openkai` registry entry~~ — closed
+   2026-09-03: `openkai` active in the live Cortex registry; the fork's
+   cortex client then proved live managed-mode for real (`cafb925e15`:
+   `POST /memory` + `top_k` — the retired `/learnings`/`limit` shape 404s on
+   the current Cortex): record→search round trip green, source=knowledge.
+5. Your seven dogfood drives (PARITY_CENSUS §4) — remains operator.
 6. KOS follow-up handoff delivered: `docs/HANDOFF_TO_KOS_0110_SHIPPED.md`.
 
 ## CI findings at the cut (all upstream-inherited or environmental)

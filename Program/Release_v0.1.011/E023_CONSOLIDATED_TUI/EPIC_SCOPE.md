@@ -68,13 +68,14 @@ Rides landed-but-unreleased (post-ship amend, main @ `69ff74d37c`+):
   in-tap (`fb1485e`) with literal `v0.1.010` + `using: :nounzip`; sha256s
   verified. CI regenerator prevents recurrence.
 
-Open defects to fix in this cut:
-- **F10** (`list_files` on a `.ssh` *directory* node leaks names) — the one-line
-  DENY_FLOOR fix, routed separately at Inc 08 certification; non-blocking but
-  must not ride another release.
-- **K3 fold-review findings** — pending from the parked reviewer session on
-  `docs/HANDOFF_KAI_REBRAND_FUSION_REVIEW.md`; each lands a fix or a written
-  disposition before the fold gate.
+Closed since the 0.1.10 cut (verified, not riding this cut):
+- **F10** (`list_files` on a `.ssh` *directory* node leaks names) — CLOSED on
+  both lines 2026-09-03 (fork gate-floor carries `**/.ssh` node-retained,
+  16/0 inverted-asserted; 0.84 REPRO 12 inverted green); drop from cutover.
+- **K3 fold-review findings** — CLOSED at `7bbbd125a0` (2026-09-03): ren's
+  REV-01/02/03 (welcome mark truncation, update-omp help, brand comment)
+  fixed with the permanent gate `test/openkai-welcome-fold.test.ts`; NO-GO
+  lifts on the evidence, ren revalidation moot.
 - **0.1.10 pre-publish walk failures** (PARITY_CENSUS §4 operator drives):
   Claude subscription sign-in overlay, approval-mode picker UX + persisted
   per-tool approvals, magic-keyword shimmer live, click-to-cursor/drag-select,
@@ -127,8 +128,8 @@ KOS & Cortex:
 ## Proposed increments (consent asks for these as one epic)
 
 - **Inc 00** — upstream v18.1.0 fold + gates (build/typecheck/openkai/composer/cli,
-  golden frames), fold-review findings fixed.
-- **Inc 01** — the five CTO ports + settings routing tab + F10.
+  golden frames).
+- **Inc 01** — the five CTO ports + settings routing tab.
 - **Inc 02** — operator walk closure: every §4 drive green on compiled binaries;
   fixes for any failures.
 - **Inc 03** — release machinery dry-run (manifest, tap regen with the secret,

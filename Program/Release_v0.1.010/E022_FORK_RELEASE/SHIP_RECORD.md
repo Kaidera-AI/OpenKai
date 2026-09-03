@@ -33,11 +33,18 @@ wired live, QW-03 key pinned, rest closed). Docs: `DISPOSITION_REN.md`,
 
 ## Open at record time
 
-- Release CI green confirmation + manifest/attestation serve checks.
-- Kaidera brew formula 0.1.10 (sha256s from the cut assets).
-- Local-binary hygiene refresh (SOP) after the standalone cut.
-- Operator dogfood drives (PARITY_CENSUS §4); Cortex `openkai` project
-  registration (managed-mode ingest).
+- ~~Release CI green confirmation + manifest/attestation serve checks~~ —
+  closed 2026-09-03 (run green at tip; latest.json serves 0.1.10; SLSA
+  attestations serve; `gh attestation verify` success).
+- ~~Kaidera brew formula 0.1.10~~ — closed 2026-09-03 (shipped formula
+  `fb1485e` + tap CI `69ff74d37c`; `KAIDERA_TAP_DEPLOY_KEY` set).
+- ~~Local-binary hygiene refresh~~ — closed 2026-09-03 (every local install
+  runs openkai/0.1.10).
+- Operator dogfood drives (PARITY_CENSUS §4) — remains operator.
+- ~~Cortex `openkai` project registration (managed-mode ingest)~~ — closed
+  2026-09-03: project active in the live registry; fork client brought to
+  the live contract (`cafb925e15`) and the managed-mode round trip is green
+  against live Cortex (record → search, source=knowledge).
 
 ## CI ownership (Inc 04 mandate, executed at the cut)
 
@@ -76,3 +83,17 @@ below, which was repaired in place.
   `release_brew`, short-circuits cleanly without the key) + `product-version`
   output on `release_metadata` mapping v0.1.010 → 0.1.10. Operator action: add
   the `KAIDERA_TAP_DEPLOY_KEY` secret so future cuts regen the formula.
+- **Fold gate (ren deep review REV-01/02/03, 2026-09-03)** `7bbbd125a0`: the
+  30-col Kaidera mark now renders only into fields that hold it whole —
+  brand exports `KAIDERA_MARK_WIDTH`/`KAIDERA_MARK_MIN_FIELD` (derived, not
+  retyped); welcome dual-column sizes the left field to 32 where the box
+  holds mark + right column (terminal ≥ 57), glyph below; wizard-overlay and
+  compact splash gain the same width gate; `update-omp --help` now describes
+  the upstream engine updater; brand comment corrected. Permanent gate:
+  `test/openkai-welcome-fold.test.ts` (mark whole 57-160, glyph 12-56,
+  flip-flop drag). 92/0 welcome+wizard+brand+fusion+floor suites; tsgo clean.
+  Ren's first-pass NO-GO lifts on this evidence; revalidation asked.
+- **Cortex client on the live shared-API contract** `cafb925e15`:
+  `recordLearning` posts `/memory {section,content,category,source}` (the
+  retired `/learnings {learning}` 404s on the current Cortex); `search`
+  sends `top_k`. Live managed-mode round trip green (CORTEX_PROJECT=openkai).
