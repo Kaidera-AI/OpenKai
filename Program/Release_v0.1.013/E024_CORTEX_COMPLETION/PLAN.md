@@ -1,6 +1,6 @@
 # Plan: E024 — Cortex completion (from `EPIC_SPEC.md`, 2026-09-04)
 
-Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (planning mandate). Worktrees: fork `~/DevVault/openkai-fork` branches `e024/<wave>-<slug>` from `main @ c6c7fa7b1b`; programme repo `maintenance/0.84-line`. Status: **draft — awaiting CTO decisions D0–D5**; W0 executes now (docs only); W1+ open on acceptance.
+Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (planning mandate). Worktrees: fork `~/DevVault/openkai-fork` branches `e024/<wave>-<slug>` from `main @ c6c7fa7b1b`; programme repo `maintenance/0.84-line`. Status: **accepted 2026-09-04** (CTO "yes to you"; D0–D6 in the intent). W0 closing; W1 + W2 open.
 
 ## Files that change (by wave; exact paths on fork `main`)
 - **W0 (programme repo, docs only):** `Program/PROGRESS.md` (header + line), `CHANGELOG.md` (`[0.1.12]` pointer entry), `docs/HANDOFF_GITHUB_OPENKAI_FINALISATION.md` + `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (supersession headers), this folder.
@@ -51,4 +51,5 @@ Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md` (plann
 - W7: `npm view @kaidera/openkai version` = 0.1.13; `gh release view v0.1.13`; tap formula version; `latest.json`; install.sh default — all equal.
 
 ## Amendments
-(none yet)
+- 2026-09-04 — Accepted with D0–D6 on the recommended values. W0 executed: STATE.md authority, ledger header, `[0.1.12]` changelog pointer, the four status rows returned, the KOS installer pin answered (`78f86ec5`), W1 review row minted for ren. Evidence rows A3 (API-probe form; the `/cortex status` TUI form stays an operator drive) and A17 (backup age 29 h, threshold 48 h) recorded under `evidence/`.
+- 2026-09-04 — KOS readiness/attention event contract (design 27) is not present as typed events in 0.1.12 (OSC 9/777 notifications + hub `state` frames only): added to W3 as a REWORK candidate pending KOS's schema.
