@@ -31,13 +31,38 @@ v0.1.11.
 - **Kaidera Manifold** — 21st provider: Kaidera's OpenAI-compatible `/v1`
   aggregator edge. Config: `KAIDERA_MANIFOLD_API_KEY`,
   `KAIDERA_MANIFOLD_BASE_URL`, `KAIDERA_MANIFOLD_PROJECT_ID`.
+- **oMLX** — keyless local provider for Apple-silicon MLX models: identified
+  by `owned_by: "omlx"` on `/v1/models`, endpoint from `OMLX_BASE_URL` →
+  `~/.omlx/settings.json` → `http://127.0.0.1:8000/v1`; its models list in
+  `/model` whenever the server answers.
 
 ### Memory & Cortex
 
-- **Memory design v2** — sharpshooter retired onto cortex-ingest;
-  embedding/rerank pickers; hosted Cortex parked (alpha handoff).
+- **Settings › Memory is Kaidera Cortex** (E023 Inc 06) — `memory.backend` is
+  `off | local | cortex`. Hindsight, Mnemopi and Sharpshooter retire with
+  migrations (`hindsight|mnemopi → cortex` with a one-time notice, `sharpshooter
+  → off`; remote banks and SQLite files are not imported). Auto-Learn's capture
+  turn retires; `skills.managed` now gates `manage_skill`.
+- **Settings-driven Cortex** — `cortex.apiUrl` / `cortex.token` /
+  `cortex.project` / `cortex.agent` replace the env-only lane (`CORTEX_*` env
+  still overrides for KOS-managed sessions). Status row distinguishes local
+  appliance / hosted / not installed; `/cortex status|preflight|install|doctor|models`
+  (install runs preflight, then installs only on confirmation).
+- **Cortex Ingest** — after each substantive turn a small model extracts the
+  decisions in your prompt; only friction-earned ones (corrections, regressions,
+  subtle invariants — the gate ported from Sharpshooter) are recorded to Cortex.
+  Opt-in transcript ingest at session end. First-turn auto-recall replaces flat
+  file injection.
+- **Embedding + rerank pickers** — local Ollama, NVIDIA NIM free tier, OpenRouter,
+  Alibaba DashScope, grouped by provider with free/paid badges and live
+  discovery; the optional "Marksman" reranker; unset = vector-only, shown loudly.
+  OpenKai authors `providers.embedding|rerank` in `~/.openkai/config.json` and
+  applies the choice to the live appliance when `CORTEX_ADMIN_TOKEN` is present.
+- **Tools** — `cortex_search` / `cortex_record` are settings-driven and always
+  registered; `learn` writes to Cortex; `retain`/`recall`/`reflect`/`memory_edit`
+  retire with their backends.
 - **Cortex live contract** — session ingestion into `/sessions/ingested-ids`
-  in managed mode.
+  (roster agent required; `messages[].ts` is an ISO string).
 
 ### TUI
 
@@ -50,6 +75,9 @@ v0.1.11.
 - **Git + context chips** — `git:<branch>` and `ctx:<percent>` chips.
 - **`/models` fullscreen hub** — 814 models, ctx+cost, sidebar scopes.
 - **Tips** — 26 tips with weighted `[NEW]` rotation.
+- **Rebrand sweep** — the remaining user-facing "Oh My Pi" strings (terminal
+  titles, ACP setup, DAP client name, ask dialog, cloud-drive share note,
+  system-prompt identity, profile alias example) read "OpenKai".
 
 ### Research & architecture
 

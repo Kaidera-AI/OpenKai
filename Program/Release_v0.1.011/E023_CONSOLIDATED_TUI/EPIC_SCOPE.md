@@ -23,7 +23,7 @@ contract proven live.
 Carry the nine standing goals (PROGRESS.md §Standing goals) and close the gaps
 they still name:
 
-1. **Upstream currency:** fold `can1357/oh-my-pi` v18.1.0 (tag present upstream;
+1. **Upstream currency:** fold `omp (upstream)` v18.1.0 (tag present upstream;
    the fork currently rides the 18.0.10/18.0.11 merge). Adopt upstream flows,
    never fork them.
 2. **Fusion-first default-on, complete:** scorer-driven pairing, provider→model
@@ -163,9 +163,11 @@ Cortex parked for v0.1.13; no code until the operator finalises it):
   install.sh/bun/npm wrapper parity) + version lockstep 0.1.11/v0.1.011.
 - **Inc 04** — adversarial chain (ren → K3 → qwen3.8) + dispositions.
 - **Inc 05** — ship on CTO consent, four channels + Kaidera tap.
-- **Inc 06** — memory/Cortex implementation per MEMORY_CORTEX_DESIGN.md; opens
-  only after the operator finalises its §7 open questions.
-  Dev handoff for the triggered session: `docs/HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md`.
+- **Inc 06** — memory/Cortex implementation per MEMORY_CORTEX_DESIGN.md.
+  **DONE 2026-09-03** on fork branch `e023/inc-06-memory-cortex` (gates in
+  `INC_06_GATE.md`; §7 decisions taken on the recommended defaults). Awaiting the
+  adversarial chain (ren → K3 → qwen3.8); ships with Inc 05 on CTO consent.
+  Dev handoff: `docs/HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md`.
 
 Exit criteria: parity census re-walked at 100% dispositioned; 9 standing goals
 re-audited; KOS reply updated if the minimum version moved; CHANGELOG + tag +
