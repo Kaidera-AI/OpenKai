@@ -1,6 +1,34 @@
-# Plan: E023 next wave — SDLC adoption + release readiness (from `EPIC_SCOPE.md` and `DISPOSITION_REN_INC06.md`, 2026-09-03)
+# Plan: E023 — consolidated TUI, v0.1.11/0.1.12 line (epic plan on the SDLC loop, 2026-09-04)
 
-Owner: kai@openkai. Handoffs: `84edc569` (SDLC adoption), `9fc8d889` (ren review, returned → DISPOSITION_REN_INC06.md). Worktree: `~/DevVault/openkai-fork` branch `e023/sdlc-adoption` (from `main` @ `c6c7fa7b1b`). Status: accepted 2026-09-03 (lead).
+Owner: kai@openkai. Spec: `EPIC_SCOPE.md` + `MEMORY_CORTEX_DESIGN.md` (memory) + `FEATURES_INTEGRATION_PLAN.md` (implemented map + acceptance gates). Status: accepted 2026-09-04 (lead). Process: `docs/DEVELOPMENT_PROCESS.md`.
+
+## Waves (each wave = one Cortex increment = one handoff, one agent, one worktree)
+
+| Wave | Stage | Owner | Handoff | Delivers | Depends on | State |
+|---|---|---|---|---|---|---|
+| W0 | BUILD/VERIFY | kai | Inc 06 trigger (`HANDOFF_KAI_E023_INC06_MEMORY_CORTEX.md`) | memory on Cortex; remediation of ren's findings; public identity; docs suite | — | done — fork `main @ c6c7fa7b1b`, `INC_06_GATE.md`, `DISPOSITION_REN_INC06.md` |
+| W1 | BUILD/VERIFY | kai | `84edc569` (returned) | SDLC adoption: Cortex bindings + rule, skill vendored in the harness, `/sdlc` + `/grill` | — | done — fork `e023/sdlc-adoption @ aeb6770e10`; proof in §Amendments |
+| W2 | REVIEW | ren | `9fc8d889` (bundles A/B/C) + `W1 review row` | adversarial passes on Inc 06 code, the docs suite, the features plan, and the SDLC branch; dispositions | W0, W1 | pending (ren) |
+| W3 | VERIFY (external) | CTO / operator | none (operator drives, recorded by kai) | the three acceptance gates: clean-host installer/binary drive; local Cortex install → registration with a real admin token; live enrichment-provider apply | W0 | pending — no release doc may claim these before the observed result is recorded |
+| W4 | REVIEW → adjudication | kai | after W2 returns | adjudicate findings against the reviewed tips; fold `e023/sdlc-adoption` into fork `main`; re-pins ratified | W2 | pending |
+| W5 | SHIP | kai prepares, CTO authorises | `78f86ec5` / `844f23b2` (KOS installer asks) | `docs/RELEASE_SOP.md` sequence on the candidate commit; KOS pin (tag, asset, sha256, install + verify commands) | W3, W4 | gated — CTO consent per version |
+| W6 | MAINTAIN | kai / quill | `129cc50e` (Cortex data loss, filed to kai@kaidera-os) | incident → intent + eval; backup-cadence rule when the KOS fix lands; retro line in `research/` | W5 | open |
+
+Deferred work (drawers, obligation ledger, plugins, headless Fusion CLI, hosted Cortex) is out of this epic per `FEATURES_INTEGRATION_PLAN.md` §Deferred; each returns through a fresh intent.
+
+## Risks (epic level)
+- Two parallel kai sessions on one epic: the worktree SOP and one-concern commits keep them apart; the ledger is the merge point.
+- The external gates need credentials only the operator holds; the plan cannot pass them by proxy.
+- Release channels are coordinated (`bun run release 0.1.N`); a partial publish is the failure to rehearse rollback for.
+
+## Proof (epic level)
+- W2: disposition files exist with verdicts and evidence; W4: adjudication note + fold hash; W3: three observed results recorded in `INC_06_GATE.md` addendum; W5: tag, asset URLs, sha256, channel state reported to the CTO.
+
+---
+
+# Wave W1 record: SDLC adoption (kept verbatim from the wave plan)
+
+Owner: kai@openkai. Handoff: `84edc569`. Worktree: `~/DevVault/openkai-fork` branch `e023/sdlc-adoption` (from `main` @ `c6c7fa7b1b`). Status: done 2026-09-03; awaiting W2 review.
 
 ## Files that change
 - `packages/coding-agent/src/openkai/skills/kaidera-sdlc/**` — new: vendored skill (SKILL.md, references/, templates/, evals/) at KOS rev `83b3169c`; `VENDOR.json` pins source, rev, tree hash.

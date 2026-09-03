@@ -4,6 +4,8 @@
 agent) and every session. Adopted 2026-08-18 after v0.1.6 shipped without CTO
 consent.**
 
+**Process:** release is the SHIP stage of `docs/DEVELOPMENT_PROCESS.md` (the SDLC loop); this SOP is its gate.
+
 ## The one rule
 
 **No release artefact goes public without the CTO's explicit consent, given in
