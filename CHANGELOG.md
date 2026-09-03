@@ -64,6 +64,12 @@ at v18.0.11 for the epic.
   to run on non-compiled launches (no clobbering a package-manager runtime),
   musl installs resolve the musl artifact, and a prerelease in the manifest can
   no longer read as newer than the installed stable.
+- **`update` reaches the witnessed upgrader (amend batch):** the
+  channel-aware upgrade now serves `openkai update` too on compiled
+  standalone installs (`update-omp` keeps the engine updater); and any
+  future compile that loses the `OPENKAI_BUILD_CHANNEL` define fails
+  `--smoke-test` in release CI instead of shipping (permanent gate from the
+  closeout run).
 - **Deny floor:** a broad `TMPDIR` (home or a non-platform temp root) no longer
   disables deny-by-containment; the SDK sandbox-under-temp contract is
   preserved.

@@ -34,3 +34,30 @@ secrets/procenv diff formatting-only.
 
 **Remaining for the ship gate:** K3 functional pass and qwen3.8 security/UAT
 pass (separate sessions, in flight), then CTO consent.
+
+## 2026-09-03 addendum — re-verification restatement on REN-01
+
+ren's re-verification after the post-ship amend batch restated shipped
+binaries as classifying `npm` and named the stamp absent from
+`compile-binary.ts`. Dispositioned again with evidence:
+
+- The stamp HAS lived in `compile-binary.ts` since `312e11fe52` (the very
+  fix this row records); both local compile entries (`build-binary.ts`, CI
+  `ci:release:build-binaries`) funnel through `compileCodingAgent`, so
+  every compile path carries it.
+- Bun's `define` substitutes the bare identifier through `typeof` (proven:
+  the review's own probe shape compiles to `TYPEOF string VAL standalone`).
+- Shipped 0.1.10 observed: `upgrade --check` reaches the witness
+  (`already up to date (0.1.10)`). The npm deferral ren observed is the
+  upstream `update` route, whose routing into the witness is part of the
+  post-ship amend batch (`5b7dd76a05`) and rides the next cut — a fresh
+  compile of main answers `update --check` from the witness.
+- A lost define can no longer ship unseen: `--smoke-test` on a compiled
+  binary (`PI_COMPILED`) throws unless `BUILD_CHANNEL === "standalone"`
+  (fork `7e908eb296`), and release CI smoke-tests every compiled leg
+  (ci.yml). Negative leg proven on a real-module probe without the define
+  ("classified as channel npm"); positive legs green with the define and
+  on the fresh `dist/omp`.
+
+Standing verdict unchanged: FIXED — the re-verification closes with a
+permanent release-CI gate rather than relitigating the original fix.

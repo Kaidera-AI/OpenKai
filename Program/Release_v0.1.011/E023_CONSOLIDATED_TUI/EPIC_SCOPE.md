@@ -67,6 +67,9 @@ Rides landed-but-unreleased (post-ship amend, main @ `69ff74d37c`+):
 - Kaidera tap: `v#{version}` URLs → nonexistent tag (brew install 404); repaired
   in-tap (`fb1485e`) with literal `v0.1.010` + `using: :nounzip`; sha256s
   verified. CI regenerator prevents recurrence.
+- REN-01 revisited (`7e908eb296`): `update` routed into the channel-aware
+  witnessed upgrade (amend batch) + a compiled-binary `--smoke-test` gate
+  asserting `BUILD_CHANNEL === "standalone"`, release-CI-enforced.
 
 Closed since the 0.1.10 cut (verified, not riding this cut):
 - **F10** (`list_files` on a `.ssh` *directory* node leaks names) — CLOSED on

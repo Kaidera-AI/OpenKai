@@ -97,3 +97,20 @@ below, which was repaired in place.
   `recordLearning` posts `/memory {section,content,category,source}` (the
   retired `/learnings {learning}` 404s on the current Cortex); `search`
   sends `top_k`. Live managed-mode round trip green (CORTEX_PROJECT=openkai).
+- **REN-01 disposition (2026-09-03, kai):** ren's re-verification on the
+  post-amend batch restated shipped standalone binaries as classifying npm
+  with the witness unreachable, naming a missing stamp. Re-derived with
+  evidence: the stamp has lived in `compile-binary.ts` since the pre-ship
+  ren6 batch (`312e11fe52`) and IS active in shipped 0.1.10 — observed
+  shipped `upgrade --check` reaches the witnessed upgrader
+  (`already up to date (0.1.10)`); Bun's `define` substitutes the bare
+  identifier through `typeof` (probe compiled both ways). The unreachable
+  leg ren observed is the upstream `update` route, whose routing into the
+  witness rides with THIS amend (`5b7dd76a05`) — observed: shipped
+  `update --check` ran the engine updater; a fresh compile of main reaches
+  the witness. Permanent gate `7e908eb296`: `--smoke-test` on a compiled
+  binary throws unless `BUILD_CHANNEL === "standalone"`; release CI runs
+  `--smoke-test` on every compiled leg, so a lost define now fails
+  validation instead of shipping. Legs proven: real-module probe without
+  the define throws "classified as channel npm"; with it, green; fresh
+  `dist/omp --smoke-test` ok. Rides the 0.1.11 cut with the amend.

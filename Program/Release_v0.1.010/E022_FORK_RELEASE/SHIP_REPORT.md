@@ -53,6 +53,12 @@ honestly on bare Linux.
    the current Cortex): record→search round trip green, source=knowledge.
 5. Your seven dogfood drives (PARITY_CENSUS §4) — remains operator.
 6. KOS follow-up handoff delivered: `docs/HANDOFF_TO_KOS_0110_SHIPPED.md`.
+7. ~~REN-01 re-verification restatement (witnessed upgrader "unreachable" on
+   shipped binaries)~~ — dispositioned 2026-09-03: the observed leg was the
+   pre-amend `update` route (its fix rides with the amend, `5b7dd76a05`);
+   shipped `upgrade` already reached the witness (stamp `312e11fe52`
+   active). New permanent gate `7e908eb296`: release CI `--smoke-test`
+   fails any compile that loses the channel stamp. Rides the 0.1.11 cut.
 
 ## CI findings at the cut (all upstream-inherited or environmental)
 
