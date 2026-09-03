@@ -126,20 +126,29 @@ KOS & Cortex:
 - Cortex managed-mode ingest: gate stays environmental-blocked; the release
   holds the test, registration remains an operator action.
 
-Memory/Cortex redesign (operator directive 2026-09-03; design doc
-`MEMORY_CORTEX_DESIGN.md`, no code until the operator finalises it):
+Memory/Cortex redesign (operator directives 2026-09-03; **design v2** in
+`MEMORY_CORTEX_DESIGN.md` — sharpshooter retired, cortex-ingest group, hosted
+Cortex parked for v0.1.13; no code until the operator finalises it):
 - settings>memory reworked onto Kaidera Cortex (`off | local | cortex`);
   Hindsight and Mnemopi backends retired with migrated settings, every
   `vectorize-io/hindsight` reference replaced by `github.com/Kaidera-AI/cortex`.
 - Cortex install detection + operator-confirmed install flow in the TUI
   (`preflight`/`install`), project binding, status rows.
-- Auto-Learn replaced by auto-ingest into Cortex (same friction gate; transcript
-  ingest optional); managed-skills minting retired.
-- Sharpshooter slot repurposed as the embedding-model picker grouped by provider
-  (Ollama live discovery, NVIDIA free tier, OpenRouter), writing the shared
-  `providers.embedding` file; new Marksman rerank picker writes `providers.rerank`.
-- Option-level explanations throughout (what Cortex is, what ingest does, why
-  rerank matters), per the operator's standing ask.
+- Auto-Learn replaced by **cortex-ingest** (settings group named after the
+  Cortex command); carry-over gates ported from sharpshooter, transcript
+  ingest optional, manage skill minting retired.
+- The sharpshooter backend is retired (its decision file remains as plain
+  paperwork); its delta extractor + friction filter are ported into
+  cortex-ingest as the high-signal stage.
+- Embedding model picker: local = Ollama ladder (live discovery), or any
+  configured provider — NVIDIA NIM free tier, OpenRouter, Alibaba DashScope —
+  with free/paid badges, live enrichment via `/v1/models` probe; writes to
+  the shared `providers.embedding`. Optional reranker picker writes to
+  `providers.rerank`; unset surfaces as vector-only, never silent.
+- Hosted Cortex via Kaidera platform is *parked* (out of scope for this cut):
+  the status row supports local / hosted / not-installed via `cortex.apiUrl`
+  + `cortex.token`; handoff to alpha@kaidera submitted
+  (`docs/HANDOFF_TO_ALPHA_KAIDERA_HOSTED_CORTEX.md`).
 
 ---
 
@@ -160,3 +169,11 @@ Memory/Cortex redesign (operator directive 2026-09-03; design doc
 Exit criteria: parity census re-walked at 100% dispositioned; 9 standing goals
 re-audited; KOS reply updated if the minimum version moved; CHANGELOG + tag +
 channels on consent only.
+
+## Future (parked, review later)
+
+- **v0.1.13 scoping: hosted Cortex services via the Kaidera platform**
+  (operator directive 2026-09-03). The client contract is already on the
+  OpenKai side (`CORTEX_URL`/`CORTEX_TOKEN`, `cortex.apiUrl`/`cortex.token`
+  rows); the platform-side plan goes to alpha@kaidera. Raise this at the
+  0.1.13 scoping gate, two cuts ahead.
