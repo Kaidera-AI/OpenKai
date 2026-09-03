@@ -126,6 +126,21 @@ KOS & Cortex:
 - Cortex managed-mode ingest: gate stays environmental-blocked; the release
   holds the test, registration remains an operator action.
 
+Memory/Cortex redesign (operator directive 2026-09-03; design doc
+`MEMORY_CORTEX_DESIGN.md`, no code until the operator finalises it):
+- settings>memory reworked onto Kaidera Cortex (`off | local | cortex`);
+  Hindsight and Mnemopi backends retired with migrated settings, every
+  `vectorize-io/hindsight` reference replaced by `github.com/Kaidera-AI/cortex`.
+- Cortex install detection + operator-confirmed install flow in the TUI
+  (`preflight`/`install`), project binding, status rows.
+- Auto-Learn replaced by auto-ingest into Cortex (same friction gate; transcript
+  ingest optional); managed-skills minting retired.
+- Sharpshooter slot repurposed as the embedding-model picker grouped by provider
+  (Ollama live discovery, NVIDIA free tier, OpenRouter), writing the shared
+  `providers.embedding` file; new Marksman rerank picker writes `providers.rerank`.
+- Option-level explanations throughout (what Cortex is, what ingest does, why
+  rerank matters), per the operator's standing ask.
+
 ---
 
 ## Proposed increments (consent asks for these as one epic)
@@ -139,6 +154,8 @@ KOS & Cortex:
   install.sh/bun/npm wrapper parity) + version lockstep 0.1.11/v0.1.011.
 - **Inc 04** — adversarial chain (ren → K3 → qwen3.8) + dispositions.
 - **Inc 05** — ship on CTO consent, four channels + Kaidera tap.
+- **Inc 06** — memory/Cortex implementation per MEMORY_CORTEX_DESIGN.md; opens
+  only after the operator finalises its §7 open questions.
 
 Exit criteria: parity census re-walked at 100% dispositioned; 9 standing goals
 re-audited; KOS reply updated if the minimum version moved; CHANGELOG + tag +
