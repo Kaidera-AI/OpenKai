@@ -2,6 +2,8 @@
 
 Environment classes: **dev** (this Mac, warm, appliance at :8501), **clean** (fresh host: kos-test VM or a new macOS user — D6), **managed** (KOS lane with `CORTEX_PROJECT`). Evidence = `evidence/<id>.md` with the command and its literal output, secrets redacted by rule (`CORTEX_ADMIN_TOKEN`, provider keys, tokens never appear). Release relevance: **gate** = must be observed before a 0.1.13 go; **info** = recorded, not blocking.
 
+**Observed (2026-09-04, dev Mac, released 0.1.12 engine, settings-driven, no `CORTEX_*` env):** A3 PASS (API form; TUI form pending) · A4 **BLOCKED** (`@kaidera-ai/cortex` not on npm) · A5 PASS (root must be under `~/DevVault`; init crashes without `--agent`) · A6 PASS · A7 PASS · A8 PASS (refused, 0 POSTs) · A9 PASS (0 leaked rows) · A10 PASS · A11 PASS (no project-archive route) · A12 PASS (idempotent form; a model change deferred to the clean host as A12b) · A14 deferred to the clean host (shared appliance) · A17 PASS (29 h) · A19 **FAIL** (`install.sh` default v0.1.009). Clean-host rows A1/A2/A18 next on `kos-test` (Rocky Linux 10.2, reachable, no openkai installed).
+
 | Id | Env | Drive (command) | Expected observable | Evidence | Owner | Relevance |
 |---|---|---|---|---|---|---|
 | A1 | clean | `curl -fsSL …/scripts/install.sh \| sh` (or `brew install kaidera-ai/tap/openkai`) then `openkai --version` | prints `openkai/0.1.12`; assets `openkai-*`; install.sh default = latest | A1.md | CTO/operator (D6) | gate |
@@ -15,7 +17,7 @@ Environment classes: **dev** (this Mac, warm, appliance at :8501), **clean** (fr
 | A9 | dev | paste a fake `sk-…` key into the prompt; `learn` + transcript ingest | Cortex rows, transcript payload, error text and provider file contain no key (grep on captured payloads) | A9.md | kai | gate |
 | A10 | dev | return to `off`; new session | no Cortex calls (proxy count 0); appliance rows intact | A10.md | kai | gate |
 | A11 | dev | `/cortex acceptance stop` / `cortex-remove-agent probe` + archive project | `curl /projects/openkai-acceptance` → archived/404; `openkai` untouched | A11.md | kai | gate |
-| A12 | dev (admin token + provider) | pick embedding `ollama/nomic-embed-text` (rerank unset) | provider file written; `PATCH /admin/cortex/config` 200; `/health.embed_model` = nomic-embed-text; `cortex-embed --stats` backlog drains; status "rerank: off — vector-only" | A12.md | kai | gate |
+| A12 | dev (admin token + provider) | idempotent re-apply of the live rerank pair through the OpenKai path (A12b on the clean host: pick embedding `ollama/nomic-embed-text`, rerank unset) | provider file written; `PATCH /admin/cortex/config` 200; `/health.embed_model` = nomic-embed-text; `cortex-embed --stats` backlog drains; status "rerank: off — vector-only" | A12.md | kai | gate |
 | A13 | dev (admin token + NVIDIA key) | pick rerank `nvidia/nv-rerank-qa-mistral-4b:1` | `/health.rerank_model` set; a search shows reranked order; `/degradation` empty | A13.md | kai | info (paid/free provider availability recorded) |
 | A14 | dev | stop the embed worker; search | `/degradation` non-empty; `/memory stats` prints it verbatim; no silent success | A14.md | kai | gate |
 | A15 | managed | `CORTEX_PROJECT=openkai-acceptance openkai` | Memory UI shows the lane active; record/search work without settings edits | A15.md | kai | info |
