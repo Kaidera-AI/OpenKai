@@ -75,7 +75,7 @@ openkai fuse --prompt "design the caching layer" --gate
 
 ## Documentation
 
-[Quickstart](docs/quickstart.md) · [Commands](docs/commands.md) · [Sessions](docs/sessions.md) · [Fusion](docs/fusion.md) · [Run modes](docs/modes.md) · [Install runbook](docs/install.md) · [Onboarding](docs/onboarding.md)
+[Quickstart](docs/quickstart.md) · [Commands](docs/commands.md) · [Sessions](docs/sessions.md) · [Fusion](docs/fusion.md) · [Memory](docs/memory.md) · [Providers](docs/providers.md) · [Tools](docs/tools.md) · [Brand](docs/brand.md) · [Run modes](docs/modes.md) · [Install runbook](docs/install.md) · [Onboarding](docs/onboarding.md)
 
 ## Contributing
 
