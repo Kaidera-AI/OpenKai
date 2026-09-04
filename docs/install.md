@@ -1,90 +1,159 @@
-# Install OpenKai
+# Install
 
-Use one of the public installation paths below. Every path should leave an `openkai` command on `PATH`.
+OpenKai installs through **four channels**: Homebrew, npm, bun, and standalone
+binary. All channels support `openkai upgrade` with rollback.
 
-## Package install
+## Prerequisites
 
-```sh
-npm install -g @kaidera/openkai
-# or
-bun install -g @kaidera/openkai
-```
+- **Node.js** ≥ 22.19 (for npm/bun channels)
+- **macOS, Linux, or Windows** (all channels)
+- **Git** (for source installs)
 
-Verify it:
+## Homebrew (macOS/Linux)
 
-```sh
-openkai --version
-openkai
-```
-
-## macOS and Linux installer
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh
-```
-
-The installer chooses a compatible prebuilt `openkai-*` binary when possible. It supports:
-
-```sh
-# Install through Bun instead of a prebuilt binary
-curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh -s -- --source
-
-# Require a prebuilt binary
-curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh -s -- --binary
-
-# Install a specific release, branch, or commit from source
-curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh -s -- --ref <ref>
-```
-
-Set `OPENKAI_INSTALL_DIR` to change the binary directory. The installer verifies `openkai --version` after installation and tells you if the directory is missing from `PATH`.
-
-## Windows PowerShell installer
-
-```powershell
-irm https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.ps1 | iex
-```
-
-Pass `--source`, `--binary`, or `--ref <ref>` using the script's PowerShell invocation form when needed. Confirm with:
-
-```powershell
-openkai --version
-openkai
-```
-
-## Homebrew
-
-```sh
+```bash
 brew install kaidera-ai/tap/openkai
 ```
 
-## First run
+The formula installs the compiled binary. No node required.
 
-```sh
+## npm
+
+```bash
+npm install -g @kaidera/openkai
+```
+
+Requires Node.js ≥ 22.19. Installs the CLI globally.
+
+## bun
+
+```bash
+bun add -g @kaidera/openkai
+```
+
+Requires Bun ≥ 1.3.14. Installs the CLI globally.
+
+## Standalone binary
+
+No node required. Self-contained compiled binary.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh
+```
+
+Or download manually from the
+[releases page](https://github.com/Kaidera-AI/OpenKai/releases).
+
+## From source
+
+```bash
+git clone https://github.com/Kaidera-AI/OpenKai.git
+cd OpenKai
+npm install
+npm run build
+npm link
+```
+
+## Verify installation
+
+```bash
+openkai info
+```
+
+Expected output:
+
+```
+openkai/0.1.11
+mode: standalone (or managed)
+providers: 21 configured
+models: 814 available
+sessions: 0 active
+```
+
+## First-time setup
+
+```bash
+# Configure a provider
+echo 'OPENROUTER_API_KEY=sk-or-...' >> ~/.openkai/.env
+
+# Or use Kaidera Manifold
+echo 'KAIDERA_MANIFOLD_API_KEY=km-...' >> ~/.openkai/.env
+echo 'KAIDERA_MANIFOLD_BASE_URL=https://api.kaidera.ai/v1' >> ~/.openkai/.env
+echo 'KAIDERA_MANIFOLD_PROJECT_ID=your-project-uuid' >> ~/.openkai/.env
+
+# Start OpenKai
 openkai
 ```
 
-Then:
+## Upgrading
 
-1. `/login` connects a provider.
-2. `/model` chooses the active model.
-3. `/settings` changes persistent preferences.
-4. `/help` explains commands inside the TUI.
+```bash
+# Auto-detect channel and upgrade
+openkai upgrade
 
-See [TUI first steps](tui-first-steps.md) for the beginner path.
+# Check for updates (read-only)
+openkai upgrade --check
 
-## Cortex is separate from installation
-
-Installing OpenKai does not install or register a shared Cortex project automatically. From the TUI, use `/cortex status`; if you need local Cortex, use `/cortex install`. Registration is a separate confirmed action and requires `CORTEX_ADMIN_TOKEN`:
-
-```text
-/cortex register [project] [agent] [role]
+# Rollback to previous version
+openkai upgrade --rollback
 ```
 
-See [Cortex projects and agents](cortex-projects-agents.md) for the full setup and privacy model.
+Channel behaviour:
+
+| Channel | Upgrade command | Rollback |
+|---|---|---|
+| Homebrew | `brew update && brew upgrade openkai` | `brew switch openkai <version>` |
+| npm | `npm install -g @kaidera/openkai@latest` | `npm install -g @kaidera/openkai@<version>` |
+| bun | `bun add -g @kaidera/openkai@latest` | `bun add -g @kaidera/openkai@<version>` |
+| Standalone | Signed self-upgrade (Ed25519 + SHA-256) | `.previous` sidecar restore |
+
+## Uninstall
+
+```bash
+# Homebrew
+brew uninstall openkai
+
+# npm
+npm uninstall -g @kaidera/openkai
+
+# bun
+bun remove -g @kaidera/openkai
+
+# Standalone
+rm ~/.local/bin/openkai
+rm -rf ~/.local/libexec/kaidera-os/openkai
+
+# Remove config (optional)
+rm -rf ~/.openkai
+```
 
 ## Troubleshooting
 
-- **`openkai: command not found`** — add the installer directory or Bun global bin directory to `PATH`, then open a new shell.
-- **Package install succeeds but startup fails** — run `openkai --version`; the installer/package post-check should expose the exact failure.
-- **No model available** — open the TUI, run `/login`, then `/model`.
-- **Cortex is unavailable** — this does not prevent normal OpenKai use. Run `/cortex status` for the next exact action.
+### `openkai: command not found`
+
+- Check the install channel: `which openkai`
+- Homebrew: `brew link openkai`
+- npm: `npm config get prefix` — add `<prefix>/bin` to `$PATH`
+- bun: `bun config get prefix` — add `<prefix>/bin` to `$PATH`
+
+### `Permission denied`
+
+- Homebrew: `sudo chown -R $(whoami) /usr/local/bin/openkai`
+- npm: `sudo chown -R $(whoami) $(npm config get prefix)/bin/openkai`
+- Standalone: `chmod +x ~/.local/bin/openkai`
+
+### `Module not found`
+
+- Reinstall: `npm uninstall -g @kaidera/openkai && npm install -g @kaidera/openkai`
+- Or use the standalone binary (no node dependency)
+
+### `OPENROUTER_API_KEY is missing`
+
+- Add to `~/.openkai/.env`: `echo 'OPENROUTER_API_KEY=sk-or-...' >> ~/.openkai/.env`
+- Or use a different provider: see [Providers](providers.md)
+
+### TUI crashes on launch
+
+- Try standalone mode: `openkai --no-tui`
+- Check terminal compatibility: `openkai info`
+- Report: `openkai info --debug`
