@@ -48,7 +48,9 @@ else
 fi
 
 echo "== 2. Dependency audit (high+) =="
-if npm audit --audit-level=high >/dev/null 2>&1; then
+if [ ! -f package-lock.json ]; then
+    echo "skip: no npm workspace on this branch — the product source lives in the private fork and is audited there"
+elif npm audit --audit-level=high >/dev/null 2>&1; then
     echo "ok: npm audit clean at high"
 else
     echo "FAIL: npm audit reported high/critical findings:"
@@ -57,7 +59,9 @@ else
 fi
 
 echo "== 3. Security-relevant tests =="
-if npm test >/dev/null 2>&1; then
+if [ ! -f package.json ]; then
+    echo "skip: no npm workspace on this branch — the test suite runs in the private fork"
+elif npm test >/dev/null 2>&1; then
     echo "ok: test suite green"
 else
     echo "FAIL: test suite is not green"

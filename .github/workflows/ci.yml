@@ -1,22 +1,16 @@
 name: ci
-
 on:
   push:
     branches: [main]
   pull_request:
-
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - run: npm run typecheck
-      - run: npm test
-      - name: Security audit
+      - name: Security audit (tracked-file secret scan)
         run: scripts/security-audit.sh
+      - name: Shell syntax
+        run: sh -n scripts/install.sh && bash -n scripts/security-audit.sh
+      - name: Docs links resolve
+        run: python3 scripts/check-doc-links.py

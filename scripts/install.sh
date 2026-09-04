@@ -11,12 +11,11 @@
 set -eu
 
 REPO="Kaidera-AI/OpenKai"
-# Now at v0.1.009 (released 2026-08-22; tag + assets live).
-# this default is live for every `curl | sh` the moment it lands. Repointing it
-# is RELEASE_SOP gated action #5 and belongs to release sequence step 7, which
-# runs AFTER `gh release create` at step 6. v0.1.009 has no tag or release yet,
-# so bumping it here would 404 every fresh install. Bump on CTO consent.
-VERSION="${OPENKAI_VERSION:-v0.1.009}"
+# Now at v0.1.12 (released 2026-09-03; tag, binaries and SHA256SUMS.txt live).
+# This default is live for every `curl | sh` the moment it lands, so it only
+# moves to a tag whose release assets exist (RELEASE_SOP gated action #5,
+# release sequence step 7, after `gh release create`). Bump on CTO consent.
+VERSION="${OPENKAI_VERSION:-v0.1.12}"
 PREFIX="${OPENKAI_PREFIX:-$HOME/.local}"
 DEST="$PREFIX/bin"
 
