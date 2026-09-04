@@ -1,7 +1,7 @@
 # Handoff: operator → kai@openkai — Cortex completion programme planning
-> **Planned 2026-09-04 → E024.** Artifacts: `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/` (`intent/cortex-completion.md`, `STATE.md` = the current authority, `EPIC_SPEC.md`, `PLAN.md`, `ACCEPTANCE_MATRIX.md`). Decisions D0–D6 await the CTO; no build from this handoff.
+> **Accepted 2026-09-04 → E024.** Artifacts: `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/` (`intent/cortex-completion.md`, `STATE.md` = the current authority, `EPIC_SPEC.md`, `PLAN.md`, `ACCEPTANCE_MATRIX.md`). Authoritative decisions D0–D6 are recorded in the intent; execute through the plan's gates.
 
-**Stage:** `INTENT → GRILL → SPEC → PLAN` only. **Do not build, enable, write test memories, publish, tag, or change a release channel from this handoff.**
+**Stage:** Planning handoff completed. E024 implementation and verification are authorised under the accepted `PLAN.md`; publication remains separately gated by `docs/RELEASE_SOP.md`.
 
 **Authority:** the operator requested a full development plan that closes every known Cortex/OpenKai delivery gap, reaches the intended functionality safely, and follows the binding SDLC process in `docs/DEVELOPMENT_PROCESS.md`.
 
