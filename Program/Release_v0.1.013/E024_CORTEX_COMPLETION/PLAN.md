@@ -161,3 +161,6 @@ Observed on the Mac scratch appliance (ACCEPTANCE_MATRIX "Observed 2026-09-04"):
 4. **Recall caveat in the contract.** New memories are vector-recallable only after the appliance's maintenance beat (backfill-only enrichment); until then recall is lexical. Document in CORTEX_CONSUMER_CONTRACT.md and the settings row description.
 
 Linux rows (A1/A2/A18 second host, A4, A12b/A14 on Linux) stay BLOCKED on kos-test SSH; Ollama on 127.0.0.1:11435 with `nomic-embed-text` is running on this Mac but unaddressable by the appliance (a83d713c).
+
+## Amendment 2026-09-04 (b) — release-path blockers surfaced by the 304bc0bd check
+W6/W7 (release verify + ship) gain three preconditions, all on product main: fix CI (`npm ci` fails on the stale 0.84 package tree; decide whether the product repo carries the fork tree or a docs/ledger-only tree with its own CI); restore a working npm publish path (prove trusted publishing with an attestation on a dry run, or restore the `NODE_AUTH_TOKEN` fallback); align `package.json` to the shipped version. No version is cut for the docs alone unless the CTO chooses a docs-only 0.1.13 (then E024 renumbers to 0.1.14).
