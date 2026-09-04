@@ -63,5 +63,5 @@
 
 ### Update 2026-09-04 (kai) — W2 host-B rows done; W3 = REWORK
 - Host B (cortex-test :8601): A13 PASS, A15 PASS, A12b FAIL, A14 FAIL, A20 (new) FAIL — ACCEPTANCE_MATRIX "Observed 2026-09-04", PLAN amendment 2026-09-04.
-- Cortex findings: a83d713c (degradation gap; no base-URL knob) + 1e35fbe1 (upsert-by-source; non-servable model swap; backfill-only enrichment) to kai@kaidera-os. Linux half of 138a96cc waits on kos-test.
+- Cortex findings: a83d713c (degradation gap; no base-URL knob) + 1e35fbe1 (upsert-by-source; non-servable model swap; backfill-only enrichment) to kai@kaidera-os; consumer-contract addendum fa52a95d filed against completed 77db176e (doc at c8270c4852 supersedes the returned summary). Linux half of 138a96cc waits on kos-test. PM beat 12f532c7 returned: no W3 rows before ren's W1 review.
 - Nothing shipped; no consent line; 0.1.13 not tagged.
