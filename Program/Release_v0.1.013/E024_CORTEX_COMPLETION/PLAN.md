@@ -1,6 +1,6 @@
 # Plan: E024 — Cortex completion (from `EPIC_SPEC.md`, 2026-09-04)
 
-Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Source worktrees branch from `Kaidera-AI/openkai-fork main @ c6c7fa7b1b`; public-channel work branches from current `Kaidera-AI/OpenKai origin/main`; programme documents stay on `maintenance/0.84-line`. Status: **W0 and W1 closed; W3 source-only remediation GO; W2/W4 mutation drives and W7 release remain gated.** Authoritative decisions D0–D6 are in the intent; W1 dispositions are in `DISPOSITION_REN_W1.md`.
+Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Source worktrees branch from `Kaidera-AI/openkai-fork main @ c6c7fa7b1b`; public-channel work branches from current `Kaidera-AI/OpenKai origin/main`; programme documents stay on `maintenance/0.84-line`. Status: **W0/W1 closed; W3 implementation tips built and locally validated; W6 review running; candidate gates and W7 release remain gated.** Authoritative decisions D0–D6 are in the intent; W1 dispositions are in `DISPOSITION_REN_W1.md`.
 
 ## Repository boundaries
 
@@ -109,8 +109,11 @@ Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all candida
 | Dependency | Owner | Blocks | Required proof |
 |---|---|---|---|
 | Published local Cortex installer | alpha@kaidera | A4, W7 | clean-macOS preflight/install/status/rollback |
-| Typed Cortex project archive operation | alpha@kaidera | A5–A7, A9, A11, W4 | archived/404 plus unchanged production hashes |
-| Disposable Cortex appliance + restore command | KOS/Cortex owner | A12–A14, A17 | full snapshot restoration and backup inventory match |
+| Typed Cortex project archive operation | alpha@kaidera | A5–A9, A11 | archived/404 plus unchanged production hashes |
+| Disposable Cortex restore runner | KOS/Cortex owner | A17 | restore real archive, match project/roster/row inventory, destroy target |
+| Working scratch Ollama endpoint/model and non-empty backlog | KOS/Cortex owner | A12 | real embedding/backfill drain plus full restoration |
+| Embed-worker outage in typed degradation/status API | alpha@kaidera | A14, W7 | non-empty outage state rendered by candidate; worker restored |
+| Reachable `kos-test` scratch/clean host | KOS operator | A2-KOS and second-host amendment rows | reset, candidate drive, cleanup evidence |
 | Fresh macOS administrator | CTO/operator | A1-MAC, A2-MAC, A18-MAC | account create/drive/delete evidence |
 | Provider credential | operator | A13 only | redacted rerank apply/search/restore evidence |
 | Live version-specific consent | CTO | all W7 mutations | explicit “0.1.13” approval in that session |
@@ -147,3 +150,14 @@ Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all candida
 - 2026-09-04 (W1) — independent review returned NO-GO. All twelve findings accepted in `DISPOSITION_REN_W1.md`; baseline PASS labels reclassified PARTIAL, A11 corrected to BLOCKED, A4 promoted to gate, D6 split, provider/backup isolation strengthened, installer ownership corrected, W1 made a hard dependency, managed precedence fixed, and release recovery specified.
 - 2026-09-04 (baseline) — KOS A1/A2/A18 and dev A3/A5–A10/A12/A17 observed on 0.1.12. They are useful defect evidence, not final-candidate gates. A4 is blocked by the unpublished installer; A11 is blocked by the missing archive API; A19 fails because the public installer defaults to v0.1.009.
 - 2026-09-04 (scope) — a typed KOS readiness-event contract is absent. It is deferred to its own intent unless KOS supplies a schema; E024 does not invent one.
+
+## Amendment 2026-09-04 — host-B results move W3 into REWORK on four points
+
+Observed on the Mac scratch appliance (ACCEPTANCE_MATRIX "Observed 2026-09-04"): A13 PASS, A15 PASS, A12b FAIL, A14 FAIL (fail-loud), new A20 FAIL. W3 (build) now carries these REWORK items before any picker row ships:
+
+1. **Unique source per memory row.** `POST /memory` upserts by `source`. cortex-ingest, `cortex_record`, memory-save and `tools/learn.ts` must write `openkai/<path>/<sessionId>/<seq>` (or a content-hash suffix), never a constant. Add a test: two records → two rows. Ask Cortex whether upsert-by-source is the intended contract (findings row 1e35fbe1, kai@kaidera-os); if it is, the consumer contract must say so.
+2. **Picker rows = what the appliance can serve.** Read the live config (`GET /admin/cortex/config`) and offer only the seeded provider/model until Cortex exposes provider-config creation; apply-then-verify: after PATCH, run `POST /beat/embeddings/backfill` with `dry_run: true` (admin) and roll the PATCH back on error. No Ollama/base-URL rows until finding a83d713c lands.
+3. **Health from `/workers/health`, not `/degradation`.** `/memory stats` and the status row read `/workers/health` and the backlog counter; `/degradation` alone is a false green.
+4. **Recall caveat in the contract.** New memories are vector-recallable only after the appliance's maintenance beat (backfill-only enrichment); until then recall is lexical. Document in CORTEX_CONSUMER_CONTRACT.md and the settings row description.
+
+Linux rows (A1/A2/A18 second host, A4, A12b/A14 on Linux) stay BLOCKED on kos-test SSH; Ollama on 127.0.0.1:11435 with `nomic-embed-text` is running on this Mac but unaddressable by the appliance (a83d713c).

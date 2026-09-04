@@ -20,27 +20,28 @@
 
 | Capability | Implemented (source) | Proven (observed) | Gap |
 |---|---|---|---|
-| `memory.backend = off \| local \| cortex`, legacy migrations, sharpshooter friction gate in cortex-ingest | yes — fork main | unit + live tests (`openkai-cortex-memory`, `openkai-cortex-extension`, `openkai-cortex-live` 28+3) | **`local` (omp rollout pipeline) still ships** — D1 |
-| Settings-driven connection, roster-safe writer, redaction at the Cortex boundary, evidence cleaning | yes | tests; live record→search round trip against `openkai` (2026-09-03) | the live test wrote markers into the production project — must move to an acceptance project (§B) |
-| `/cortex status\|preflight\|install\|register\|agent\|doctor\|models` | yes | help/registration tests | install/register never observed on a fresh host; `register` needs `CORTEX_ADMIN_TOKEN` |
-| Embedding/rerank pickers → provider file → admin PATCH | yes | file-write + injected-fetch tests | never applied against the live appliance with a real admin token + provider credential |
-| Transcript ingest (opt-in) | yes | live 409/200 path once, roster agent resolved | retention/deletion expectations undocumented |
-| Hosted Cortex (`cortex.apiUrl`/`token`) | client rows only | none | platform dependency (alpha@kaidera) unowned in the ledger |
-| Backups | — | the 2026-08-15→08-31 restore lost 16 days (handoff `129cc50e`) | no OpenKai-side eval; backup cadence unproven |
+| Retired local OMP memory pipeline; `off \| cortex`; data-preserving migration/tombstone | yes — E024 source tip `7fe1ece1dd` | focused tests, coding-agent check, compiled TUI retired-command and first-run smokes | independent W6 adjudication and folded-candidate A16 |
+| Settings-driven Cortex connection, roster-safe writer, boundary redaction, managed override | yes — source tip | unit tests; 0.1.12 baseline; scratch managed TUI plus random record/search and destructive scratch reset | candidate A6–A10/A10M gates; typed archive before A5–A9 lifecycle |
+| `/cortex status\|preflight\|install\|register\|agent\|doctor\|models` | yes — source tip distinguishes KOS dispatcher from installer | actual TUI status on shared and scratch; actual unavailable-installer message without npm/dispatcher leakage | published installer and clean-host install/rollback |
+| Embedding/rerank pickers → provider file → admin PATCH | yes | Mac scratch applied `ollama/nomic-embed-text`, disabled rerank, read back state, and restored prior config | no Ollama model/backlog proof; NVIDIA credential absent |
+| Transcript ingest (opt-in) | yes | 0.1.12 opt-in path only | default-off, retention, restore, cleanup, and folded candidate |
+| Hosted Cortex | generic endpoint settings only | contract boundary recorded in `HOSTED_CORTEX_CONTRACT.md` | provider-owned service/schema/tenancy/lifecycle/acceptance; wholly deferred |
+| Backup release gate | deterministic evaluator at source commit `588a75a0a4` | newest real archive passes freshness, SHA-256, tar, and KOS custom-dump layout; 16 fixture tests pass | disposable restore runner/appliance inventory comparison |
 
-## 3 · The waived / unrun gates (were never passed)
+## 3 · Gates waived or unrun at the 0.1.12 release (historical)
 
 1. Fresh-host install/binary/TUI drive with the public `openkai` assets.
 2. Settings-driven local Cortex install → register → record → search cycle (admin token for registration).
 3. Live embedding/rerank provider application through Settings → Memory → Cortex Ingest.
 4. A live memory round trip that does not touch the production `openkai` project.
 
-## 4 · E024 gate state after W1
+## 4 · E024 gate state
 
-- W1 review: complete; all findings accepted in `DISPOSITION_REN_W1.md`.
-- W3 source-only remediation: GO. No shared Cortex mutation and no public channel repoint.
-- Baseline A1/A2/A3/A5–A10/A12/A17/A18: PARTIAL because they ran on 0.1.12 or proved only part of the row.
-- Release blockers: A4 unpublished Cortex installer; A11 missing typed archive API; A12–A14/A17 no disposable appliance/restore path; D6 fresh-macOS administrator absent; A19 public installer at v0.1.009; final review and explicit 0.1.13 consent absent.
+- W1 specification review: complete; all findings accepted in `DISPOSITION_REN_W1.md`.
+- W3 source remediation: source integration tip `7fe1ece1dd`; public installer automation tip `1594ba3676`. Focused tests/check/compiled smokes pass. Independent W6 implementation review is running; neither tip is a public release mutation.
+- Scratch availability: the isolated Mac `cortex-test` stack is ready and resettable. Managed record/search passed with scratch-only destructive cleanup. Provider configuration apply/restore passed, but A12 lacks a working Ollama endpoint and non-empty backlog. A14 failed because Cortex returned `{\"degraded\":[]}` while its embed worker was stopped; the worker was restored healthy.
+- Baseline A1/A2/A3/A5–A10/A12/A15/A17/A18 remains PARTIAL because it ran on 0.1.12/source-tip or proved only part of the row.
+- Release blockers: unpublished Cortex installer; missing typed project archive; no disposable backup restore runner; A12 provider runtime; A14 degradation contract; fresh-macOS administrator; KOS host availability; final candidate/review gates; public installer still at v0.1.009; explicit 0.1.13 consent absent.
 - Normative status and evidence names: `ACCEPTANCE_MATRIX.md`. A failure, blocker, or partial observation is never a passed gate.
 
 ## 5 · Supersession pointers (history preserved, not rewritten)
@@ -59,3 +60,8 @@
 4. `78f86ec5` (KOS installer pin) was answered with the 0.1.12 tag, asset/checksum and install/verify facts. D0 is settled: the CTO confirmed explicit 0.1.12 consent.
 5. Header pointers on the two superseded handoffs.
 6. Handoff/ledger protocol (binding, from `docs/DEVELOPMENT_PROCESS.md`): one authority file per epic (`STATE.md`), summaries start with `[STAGE]`, no "current state" prose outside it; beat's sweep flags any row that asserts a release state not in STATE.md.
+
+### Update 2026-09-04 (kai) — W2 host-B rows done; W3 = REWORK
+- Host B (cortex-test :8601): A13 PASS, A15 PASS, A12b FAIL, A14 FAIL, A20 (new) FAIL — ACCEPTANCE_MATRIX "Observed 2026-09-04", PLAN amendment 2026-09-04.
+- Cortex findings: a83d713c (degradation gap; no base-URL knob) + 1e35fbe1 (upsert-by-source; non-servable model swap; backfill-only enrichment) to kai@kaidera-os. Linux half of 138a96cc waits on kos-test.
+- Nothing shipped; no consent line; 0.1.13 not tagged.
