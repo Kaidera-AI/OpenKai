@@ -1,7 +1,9 @@
 # Handoff: operator → kai@openkai — Cortex completion programme planning
 > **Accepted 2026-09-04 → E024.** Artifacts: `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/` (`intent/cortex-completion.md`, `STATE.md` = the current authority, `EPIC_SPEC.md`, `PLAN.md`, `ACCEPTANCE_MATRIX.md`). Authoritative decisions D0–D6 are recorded in the intent; execute through the plan's gates.
 
-**Stage:** Planning handoff completed. E024 implementation and verification are authorised under the accepted `PLAN.md`; publication remains separately gated by `docs/RELEASE_SOP.md`.
+**Stage:** Accepted plan executed through a reviewed local 0.1.13 candidate; reachable candidate gates are recorded. SHIP remains **MAINTAIN / NO-GO** because external acceptance and publication prerequisites are open. Publication is separately gated by `docs/RELEASE_SOP.md`.
+
+**Current authority (2026-09-04):** `Program/Release_v0.1.013/E024_CORTEX_COMPLETION/STATE.md`. Exact source candidate: `db7f921658c57e943a763a06bf25312d9ac5eef4`; independently re-reviewed by Ren: GO/no findings. Public installer automation tip: `a8674ed27e855dc59f3b15277be1ea6989acd4cf`; the public installer default remains v0.1.009. Local checks, build/smoke/version, release dry-runs, and exact-candidate A3/A8/A10/A10M/A14/A15/A16/A19C/A20 pass. No tag, push, package publication, asset upload, Homebrew/latest-manifest update, public installer repoint, or live release occurred. Missing typed archive/restore/embedding/clean-host prerequisites and exact-version CTO consent remain gate blockers; the absent A13 credential leaves only an informational row blocked. The planning narrative below is retained as historical input; do not use it instead of STATE.
 
 **Authority:** the operator requested a full development plan that closes every known Cortex/OpenKai delivery gap, reaches the intended functionality safely, and follows the binding SDLC process in `docs/DEVELOPMENT_PROCESS.md`.
 

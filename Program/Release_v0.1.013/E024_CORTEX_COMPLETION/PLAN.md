@@ -1,6 +1,6 @@
 # Plan: E024 — Cortex completion (from `EPIC_SPEC.md`, 2026-09-04)
 
-Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Source worktrees branch from `Kaidera-AI/openkai-fork main @ c6c7fa7b1b`; public-channel work branches from current `Kaidera-AI/OpenKai origin/main`; programme documents stay on `maintenance/0.84-line`. Status: **W0/W1 closed; W3 implementation tips built and locally validated; W6 review running; candidate gates and W7 release remain gated.** Authoritative decisions D0–D6 are in the intent; W1 dispositions are in `DISPOSITION_REN_W1.md`.
+Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Source worktrees began from `Kaidera-AI/openkai-fork main @ c6c7fa7b1b`; canonical public work branched from `Kaidera-AI/OpenKai origin/main`; programme documents stay on `maintenance/0.84-line`. Status: **W0/W1 closed; exact local candidate `db7f921658c57e943a763a06bf25312d9ac5eef4` validated; Ren returned GO/no findings on implementation ancestor `8aef97f7f4ad2753b0e81627139dec6572270bd2` and re-anchored that verdict to the exact candidate; external acceptance gates remain non-PASS; W7 is MAINTAIN/NO-GO.** Public automation tip `a8674ed27e855dc59f3b15277be1ea6989acd4cf` has not changed the live installer. Authoritative decisions D0–D6 are in the intent; W1 and W6 dispositions are in `DISPOSITION_REN_W1.md` and `DISPOSITION_REN_W6.md`.
 
 ## Repository boundaries
 
@@ -21,7 +21,7 @@ Owner: kai@openkai. Handoff: `docs/HANDOFF_KAI_CORTEX_COMPLETION_PLAN.md`. Sourc
 
 ### W2 — baseline and final acceptance evidence
 
-Only `evidence/*.md`. Existing 0.1.12 files are PARTIAL baseline. Final drives use the matrix’s candidate-specific names. Shared-appliance writes are prohibited. A5–A7/A9/A11 require the Cortex archive API and scratch appliance; A4 requires the published installer; macOS rows require an administrator.
+Only `evidence/*.md`. Historical 0.1.12 files remain PARTIAL baseline; exact-candidate appendices/new files now prove A3, A8, A10, A10M, A14, A15, A16, A19C, and A20 PASS. Shared-appliance writes are prohibited. Remaining final drives use the matrix's candidate-specific names. A5–A7/A9/A11 require the Cortex archive API and scratch appliance; A4 requires the published installer; macOS rows require an administrator.
 
 ### W3A — retire local OpenKai memory
 
@@ -49,7 +49,7 @@ Source worktree `e024/w3-backup-eval`.
 
 - Deterministic helper accepts backup root, clock, threshold, checksum/integrity checker, and restore runner; missing/stale/corrupt/restore-mismatch results fail.
 - Unit tests use disposable fixtures. The permanent test suite never depends on developer `~/.kaidera-os/backups` and never skips a release gate.
-- A17 integration invokes the helper against a real backup and disposable Cortex appliance; that drive remains BLOCKED until KOS/Cortex provides the restore target and command.
+- A17 integration invokes the helper against a real backup and disposable Cortex appliance. Exact-candidate archive validation reached `RESTORE_UNAVAILABLE`; the row remains BLOCKED until KOS/Cortex provides the restore target and command.
 
 ### W3D — public installer channel
 
@@ -61,7 +61,7 @@ Canonical worktree/branch from current public `origin/main`, never the maintenan
 
 ### W4 — provider and degradation acceptance
 
-No code unless a scratch drive exposes a client defect. A12–A14 run only on a disposable appliance, snapshot full server configuration/provider file/health/degradation, restore in `finally`, and prove restoration. Missing scratch appliance or credential is BLOCKED.
+No code unless a scratch drive exposes a client defect. A12–A13 snapshot full server configuration, provider file, health, and degradation before applying a provider change, then restore and compare in `finally`. A14 snapshots worker/backlog state, stops only the disposable embed worker, and resets/restarts the whole scratch appliance in `finally`. `/workers/health` and backlog are authoritative and `/degradation` is supplementary. A14 passed on the exact candidate; A12 remains BLOCKED without a working alternate embedding endpoint/backlog drive, and A13 remains BLOCKED without the operator credential.
 
 ### W5 — hosted Cortex contract only
 
@@ -69,11 +69,11 @@ No code unless a scratch drive exposes a client defect. A12–A14 run only on a 
 
 ### W6 — review and adjudication
 
-Ren reviews each W3 tip and W4 evidence; kai writes dispositions and folds only accepted tips to source/public main. Reviewer and author never self-approve.
+Ren reviews each W3 tip and W4 evidence; kai writes dispositions and folds only accepted tips to source/public main. Reviewer and author never self-approve. Ren's final implementation review of `8aef97f7f4ad2753b0e81627139dec6572270bd2` was GO with no findings, and Ren re-anchored that verdict to exact candidate `db7f921658c57e943a763a06bf25312d9ac5eef4`. Neither verdict is release authorisation.
 
 ### W7 — candidate and release
 
-Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all candidate gates. Then request explicit live-session CTO consent naming **0.1.13**. Without it: MAINTAIN; no tag, publish, public asset, Homebrew change, installer repoint, or manifest bump. After consent, run the private source handoff/canonical workflow and all post-publish rows.
+Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all reachable candidate gates. The local candidate and A19C are prepared; external gate rows remain non-PASS. Explicit live-session CTO consent naming **0.1.13** may be requested only after every pre-publish gate is PASS. Without it: MAINTAIN/NO-GO; no tag, push, publish, public asset, Homebrew change, installer repoint, or public channel-manifest mutation. After consent, run the private source handoff/canonical workflow and all post-publish rows.
 
 ## Execution order
 
@@ -99,33 +99,33 @@ Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all candida
 | W3B | bob/kai | source worktree | W1, installer facts; archive contract for acceptance stop | launcher defect fixed; unavailable platform behavior honest |
 | W3C | bob/kai | source worktree | W1, backup contract | deterministic evaluator green; integration contract explicit |
 | W3D | kai | canonical current-origin/main worktree | W1, public release workflow | reviewed update/verify automation; no live repoint |
-| W4 | kai + operator | scratch appliance | W3, archive/restore, credentials | A12/A14 PASS; A13 recorded |
+| W4 | kai + operator | scratch appliance | W3, archive/restore, credentials | A12/A14 complete; A13 credentialed result recorded or explicitly BLOCKED |
 | W5 | alpha@kaidera + kai | contract only | D3 | contract recorded; no 0.1.13 code |
-| W6 | Ren role → kai | reviewed tips | W3, W4 | zero unresolved review blockers; accepted tips folded |
-| W7 | kai prepares; CTO authorises | folded source + canonical public main | W2, W4, W6, A19C | consented release; post-publish rows PASS |
+| W6 | Ren role → kai | reviewed tips | W3, W4 | GO/no findings on implementation and exact candidate recorded in `DISPOSITION_REN_W6.md` |
+| W7 | kai prepares; CTO authorises | folded source + canonical public main | W2, W4, W6, A19C | explicit consent, then release; post-publish rows PASS |
 
 ## Active external blockers
 
 | Dependency | Owner | Blocks | Required proof |
 |---|---|---|---|
 | Published local Cortex installer | alpha@kaidera | A4, W7 | clean-macOS preflight/install/status/rollback |
-| Typed Cortex project archive operation | alpha@kaidera | A5–A9, A11 | archived/404 plus unchanged production hashes |
-| Disposable Cortex restore runner | KOS/Cortex owner | A17 | restore real archive, match project/roster/row inventory, destroy target |
+| Typed Cortex project archive operation | alpha@kaidera | A5–A7, A9, A11 | archived/404 plus unchanged production hashes |
+| Disposable Cortex restore runner | KOS/Cortex owner | A17 | resolve `RESTORE_UNAVAILABLE`, restore real archive, match project/roster/row inventory, destroy target |
 | Working scratch Ollama endpoint/model and non-empty backlog | KOS/Cortex owner | A12 | real embedding/backfill drain plus full restoration |
-| Embed-worker outage in typed degradation/status API | alpha@kaidera | A14, W7 | non-empty outage state rendered by candidate; worker restored |
 | Reachable `kos-test` scratch/clean host | KOS operator | A2-KOS and second-host amendment rows | reset, candidate drive, cleanup evidence |
 | Fresh macOS administrator | CTO/operator | A1-MAC, A2-MAC, A18-MAC | account create/drive/delete evidence |
-| Provider credential | operator | A13 only | redacted rerank apply/search/restore evidence |
+| Provider credential | operator | informational A13 only; not W7 | redacted credentialed rerank apply/search/restore evidence; rerank-off alone is not A13 PASS |
 | Live version-specific consent | CTO | all W7 mutations | explicit “0.1.13” approval in that session |
 
 ## Verification
 
-- W3A: coding-agent check, focused changed-contract tests, compiled binary smoke, schema listing with zero `memories.*`, migration fixture byte/row comparison, managed-lane on/off proxy counts.
-- W3B: launcher classification and error-contract tests plus actual TUI `/cortex preflight` unavailable path; no npm stack/E404 leak.
-- W3C: deterministic fresh/stale/missing/corrupt/restore-match/restore-mismatch tests; A17 is separate external evidence.
-- W3D: helper tests with valid, malformed, same-version, and changed-version fixtures; workflow syntax; no `VERSION` change in the preparatory commit.
-- W2/W4: every matrix file records candidate SHA/version, environment reset, command, literal redacted output, `finally` result, and production-state comparison.
-- W7: npm packages, GitHub release/assets, witnessed `latest.json`, Homebrew formula, public installer default, both public installs, and both upgrade rows agree on 0.1.13.
+- W3A: exact-candidate check, changed-contract tests, compiled binary smoke, schema listing with zero retired keys, A16 migration fixture byte/row comparison, and managed-lane on/off proxy counts.
+- W3B: launcher classification and error-contract tests plus actual candidate PTY unavailable-installer path; actionable GitHub URL and no raw npm stack/E404 leak.
+- W3C: deterministic fresh/stale/missing/corrupt/restore-match/restore-mismatch tests; A17 is separately BLOCKED at `RESTORE_UNAVAILABLE`.
+- W3D: valid, malformed, same-version, and changed-version helper coverage plus temporary-copy update/verify; public tip `a8674ed27e855dc59f3b15277be1ea6989acd4cf` remains unchanged at `v0.1.009`.
+- Exact candidate: `bun run check` PASS; 559 tests across 25 files and 2016 assertions PASS after fixing security-test environment isolation; build, smoke, and `openkai/0.1.13` PASS.
+- W2/W4: every matrix file records candidate SHA/version, environment reset, command, literal redacted output, `finally` result, and production-state comparison. A14 uses `/workers/health` and backlog as authority, with `/degradation` supplementary.
+- W7 after consent only: npm packages, GitHub release/assets, witnessed `latest.json`, Homebrew formula, public installer default, both public installs, and both upgrade rows agree on 0.1.13.
 
 ## Partial-release recovery
 
@@ -153,11 +153,20 @@ Prepare version lockstep, changelog, dry-run, SHIP_RECORD, A19C, and all candida
 
 ## Amendment 2026-09-04 — host-B results move W3 into REWORK on four points
 
-Observed on the Mac scratch appliance (ACCEPTANCE_MATRIX "Observed 2026-09-04"): A13 PASS, A15 PASS, A12b FAIL, A14 FAIL (fail-loud), new A20 FAIL. W3 (build) now carries these REWORK items before any picker row ships:
+Historical Mac scratch observations exposed four W3 rework points: only the A13 rerank-off subcheck passed (normative credentialed A13 remained BLOCKED); source-tip A15 passed; A12b, the former `/degradation`-only A14 contract, and the original A20 retention drive failed.
 
 1. **Unique source per memory row.** `POST /memory` upserts by `source`. cortex-ingest, `cortex_record`, memory-save and `tools/learn.ts` must write `openkai/<path>/<sessionId>/<seq>` (or a content-hash suffix), never a constant. Add a test: two records → two rows. Ask Cortex whether upsert-by-source is the intended contract (findings row 1e35fbe1, kai@kaidera-os); if it is, the consumer contract must say so.
 2. **Picker rows = what the appliance can serve.** Read the live config (`GET /admin/cortex/config`) and offer only the seeded provider/model until Cortex exposes provider-config creation; apply-then-verify: after PATCH, run `POST /beat/embeddings/backfill` with `dry_run: true` (admin) and roll the PATCH back on error. No Ollama/base-URL rows until finding a83d713c lands.
-3. **Health from `/workers/health`, not `/degradation`.** `/memory stats` and the status row read `/workers/health` and the backlog counter; `/degradation` alone is a false green.
+3. **Worker health/backlog are authoritative.** `/memory stats` and the status row read `/workers/health` and the backlog counter; `/degradation` is supplementary and cannot make an outage falsely green.
 4. **Recall caveat in the contract.** New memories are vector-recallable only after the appliance's maintenance beat (backfill-only enrichment); until then recall is lexical. Document in CORTEX_CONSUMER_CONTRACT.md and the settings row description.
 
 Linux rows (A1/A2/A18 second host, A4, A12b/A14 on Linux) stay BLOCKED on kos-test SSH; Ollama on 127.0.0.1:11435 with `nomic-embed-text` is running on this Mac but unaddressable by the appliance (a83d713c).
+
+## Amendment 2026-09-04 — exact local 0.1.13 candidate
+
+- **Provenance/review:** candidate `db7f921658c57e943a763a06bf25312d9ac5eef4`; final reviewed implementation ancestor `8aef97f7f4ad2753b0e81627139dec6572270bd2` received Ren GO with no findings; Ren re-anchored the same verdict to the exact candidate; public automation tip `a8674ed27e855dc59f3b15277be1ea6989acd4cf`.
+- **Automated proof:** `bun run check` PASS; 559 tests/25 files/2016 assertions PASS after the security-test environment isolation fix; build, smoke, and `openkai/0.1.13` PASS.
+- **Exact-candidate PASS:** A3 actual PTY observed the read-only shared `:8501` status; A8 refused before payload with one GET and zero POST/body; A10 actual PTY `/memory stats` stayed off with zero proxy calls through clean exit; A10M used one unchanged persisted `off` setting, activated managed status/record/search, then removed the variables and observed actual-PTY off with zero calls plus worker-healthy/project-404 cleanup; A14 made worker HTTP 502 and backlog 1 authoritative over empty degradation, preserved lexical recall, restored the worker healthy, and cleaned to project 404; A15 proved managed override from persisted `off` in direct and actual-PTY drives and cleaned to project 404; A16 preserved legacy file hashes/database rows while removing retired schema/persisted keys and migrating `local` → `off`; A20 scratch `:8601` produced count delta 8 and 8 unique IDs across four write paths, then reset/up with project GET 404.
+- **Still unpassed:** A4 is PARTIAL/BLOCKED because only the actionable unavailable-installer PTY subcheck passed; A12 is BLOCKED without a working alternate embedding endpoint and backlog-drain proof; informational A13 is BLOCKED without a provider credential and its old file proves rerank-off only, but it does not block release; A17 reached `RESTORE_UNAVAILABLE` and remains BLOCKED.
+- **A19C/local channel proof:** all lockstep values were `0.1.13`; seven binary-target dry-runs and Kaidera engine/wrapper publish dry-runs exited 0; temporary installer copy update/verify passed. Normative public A19 is BLOCKED and the public installer remains `v0.1.009`.
+- **Boundary:** decision remains MAINTAIN/NO-GO. No tag, push, publish, public installer repoint, Homebrew/manifest mutation, or live release is authorised or claimed.
