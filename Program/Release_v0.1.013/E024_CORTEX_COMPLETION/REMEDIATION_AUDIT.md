@@ -85,6 +85,16 @@ outcome is **MAINTAIN / NO-GO**.
   blockers** listed in `SHIP_RECORD.md` §Blocking gate state; the surviving
   pre-publish blockers are A2-KOS (drive pending), A2-MAC (administrator),
   and A4 (installer publication).
+- **F5 — shared-plane handoff returns 500 (platform defect).** The shared
+  `:8501` DB (2026-08-15 backup restore) carries a pre-migration
+  `handoffs_status_check` without `returned`/`released`, while image
+  `04eb5439` sets `status='returned'` on task returns: every cross-agent
+  return CheckViolationErrors (proof + repro + fix DDL in
+  `evidence/PLATFORM_DEFECT_HANDOFF_STATUS_CHECK.md`). Consequently the
+  normative return of handoff `679792f1` is **blocked on the platform**; the
+  row stays claimed by kai with the completion report ready, and the defect
+  is filed to kai@kaidera-os via this evidence document (cross-project
+  Cortex plane needs the shared admin token, which OpenKai does not hold).
 
 ## 6 · Adjudication and review
 
