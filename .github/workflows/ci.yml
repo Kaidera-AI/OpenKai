@@ -14,3 +14,10 @@ jobs:
         run: sh -n scripts/install.sh && bash -n scripts/security-audit.sh
       - name: Docs links resolve
         run: python3 scripts/check-doc-links.py
+      - name: Installer channel and integrity regression checks
+        run: node --test scripts/update-installer-version.test.mjs scripts/install.test.mjs
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.0"
+      - name: Source receiver contract checks
+        run: bun test scripts/materialize-openkai-source.test.ts

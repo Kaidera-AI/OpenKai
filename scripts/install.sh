@@ -1,20 +1,17 @@
 #!/usr/bin/env sh
 # OpenKai installer — curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh | sh
 #
-# Downloads the standalone binary for your platform from the latest GitHub
-# release, then fetches the companion <asset>.sha256. When a checksum is
-# published it is verified (shasum/sha256sum) BEFORE the binary is moved,
-# chmodded, or executed; when none is published the installer prints a loud
-# "TLS-only install" warning and continues. Installs to ~/.local/bin
-# (override with OPENKAI_PREFIX). No root, no node, no build tools required.
+# Downloads the standalone binary and verifies its published SHA-256 before
+# touching the installed command. Missing or invalid checksums fail closed.
+# Installs to ~/.local/bin (override with OPENKAI_PREFIX).
+# No root, node, or build tools required.
 
 set -eu
 
 REPO="Kaidera-AI/OpenKai"
-# Now at v0.1.12 (released 2026-09-03; tag, binaries and SHA256SUMS.txt live).
-# This default is live for every `curl | sh` the moment it lands, so it only
-# moves to a tag whose release assets exist (RELEASE_SOP gated action #5,
-# release sequence step 7, after `gh release create`). Bump on CTO consent.
+# Now at v0.1.12 (released 2026-09-03; tag + assets live).
+# The default stays on the authorised channel until a published release moves it.
+# Local release preparation must not repoint existing installations.
 VERSION="${OPENKAI_VERSION:-v0.1.12}"
 PREFIX="${OPENKAI_PREFIX:-$HOME/.local}"
 DEST="$PREFIX/bin"
@@ -31,10 +28,9 @@ case "$os" in
     *) echo "openkai: unsupported OS: $os (use npm: npm i -g @kaidera/openkai)" >&2; exit 1 ;;
 esac
 
-# The 0.1.10 fork line ships omp-* engine binaries (the OpenKai wrapper is the
-# npm/bun surface); older 0.1.* lines shipped openkai-*. Fetch omp- first.
-asset="omp-$os-$arch"
-legacy="openkai-$os-$arch"
+# Prefer current public asset names; retain historical release compatibility.
+asset="openkai-$os-$arch"
+legacy="omp-$os-$arch"
 url="https://github.com/$REPO/releases/download/$VERSION/$asset"
 legacy_url="https://github.com/$REPO/releases/download/$VERSION/$legacy"
 
@@ -54,49 +50,48 @@ fetch() {
 }
 
 if ! fetch "$url" "$tmp/openkai" 2>/dev/null; then
-    echo "openkai: no omp-* asset, trying legacy openkai-* name" >&2
-    fetch "$legacy_url" "$tmp/openkai"
+    echo "openkai: no $asset asset, trying historical $legacy name" >&2
+    asset="$legacy"
+    url="$legacy_url"
+    fetch "$url" "$tmp/openkai"
 fi
 
-# Verify the published checksum, when one exists, before touching DEST.
+# Select the checksum for the bytes actually fetched, including legacy fallback.
 if fetch "$url.sha256" "$tmp/openkai.sha256" 2>/dev/null; then
-    :
-elif fetch "$legacy_url.sha256" "$tmp/openkai.sha256" 2>/dev/null; then
-    :
-elif fetch "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" 2>/dev/null; then
-    # The 0.1.10 fork line publishes one SHA256SUMS.txt, not per-asset sidecars.
-    grep -E "[[:space:]]${asset}$" "$tmp/SHA256SUMS.txt" | awk '{print $1 "  " $2}' > "$tmp/openkai.sha256" || true
     expected="$(cut -d' ' -f1 < "$tmp/openkai.sha256" | tr -d '[:space:]')"
-    # Accept only a bare 64-char hex digest.
-    if [ "${#expected}" -ne 64 ] || [ -n "$(printf '%s' "$expected" | tr -d '0-9a-fA-F')" ]; then
-        expected=""
-    fi
-    if [ -n "$expected" ]; then
-        if command -v shasum >/dev/null 2>&1; then
-            actual="$(shasum -a 256 "$tmp/openkai" | cut -d' ' -f1)"
-        elif command -v sha256sum >/dev/null 2>&1; then
-            actual="$(sha256sum "$tmp/openkai" | cut -d' ' -f1)"
-        else
-            echo "openkai: WARNING — checksum published but neither shasum nor sha256sum is available;" >&2
-            echo "openkai: WARNING — installing WITHOUT verification (TLS-only install)." >&2
-            actual="$expected"
+elif fetch "https://github.com/$REPO/releases/download/$VERSION/SHA256SUMS.txt" "$tmp/SHA256SUMS.txt" 2>/dev/null; then
+    expected=""
+    while read -r digest name extra; do
+        if [ "$name" = "$asset" ] || [ "$name" = "*$asset" ]; then
+            if [ -n "$expected" ] || [ -n "$extra" ]; then
+                echo "openkai: ambiguous checksum entry for $asset" >&2
+                exit 1
+            fi
+            expected="$digest"
         fi
-        if [ "$actual" != "$expected" ]; then
-            echo "openkai: CHECKSUM MISMATCH for $asset" >&2
-            echo "openkai:   expected sha256: $expected" >&2
-            echo "openkai:   actual   sha256: $actual" >&2
-            echo "openkai: refusing to install — the download may be corrupted or tampered with." >&2
-            exit 1
-        fi
-        echo "openkai: sha256 verified ($expected)"
-    else
-        echo "openkai: WARNING — $url.sha256 did not contain a usable sha256 digest;" >&2
-        echo "openkai: WARNING — installing WITHOUT verification (TLS-only install)." >&2
-    fi
+    done < "$tmp/SHA256SUMS.txt"
 else
-    echo "openkai: WARNING — no checksum published at $url.sha256;" >&2
-    echo "openkai: WARNING — installing WITHOUT verification (TLS-only install)." >&2
+    echo "openkai: no published checksum for $asset; refusing to install" >&2
+    exit 1
 fi
+if [ "${#expected}" -ne 64 ] || [ -n "$(printf '%s' "$expected" | tr -d '0-9a-fA-F')" ]; then
+    echo "openkai: missing or invalid SHA-256 for $asset; refusing to install" >&2
+    exit 1
+fi
+expected="$(printf '%s' "$expected" | tr 'A-F' 'a-f')"
+if command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$tmp/openkai" | cut -d' ' -f1)"
+elif command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$tmp/openkai" | cut -d' ' -f1)"
+else
+    echo "openkai: need shasum or sha256sum; refusing an unverified install" >&2
+    exit 1
+fi
+if [ "$actual" != "$expected" ]; then
+    echo "openkai: CHECKSUM MISMATCH for $asset; installed command unchanged" >&2
+    exit 1
+fi
+echo "openkai: sha256 verified ($expected)"
 
 mkdir -p "$DEST"
 mv "$tmp/openkai" "$DEST/openkai"
@@ -109,4 +104,4 @@ case ":$PATH:" in
     *":$DEST:"*) ;;
     *) echo "openkai: add $DEST to your PATH, e.g.: export PATH=\"$DEST:\$PATH\"" ;;
 esac
-echo "openkai: run 'openkai info' to self-check, then 'openkai' to start."
+echo "openkai: run 'openkai --help' for commands, then 'openkai' to start."

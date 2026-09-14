@@ -5,11 +5,21 @@ inputs:
   version:
     description: OpenKai product version carried by the source handoff
     required: true
+  mode:
+    description: Capture the initial handoff, or require the previously validated immutable pair
+    default: require
+  expected-source-sha:
+    description: Source SHA captured by the initial validation job (required in require mode)
+  expected-archive-sha256:
+    description: Archive digest captured by the initial validation job (required in require mode)
 
 outputs:
   source-sha:
     description: Immutable source revision declared by the verified handoff
     value: ${{ steps.materialize.outputs.source-sha }}
+  archive-sha256:
+    description: SHA-256 of the verified source archive
+    value: ${{ steps.materialize.outputs.archive-sha256 }}
 
 runs:
   using: composite
@@ -19,6 +29,9 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         VERSION: ${{ inputs.version }}
+        HANDOFF_MODE: ${{ inputs.mode }}
+        EXPECTED_SOURCE_SHA: ${{ inputs.expected-source-sha }}
+        EXPECTED_ARCHIVE_SHA256: ${{ inputs.expected-archive-sha256 }}
       run: |
         set -euo pipefail
         tag="v${VERSION}"
@@ -38,11 +51,12 @@ runs:
         const crypto = require("node:crypto");
         const fs = require("node:fs");
         const [provenancePath, archivePath, version, tag] = process.argv.slice(2);
+        if (!/^0\.1\.(?:0|[1-9]\d*)$/.test(version)) throw new Error("invalid OpenKai release version");
         const provenance = JSON.parse(fs.readFileSync(provenancePath, "utf8"));
         const digest = crypto.createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
         if (provenance.version !== version) throw new Error(`handoff version mismatch: ${provenance.version}`);
-        if (provenance.source?.tag !== tag) throw new Error(`handoff tag mismatch: ${provenance.source?.tag}`);
-        if (provenance.source?.repository !== "Kaidera-AI/openkai-fork") {
+        if (provenance.source?.tag !== `openkai/${tag}`) throw new Error(`handoff tag mismatch: ${provenance.source?.tag}`);
+        if (provenance.source?.repository !== "Kaidera-AI/kaideraos") {
           throw new Error(`unexpected source repository: ${provenance.source?.repository}`);
         }
         if (!/^[0-9a-f]{40}$/i.test(provenance.source?.sha ?? "")) {
@@ -54,6 +68,33 @@ runs:
         if (provenance.archive?.sha256 !== digest) throw new Error("handoff archive SHA-256 mismatch");
         if (provenance.releaseException != null && typeof provenance.releaseException !== "string") {
           throw new Error("handoff release exception must be text or null");
+        }
+        const { HANDOFF_MODE: mode, EXPECTED_SOURCE_SHA: expectedSha, EXPECTED_ARCHIVE_SHA256: expectedDigest } = process.env;
+        if (mode === "require") {
+          if (!/^[0-9a-f]{40}$/i.test(expectedSha ?? "") || !/^[0-9a-f]{64}$/.test(expectedDigest ?? "")) {
+            throw new Error("the previously validated source SHA and archive SHA-256 are required");
+          }
+          if (provenance.source.sha !== expectedSha || digest !== expectedDigest) {
+            throw new Error("handoff differs from the source SHA or archive SHA-256 accepted by validation");
+          }
+        } else if (mode !== "capture") {
+          throw new Error("handoff mode must be capture or require");
+        }
+
+        // Check the product subtree layout before extracting any archive entry.
+        const prefix = `openkai-fork-v${version}`;
+        const entries = require("node:child_process").execFileSync("tar", ["-tzf", archivePath], {
+          encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
+        }).replace(/\n$/, "").split("\n");
+        for (const entry of entries) {
+          const path = entry.replace(/\/$/, "");
+          if ((path !== prefix && !path.startsWith(`${prefix}/`)) ||
+              path.split("/").some(part => part === ".." || part === "." || part === "")) {
+            throw new Error(`handoff archive entry is outside the expected product layout: ${entry}`);
+          }
+        }
+        for (const required of ["package.json", "packages/coding-agent/package.json"]) {
+          if (!entries.includes(`${prefix}/${required}`)) throw new Error(`handoff archive is missing product file: ${required}`);
         }
         console.log(`Verified ${tag} source handoff at ${provenance.source.sha}`);
         NODE
@@ -67,4 +108,4 @@ runs:
         # actions resolve at the workspace root, exactly as they do in source CI.
         rsync -a --delete --exclude .git "$source_dir/" "$GITHUB_WORKSPACE/"
         cp "$handoff_dir/$provenance" "$GITHUB_WORKSPACE/.openkai-source-provenance.json"
-        node -e 'const p = require("./.openkai-source-provenance.json"); require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `source-sha=${p.source.sha}\n`);'
+        node -e 'const p = require("./.openkai-source-provenance.json"); require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `source-sha=${p.source.sha}\narchive-sha256=${p.archive.sha256}\n`);'
