@@ -17,8 +17,10 @@ quill (documentation truth); changes go through the loop like any other change.
 
 | Repo | Holds | Loop artifacts that live here |
 |---|---|---|
-| `~/DevVault/OpenKai` (`Kaidera-AI/OpenKai`, programme of record, branch `maintenance/0.84-line` for ledgers; `main` is the public product tree) | `Program/`, `docs/`, `research/`, `CHANGELOG.md` | intent, spec, plan, review dispositions, gate evidence, ship record, SOPs |
-| `~/DevVault/openkai-fork` (`Kaidera-AI/openkai-fork`, the source) | the harness: upstream + `packages/coding-agent/src/openkai/` | code, tests, the fork's own docs, `FORK.md` touch-list |
+| `Kaidera-AI/OpenKai` public `main` | `Program/`, `docs/`, `research/`, `CHANGELOG.md`, installer and release receiver | public programme material, release SOPs and distribution machinery |
+| `Kaidera-AI/kaideraos` private `main`, subtree `products/openkai` | the harness: upstream + `packages/coding-agent/src/openkai/` | code, tests, product docs and `FORK.md` touch-list |
+
+Programme deliverables and immutable evidence are maintained under `Program/OpenKai` in the private Kaidera OS workspace. Product work happens in owned worktrees; a local worktree path is never a repository identity. Releases hand the exact `products/openkai` tree to the public repository as a digest-bound archive.
 
 Every epic is a folder `Program/Release_v0.1.NNN/E0NN_<NAME>/` with:
 

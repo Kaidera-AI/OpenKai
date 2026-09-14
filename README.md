@@ -69,7 +69,6 @@ Installation and registration ask before changing anything. Registration require
 
 **0.1.12 is the current release** (2026-09-03): npm `@kaidera/openkai` (`latest`), the GitHub release with signed binaries for macOS, Linux and Windows plus `SHA256SUMS.txt`, the Homebrew tap, and `scripts/install.sh` (default `v0.1.12`). The next release is 0.1.13 (E024, Cortex memory completion); it ships only on explicit CTO consent per [RELEASE_SOP](docs/RELEASE_SOP.md).
 
-**Where the code is.** This repository holds the product documentation, the programme ledgers under `Program/`, and the release machinery. The runtime source is maintained in the private source fork and materialised into each release by `release.yml` as a SHA-256-verified source archive with provenance. There is no buildable code tree on this branch by design.
+**Where the code is.** This repository holds the product documentation, the programme ledgers under `Program/`, and the release machinery. The runtime source is maintained under `products/openkai` in the private `Kaidera-AI/kaideraos` repository and materialised into each release by `release.yml` as a SHA-256-verified product-subtree archive with provenance. There is no buildable code tree on this branch by design.
 
 **Windows validation caveat:** the Windows binary has not received a PowerShell parser check or a Windows-host install run. Use it knowing that; macOS and Linux are the validated hosts.
-

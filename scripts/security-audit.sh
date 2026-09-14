@@ -49,7 +49,7 @@ fi
 
 echo "== 2. Dependency audit (high+) =="
 if [ ! -f package-lock.json ]; then
-    echo "skip: no npm workspace on this branch — the product source lives in the private fork and is audited there"
+  echo "skip: no npm workspace on this branch — the product source lives in the private Kaidera OS monorepo and is audited there"
 elif npm audit --audit-level=high >/dev/null 2>&1; then
     echo "ok: npm audit clean at high"
 else
@@ -60,7 +60,7 @@ fi
 
 echo "== 3. Security-relevant tests =="
 if [ ! -f package.json ]; then
-    echo "skip: no npm workspace on this branch — the test suite runs in the private fork"
+  echo "skip: no npm workspace on this branch — the test suite runs in the private Kaidera OS monorepo"
 elif npm test >/dev/null 2>&1; then
     echo "ok: test suite green"
 else
