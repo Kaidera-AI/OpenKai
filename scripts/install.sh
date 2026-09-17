@@ -9,10 +9,10 @@
 set -eu
 
 REPO="Kaidera-AI/OpenKai"
-# Now at v0.1.14 (released 2026-09-15; tag + assets live).
+# Now at v0.1.15 (released 2026-09-17; tag + assets live).
 # The default stays on the authorised channel until a published release moves it.
 # Local release preparation must not repoint existing installations.
-VERSION="${OPENKAI_VERSION:-v0.1.14}"
+VERSION="${OPENKAI_VERSION:-v0.1.15}"
 PREFIX="${OPENKAI_PREFIX:-$HOME/.local}"
 DEST="$PREFIX/bin"
 
