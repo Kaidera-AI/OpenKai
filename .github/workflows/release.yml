@@ -362,6 +362,67 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  native_probe:
+    name: Native probe (${{ matrix.target_id }})
+    needs: release_assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target_id: linux-x64
+          - os: macos-14
+            target_id: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Download the exact pre-publish binary (retried once, infra-class failures only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 2
+          retry_wait_seconds: 10
+          # gh run download is a shell command, so it is retry-wrappable;
+          # actions/download-artifact is not (nick-fields/retry only wraps
+          # `command:`, never a `uses:` step). A failure here is an infra
+          # class (artifact missing/network) by construction -- it happens
+          # before the probe ever runs, so this retry can never mask a real
+          # `verdict: FAIL` from probe-native.py/probe-native-successor.py,
+          # which is never wrapped in retry (EPIC_SPEC.md "Risks and rollback").
+          command: |
+            rm -rf probe-artifact
+            gh run download ${{ github.run_id }} \
+              --repo ${{ github.repository }} \
+              --name openkai-binary-${{ matrix.target_id }} \
+              --dir probe-artifact
+      - name: Make the downloaded binary executable
+        run: chmod +x probe-artifact/openkai-${{ matrix.target_id }}
+      - name: Boundary probe (dotenv isolation, all flags disabled)
+        run: |
+          python3 scripts/ci-native-probe/probe-native.py \
+            --binary probe-artifact/openkai-${{ matrix.target_id }} \
+            --case ci-${{ matrix.target_id }}-all-disabled
+      - name: Successor probe (self-re-entry boundary)
+        run: |
+          python3 scripts/ci-native-probe/probe-native-successor.py \
+            --binary probe-artifact/openkai-${{ matrix.target_id }} \
+            --case ci-${{ matrix.target_id }}-successor
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: native-probe-${{ matrix.target_id }}
+          path: |
+            scripts/ci-native-probe/runs/ci-${{ matrix.target_id }}-all-disabled/result.json
+            scripts/ci-native-probe/runs/ci-${{ matrix.target_id }}-all-disabled/invocation.json
+            scripts/ci-native-probe/successor-runs/ci-${{ matrix.target_id }}-successor/result.json
+            scripts/ci-native-probe/successor-runs/ci-${{ matrix.target_id }}-successor/invocation.json
+          if-no-files-found: error
+          retention-days: 90
+
   release_npm:
     name: Publish coordinated npm packages
     needs: [release_assets, native_addons]
@@ -396,7 +457,7 @@ jobs:
 
   publish_release:
     name: Publish canonical release
-    needs: [release_assets, release_npm]
+    needs: [release_assets, release_npm, native_probe]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -409,6 +470,39 @@ jobs:
           gh release delete-asset "$TAG" "openkai-source-${TAG}.tar.gz" --repo "$GITHUB_REPOSITORY" --yes
           gh release delete-asset "$TAG" "openkai-source-${TAG}.provenance.json" --repo "$GITHUB_REPOSITORY" --yes
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  verify_published_digest:
+    name: Verify published asset digests
+    # Non-blocking confirmation, not a second gate: EPIC_SPEC.md open question 1,
+    # resolved -- native_probe already gates publish_release on the pre-publish
+    # artifact (stronger: catches a build defect before any user can see it).
+    # This job catches a different failure class (upload/CDN corruption between
+    # the staged draft and the now-public release) with no second probe run --
+    # a pure digest comparison against the manifest release_assets already
+    # staged. It never blocks update_installer/release_brew.
+    needs: publish_release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Download the published release assets and their checksum manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          mkdir -p published
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir published \
+            --pattern "openkai-*" \
+            --pattern "latest.json" \
+            --pattern "LICENSE" \
+            --pattern "THIRD-PARTY-NOTICES.txt" \
+            --pattern "SHA256SUMS.txt"
+      - name: Recompute digests of the truly-published bytes and compare
+        run: |
+          cd published
+          sha256sum --check --strict SHA256SUMS.txt
 
   update_installer:
     name: Update canonical installer default
