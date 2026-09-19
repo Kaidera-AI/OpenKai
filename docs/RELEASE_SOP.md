@@ -139,6 +139,14 @@ then `brew install openkai`.
 Document this in the release notes / README install section so users are not
 surprised.
 
+## Tap deploy-key custody (added 2026-09-19, E025)
+
+`release_brew`'s push to `Kaidera-AI/homebrew-tap` authenticates with the
+`KAIDERA_TAP_DEPLOY_KEY` repository secret. That secret and a read-write deploy key
+registered on the tap are a pair; rotating one without the other broke `release_brew`
+with `Permission denied (publickey)` on 2026-09-17. Run the pre-flight check before
+cutting a release and follow the rotation procedure exactly: `docs/TAP_DEPLOY_KEY_CUSTODY.md`.
+
 ## Signed release channel (added 2026-08-18)
 
 **Homebrew platform fact (source-verified in trust.rb/tap.rb):** implicit tap
