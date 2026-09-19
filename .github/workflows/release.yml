@@ -442,7 +442,7 @@ jobs:
 
   release_npm:
     name: Publish coordinated npm packages
-    needs: [release_assets, native_addons]
+    needs: [release_assets, native_addons, native_probe]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
