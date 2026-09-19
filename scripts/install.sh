@@ -28,15 +28,29 @@ case "$os" in
     *) echo "openkai: unsupported OS: $os (use npm: npm i -g @kaidera/openkai)" >&2; exit 1 ;;
 esac
 
+# musl detection: Alpine and other musl-libc Linux hosts cannot run the
+# default glibc build; v0.1.15+ publishes musl variants but nothing selected
+# them (estate review O-4, 2026-09-19). ldd's own --version banner names its
+# libc implementation; GNU/glibc systems either lack this exact "musl" marker
+# or report "GNU libc" instead, so this is a specific positive match, not a
+# default-to-musl-on-any-uncertainty guess.
+libc=""
+if [ "$os" = "linux" ] && command -v ldd >/dev/null 2>&1; then
+    case "$(ldd --version 2>&1)" in
+        *musl*) libc="-musl" ;;
+    esac
+fi
+
 # Prefer current public asset names; retain historical release compatibility.
-asset="openkai-$os-$arch"
+asset="openkai-$os$libc-$arch"
 legacy="omp-$os-$arch"
 url="https://github.com/$REPO/releases/download/$VERSION/$asset"
 legacy_url="https://github.com/$REPO/releases/download/$VERSION/$legacy"
 
 echo "openkai: downloading $asset ($VERSION)"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+staged=""
+trap 'rm -f "${staged:-}"; rm -rf "$tmp"' EXIT
 
 fetch() {
     # fetch <url> <dest> — returns non-zero when the resource is absent.
@@ -94,11 +108,32 @@ fi
 echo "openkai: sha256 verified ($expected)"
 
 mkdir -p "$DEST"
-mv "$tmp/openkai" "$DEST/openkai"
-chmod +x "$DEST/openkai"
+# A unique per-invocation name on the same filesystem as $DEST: two installer
+# runs racing each other must never delete or promote each other's staged
+# candidate, and the name still supports the atomic same-filesystem rename
+# below (estate review O-4, 2026-09-19).
+staged="$(mktemp "$DEST/.openkai.XXXXXX")"
+mv "$tmp/openkai" "$staged"
+chmod +x "$staged"
 
-echo "openkai: installed to $DEST/openkai"
-"$DEST/openkai" --version 2>/dev/null || true
+# Smoke-test the staged binary in place at $DEST (not $tmp): some hosts mount
+# their temp directory noexec, which would make a perfectly good binary look
+# broken; $DEST is where the user runs it from, so that is the meaningful
+# location to prove it actually executes. A checksum only proves the bytes
+# match what the release published, never that they run on this host (wrong
+# libc, wrong OS ABI, or simply the right release with an asset this host
+# cannot run).
+if version_output="$("$staged" --version 2>&1)"; then
+    echo "openkai: smoke test passed ($version_output)"
+    mv "$staged" "$DEST/openkai"
+    echo "openkai: installed to $DEST/openkai"
+else
+    status=$?
+    rm -f "$staged"
+    echo "openkai: downloaded $asset does not run on this host (exit $status): $version_output" >&2
+    echo "openkai: installed command left unchanged; refusing to replace it with a binary that cannot execute" >&2
+    exit 1
+fi
 
 case ":$PATH:" in
     *":$DEST:"*) ;;
