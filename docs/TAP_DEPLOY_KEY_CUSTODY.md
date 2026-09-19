@@ -51,13 +51,17 @@ operator/CI-scheduling choice outside this wave's scope.
 
 ## 3. Rotation procedure (as performed 2026-09-17, and again to write this page)
 
+0. **Make a private scratch directory** -- never a fixed, predictable path:
+   ```sh
+   key_dir="$(mktemp -d)"
+   ```
 1. **Generate a fresh keypair**, ed25519, no passphrase (the CI job cannot prompt for one):
    ```sh
-   ssh-keygen -t ed25519 -f /tmp/tap-deploy-key -N "" -C "openkai-release-ci-tap-write-$(date +%Y%m%d)"
+   ssh-keygen -t ed25519 -f "$key_dir/tap-deploy-key" -N "" -C "openkai-release-ci-tap-write-$(date +%Y%m%d)"
    ```
 2. **Register the public half on the tap, with write access**:
    ```sh
-   gh repo deploy-key add /tmp/tap-deploy-key.pub \
+   gh repo deploy-key add "$key_dir/tap-deploy-key.pub" \
      --repo Kaidera-AI/homebrew-tap \
      --title "openkai-release-ci-tap-write-$(date +%Y%m%d)" \
      --allow-write
@@ -73,14 +77,17 @@ operator/CI-scheduling choice outside this wave's scope.
    ```
 4. **Set the matching secret on OpenKai** in the same sitting, from the private half:
    ```sh
-   gh secret set KAIDERA_TAP_DEPLOY_KEY --repo Kaidera-AI/OpenKai < /tmp/tap-deploy-key
+   gh secret set KAIDERA_TAP_DEPLOY_KEY --repo Kaidera-AI/OpenKai < "$key_dir/tap-deploy-key"
    ```
-5. **Shred the local private key** — it must not survive the rotation session:
+5. **Remove the local private key and its directory.** Rotation, not deletion
+   mechanics, is the real control here (independent review, T2-5): a `shred`/`rm -P`
+   pass gives no overwrite guarantee on a copy-on-write or log-structured filesystem
+   (APFS, most SSDs) -- once the secret is rotated on both ends (steps 2 and 4), a
+   leftover local copy of the OLD private half is worthless to an attacker regardless of
+   how it is removed, because the tap no longer trusts it. Still remove it, as hygiene:
    ```sh
-   shred -u /tmp/tap-deploy-key /tmp/tap-deploy-key.pub 2>/dev/null || rm -P /tmp/tap-deploy-key /tmp/tap-deploy-key.pub
+   rm -rf "$key_dir"
    ```
-   (`shred` on Linux runners/hosts; `rm -P` is the macOS equivalent when `shred` is
-   unavailable — either overwrites before unlinking, a bare `rm` does not.)
 6. **Re-run the pre-flight check** (section 2) to confirm exactly one write-capable key
    is now registered, then prove the pair actually works: dispatch `release_brew` (or,
    outside a real release, a scoped test push to a throwaway branch on the tap using the

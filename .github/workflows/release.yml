@@ -18,6 +18,11 @@ on:
         required: false
         default: ""
         type: string
+      dry_run:
+        description: Build and probe everything; run npm publish in --dry-run mode and skip going the release non-draft (installer/tap updates cascade-skip via needs:) -- E025 part (a) negative/positive-path evidence
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -365,6 +370,18 @@ jobs:
   native_probe:
     name: Native probe (${{ matrix.target_id }})
     needs: release_assets
+    # T2-1 (independent review, INDEPENDENT_REVIEW_ren-ok_E025_PRs_2026-09-19.md):
+    # without a job-level permissions block, this job inherited the workflow-level
+    # `contents: write` -- which sets every OTHER permission, including `actions`, to
+    # `none` (GitHub's documented rule: specifying any permission zeroes the rest).
+    # `gh run download` below calls the Actions REST API (GET .../actions/runs/{id}/artifacts,
+    # .../actions/artifacts/{id}/zip), which needs `actions: read`; without it every
+    # matrix leg got HTTP 403 and native_probe could never produce a PASS, permanently
+    # blocking every release. Least privilege too: this job only reads an already-built
+    # artifact and runs it -- it never needs to write repository contents.
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -453,7 +470,12 @@ jobs:
         with:
           targets: linux-x64-baseline linux-x64-modern
       - name: Publish engine before wrapper
-        run: bun scripts/ci-release-publish.ts --scope kaidera
+        run: bun scripts/ci-release-publish.ts --scope kaidera ${{ inputs.dry_run && '--dry-run' || '' }}
+        # dry_run reuses the exact flag the `validate` job already exercises pre-build
+        # ("Validate publish contract without publishing", above): `ci-release-publish.ts
+        # --dry-run` runs real auth/materialize/native-artifact plumbing and stops short
+        # of only the registry write, so a dry-run dispatch actually exercises this job's
+        # real steps instead of skipping the job whole.
 
   publish_release:
     name: Publish canonical release
@@ -461,6 +483,12 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    # dry_run: skip going the release non-draft. This is the negative/positive-path
+    # evidence EPIC_SPEC.md's acceptance criteria asks for: a real dispatch with
+    # dry_run=true proves the build+probe pipeline is green without ever publishing;
+    # a real dispatch with a probe forced to FAIL proves this job is skipped either way
+    # (needs: semantics), independent of this flag.
+    if: ${{ !inputs.dry_run }}
     steps:
       - name: Remove private source handoff and publish draft
         env:
