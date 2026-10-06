@@ -31,6 +31,7 @@ for (const [mode, succeeds] of modes) {
       const destination = join(prefix, "bin", "openkai");
       const executed = join(root, "executed");
       mkdirSync(bin);
+      writeFileSync(join(bin, "ldd"), '#!/bin/sh\necho "ldd (GNU libc) 2.39"\n', { mode: 0o755 });
       mkdirSync(join(prefix, "bin"), { recursive: true });
       writeFileSync(destination, "original installation\n");
       const currentAsset = `openkai-${process.platform}-${process.arch}`;
@@ -94,6 +95,7 @@ test("installer: a checksum-valid binary that cannot execute leaves the previous
     const prefix = join(root, "prefix");
     const destination = join(prefix, "bin", "openkai");
     mkdirSync(bin);
+    writeFileSync(join(bin, "ldd"), '#!/bin/sh\necho "ldd (GNU libc) 2.39"\n', { mode: 0o755 });
     mkdirSync(join(prefix, "bin"), { recursive: true });
     // The previous command is a real, runnable script -- proving it "survives"
     // means proving it still executes after the failed install, not just that
