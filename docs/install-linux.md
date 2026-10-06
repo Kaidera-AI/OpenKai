@@ -45,7 +45,7 @@ Run as your regular user, without `sudo`:
   sums="$(mktemp)"
   trap 'rm -f "$installer" "$sums"' EXIT
   curl --fail --silent --show-error --location \
-    https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/install.sh \
+    https://raw.githubusercontent.com/Kaidera-AI/OpenKai/048d981f081d6226120f043782feb0e2e1091259/scripts/install.sh \
     --output "$installer"
   OPENKAI_VERSION=v0.1.15 OPENKAI_PREFIX="$HOME/.local" sh "$installer"
 
