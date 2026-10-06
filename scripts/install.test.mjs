@@ -154,6 +154,69 @@ fs.writeFileSync(args[3], content);
   }
 });
 
+for (const existing of [false, true]) {
+  test(`installer: nonzero version on ${existing ? "existing" : "fresh"} install refuses promotion`, { skip: process.platform === "win32" }, () => {
+    const root = mkdtempSync(join(tmpdir(), "openkai-install-version-failure-"));
+    try {
+      const bin = join(root, "commands");
+      const prefix = join(root, "prefix");
+      const destination = join(prefix, "bin", "openkai");
+      mkdirSync(bin);
+      mkdirSync(join(prefix, "bin"), { recursive: true });
+      const previous = "#!/bin/sh\necho previous-command\n";
+      if (existing) writeFileSync(destination, previous, { mode: 0o755 });
+      // A valid executable and checksum, but --version itself fails. This
+      // reproduces the false-success contract independently of CPU emulation.
+      const failedVersion = "#!/bin/sh\necho deliberate-version-failure >&2\nexit 23\n";
+      const failedDigest = createHash("sha256").update(failedVersion).digest("hex");
+      writeFileSync(join(root, "fixture.json"), JSON.stringify({ executable: failedVersion, digest: failedDigest }));
+      writeFileSync(join(bin, "uname"), '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; *) exit 2 ;; esac\n', { mode: 0o755 });
+      writeFileSync(join(bin, "ldd"), '#!/bin/sh\necho "ldd (GNU libc) 2.39"\n', { mode: 0o755 });
+      writeFileSync(join(bin, "curl"), `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const fixture = JSON.parse(fs.readFileSync(path.join(process.env.OPENKAI_INSTALL_FIXTURE, "fixture.json"), "utf8"));
+const args = process.argv.slice(2);
+const url = new URL(args[1]);
+if (args[0] !== "-fsSL" || args[2] !== "-o" || url.origin !== "https://github.com") process.exit(90);
+const name = url.pathname.split("/").at(-1);
+let content;
+if (name === "openkai-linux-x64") content = fixture.executable;
+else if (name === "openkai-linux-x64.sha256") content = fixture.digest + "\\n";
+else process.exit(22);
+fs.writeFileSync(args[3], content);
+`, { mode: 0o755 });
+      const result = spawnSync("/bin/sh", [installer], {
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          OPENKAI_PREFIX: prefix,
+          OPENKAI_VERSION: "v0.1.15",
+          OPENKAI_INSTALL_FIXTURE: root,
+        },
+        encoding: "utf8",
+        timeout: 20_000,
+      });
+      assert.ifError(result.error);
+      const output = `${result.stdout}\n${result.stderr}`;
+      assert.notEqual(result.status, 0, output);
+      assert.match(output, /exit 23.*deliberate-version-failure/, output);
+      assert.deepEqual(readdirSync(join(prefix, "bin")).filter(name => name.startsWith(".openkai.")), []);
+      if (existing) {
+        assert.equal(readFileSync(destination, "utf8"), previous);
+        const rerun = spawnSync(destination, [], { encoding: "utf8", timeout: 5_000 });
+        assert.ifError(rerun.error);
+        assert.equal(rerun.status, 0, rerun.stderr);
+        assert.equal(rerun.stdout, "previous-command\n");
+      } else {
+        assert.equal(existsSync(destination), false, output);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("installer: detects musl libc and requests the musl asset", { skip: process.platform === "win32" }, () => {
   const root = mkdtempSync(join(tmpdir(), "openkai-install-musl-"));
   try {
