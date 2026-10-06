@@ -5,7 +5,7 @@ binary. All channels support `openkai upgrade` with rollback.
 
 ## Prerequisites
 
-- **Node.js** ≥ 22.19 (for npm/bun channels)
+- **Bun** ≥ 1.3.14 (runtime for npm/bun channels)
 - **macOS, Linux, or Windows** (all channels)
 - **Git** (for source installs)
 
@@ -23,7 +23,8 @@ The formula installs the compiled binary. No node required.
 npm install -g @kaidera/openkai
 ```
 
-Requires Node.js ≥ 22.19. Installs the CLI globally.
+Requires Bun ≥ 1.3.14 on `PATH` to run the CLI, including when npm installs it.
+Installs the CLI globally.
 
 ## bun
 
@@ -44,6 +45,10 @@ curl -fsSL https://raw.githubusercontent.com/Kaidera-AI/OpenKai/main/scripts/ins
 Or download manually from the
 [releases page](https://github.com/Kaidera-AI/OpenKai/releases).
 
+For a fresh Rocky Linux 10 x86_64 install, follow the
+[Linux installation steps](install-linux.md), including the release digest and
+version/help/smoke checks.
+
 ## From source
 
 ```bash
@@ -57,18 +62,20 @@ npm link
 ## Verify installation
 
 ```bash
-openkai info
+openkai --version
+openkai --help
+openkai --smoke-test
 ```
 
-Expected output:
+For the published 0.1.15 release, version output is:
 
 ```
-openkai/0.1.11
-mode: standalone (or managed)
-providers: 21 configured
-models: 814 available
-sessions: 0 active
+openkai/0.1.15
 ```
+
+Help must exit successfully. Smoke output is `smoke-test: ok`; all three commands
+must exit 0 before installation is considered verified. These checks need no
+provider key or model call.
 
 ## First-time setup
 
